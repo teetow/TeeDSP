@@ -1,0 +1,47 @@
+# Build trees and generated files
+out/
+build/
+cmake-build-*/
+
+# CMake cache / generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CMakeUserPresets.json
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# MSVC/Linker artifacts
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.lib
+*.dll
+*.exe
+
+# Qt Creator / Qt tools
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qtc_clangd/
+
+# Logs and transient local artifacts
+*.log
+build_output.log
+
+# Installer/runtime generated state
+scripts/install_apo.last.log
+scripts/install_apo.system.log
+scripts/uninstall_apo.last.log
+scripts/installed_endpoint.txt
+scripts/installed_endpoint.json
