@@ -3,7 +3,8 @@
     Removes the TeeDSP APO MFX registration from an audio endpoint.
 #>
 param(
-    [string]$EndpointId
+    [string]$EndpointId,
+    [string]$DllPath
 )
 
 Set-StrictMode -Version Latest
@@ -16,6 +17,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     try {
         $argList = @('-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
         if ($EndpointId) { $argList += @('-EndpointId', $EndpointId) }
+        if ($DllPath) { $argList += @('-DllPath', $DllPath) }
         $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argList -Verb RunAs -Wait -PassThru
         exit $proc.ExitCode
     } catch {
@@ -43,6 +45,38 @@ function Get-RegValueSafe {
 # otherwise the user's computer is left with no audio.
 $script:uninstallFailed = $false
 try {
+
+function Resolve-ApoDllPath {
+    param([string]$ProvidedPath)
+
+    if ($ProvidedPath) {
+        if (Test-Path $ProvidedPath) {
+            return (Resolve-Path $ProvidedPath).Path
+        }
+        return $null
+    }
+
+    $repoRoot = Split-Path $PSScriptRoot -Parent
+    $candidates = @(
+        (Join-Path $repoRoot 'dist\TeeDspApo.dll'),
+        (Join-Path $repoRoot 'out\build\vs2022\Debug\TeeDspApo.dll'),
+        (Join-Path $repoRoot 'out\build\vs2022\Release\TeeDspApo.dll')
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+
+    $globMatches = Get-ChildItem -Path (Join-Path $repoRoot 'out\build') -Filter 'TeeDspApo.dll' -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
+    if ($globMatches -and $globMatches.Count -gt 0) {
+        return $globMatches[0].FullName
+    }
+
+    return $null
+}
 
 function Invoke-SystemCommand {
     param(
@@ -159,7 +193,7 @@ foreach ($modePid in @(5, 6)) {
         Write-Host "Removed processing-mode key $propName"
     }
 }
-$dllPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist\TeeDspApo.dll'
+$dllPath = Resolve-ApoDllPath -ProvidedPath $DllPath
 # Unregister COM server
 if (Test-Path $dllPath) {
     Start-Process -FilePath 'regsvr32.exe' `

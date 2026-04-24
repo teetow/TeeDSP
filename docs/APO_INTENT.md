@@ -26,3 +26,36 @@
 - Target endpoint FxProperties contains MFX binding in slot 14 (and optionally 6)
 - APO log shows Initialize + LockForProcess + APOProcess activity during active playback
 - Audible output responds to EQ/compressor/exciter parameter changes
+
+## Verification gates (slow and right)
+
+### Gate 1: Build and compile hygiene (automated)
+1. Configure with CMake preset.
+2. Build config app target.
+3. Build APO target when audioenginebaseapo.lib is available.
+4. Treat warnings about missing APO base library as actionable setup issues, not runtime defects.
+
+### Gate 2: Runtime safety and contract checks (automated)
+1. Installer script exits successfully and always leaves audio services running.
+2. Registry contains CLSID and APO registration keys.
+3. Endpoint FxProperties reflects MFX slot binding.
+4. Shared memory block opens and validates magic/version/size contract.
+5. APO log confirms Initialize, LockForProcess, and processing callbacks.
+
+### Gate 3: DSP behavior checks (automated)
+1. Bypass toggling preserves signal continuity.
+2. Parameter changes from UI process reach APO via seqlock snapshots.
+3. Compressor gain reduction telemetry updates while signal is active.
+4. UI absence does not break endpoint audio path.
+
+### Gate 4: Human approval checkpoints (manual, when needed)
+1. Approve UAC prompt for endpoint mutation and COM registration.
+2. Perform short perceptual sanity check after install:
+- bypass on/off is audible
+- compressor threshold changes are audible
+- no obvious clipping, silence, or channel inversion
+
+### Exit criteria for release candidates
+1. Gate 1 through Gate 3 pass in unattended run.
+2. Gate 4 completed once on representative hardware endpoint.
+3. Install and uninstall scripts both verified on clean endpoint state.

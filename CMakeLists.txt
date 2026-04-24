@@ -30,7 +30,7 @@ set(APO_SOURCES
 	src/apo/TeeDspApo.cpp
 )
 
-set(TEE_DSP_APO_BASE_LIB "" CACHE FILEPATH "Optional full path to audioenginebaseapo.lib")
+set(TEE_DSP_APO_BASE_LIB "" CACHE FILEPATH "Optional full path to APO base library (audiobaseprocessingobject.lib, audioenginebaseapo.lib, or audioeng.lib)")
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
 	set(_WDK_ARCH x64)
@@ -53,10 +53,29 @@ list(APPEND _APO_BASE_LIB_HINTS ${_WDK_UM_LIB_DIRS})
 if(TEE_DSP_APO_BASE_LIB)
 	set(APO_BASE_LIB "${TEE_DSP_APO_BASE_LIB}")
 else()
+	unset(APO_BASE_LIB CACHE)
 	find_library(APO_BASE_LIB
-		NAMES audioenginebaseapo
+		NAMES AudioBaseProcessingObjectV140
 		HINTS ${_APO_BASE_LIB_HINTS}
 	)
+	if(NOT APO_BASE_LIB)
+		find_library(APO_BASE_LIB
+		NAMES audiobaseprocessingobject
+		HINTS ${_APO_BASE_LIB_HINTS}
+		)
+	endif()
+	if(NOT APO_BASE_LIB)
+		find_library(APO_BASE_LIB
+		NAMES audioenginebaseapo
+		HINTS ${_APO_BASE_LIB_HINTS}
+		)
+	endif()
+	if(NOT APO_BASE_LIB)
+		find_library(APO_BASE_LIB
+			NAMES audioeng
+			HINTS ${_APO_BASE_LIB_HINTS}
+		)
+	endif()
 endif()
 
 if(APO_BASE_LIB)
@@ -81,14 +100,35 @@ if(APO_BASE_LIB)
 
 	target_link_libraries(TeeDspApo PRIVATE
 		${APO_BASE_LIB}
+		audiomediatypecrt
 		Avrt
 		Ksuser
+		Mmdevapi
 		Ole32
 		Propsys
 		Uuid
+		Wmcodecdspuuid
 	)
 
 	if(MSVC)
+		# Some environments (especially mixed VS instances) do not expose ATL libs
+		# on the default linker path even when the component is installed.
+		# Resolve atls.lib explicitly and link it by full path when found.
+		file(GLOB _ATL_LIB_CANDIDATES
+			"C:/Program Files/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/atlmfc/lib/${_WDK_ARCH}/atls.lib"
+			"C:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Tools/MSVC/*/atlmfc/lib/${_WDK_ARCH}/atls.lib"
+		)
+		list(LENGTH _ATL_LIB_CANDIDATES _ATL_COUNT)
+		if(_ATL_COUNT GREATER 0)
+			list(GET _ATL_LIB_CANDIDATES 0 ATLS_LIB)
+		endif()
+		if(ATLS_LIB)
+			get_filename_component(_ATLS_LIB_DIR "${ATLS_LIB}" DIRECTORY)
+			target_link_directories(TeeDspApo PRIVATE "${_ATLS_LIB_DIR}")
+		else()
+			message(WARNING "ATL lib directory not found; TeeDspApo link may fail if dependencies request atls.lib.")
+		endif()
+
 		target_link_options(TeeDspApo PRIVATE /DEF:${CMAKE_CURRENT_SOURCE_DIR}/src/apo/TeeDspApo.def)
 	endif()
 
@@ -96,7 +136,7 @@ if(APO_BASE_LIB)
 		OUTPUT_NAME "TeeDspApo"
 	)
 else()
-	message(WARNING "audioenginebaseapo.lib not found; skipping TeeDspApo target. Install the Windows Driver Kit and/or set TEE_DSP_APO_BASE_LIB to the full path of audioenginebaseapo.lib.")
+	message(WARNING "APO base library not found (AudioBaseProcessingObjectV140.lib/audiobaseprocessingobject.lib/audioenginebaseapo.lib/audioeng.lib); skipping TeeDspApo target. Install WDK/SDK libs and/or set TEE_DSP_APO_BASE_LIB to the full path.")
 endif()
 
 add_executable(TeeDspConfig

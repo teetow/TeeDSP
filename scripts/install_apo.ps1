@@ -9,7 +9,7 @@
     4. Restarts Windows Audio so the change takes effect immediately.
 
 .PARAMETER DllPath
-    Absolute path to TeeDspApo.dll. Defaults to the dist/ directory alongside this script.
+    Absolute path to TeeDspApo.dll. If omitted, common output paths are probed.
 
 .PARAMETER EndpointId
     Override: GUID of the render endpoint, e.g. {d8fb0125-67b7-4afb-b709-23feada41ac0}.
@@ -45,6 +45,38 @@ $script:installFailed = $false
 # auto-detect path (i.e. when -EndpointId was passed explicitly).
 $fullId = $null
 try {
+
+function Resolve-ApoDllPath {
+    param([string]$ProvidedPath)
+
+    if ($ProvidedPath) {
+        if (Test-Path $ProvidedPath) {
+            return (Resolve-Path $ProvidedPath).Path
+        }
+        throw "Cannot find TeeDspApo.dll at '$ProvidedPath'."
+    }
+
+    $repoRoot = Split-Path $PSScriptRoot -Parent
+    $candidates = @(
+        (Join-Path $repoRoot 'dist\TeeDspApo.dll'),
+        (Join-Path $repoRoot 'out\build\vs2022\Debug\TeeDspApo.dll'),
+        (Join-Path $repoRoot 'out\build\vs2022\Release\TeeDspApo.dll')
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return (Resolve-Path $candidate).Path
+        }
+    }
+
+    $globMatches = Get-ChildItem -Path (Join-Path $repoRoot 'out\build') -Filter 'TeeDspApo.dll' -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending
+    if ($globMatches -and $globMatches.Count -gt 0) {
+        return $globMatches[0].FullName
+    }
+
+    throw "Cannot locate TeeDspApo.dll. Build TeeDspApo or pass -DllPath explicitly."
+}
 
 function Invoke-SystemCommand {
     param(
@@ -85,13 +117,7 @@ function Invoke-SystemCommand {
 }
 
 # ---- Locate the DLL -----------------------------------------------------------
-if (-not $DllPath) {
-    $DllPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist\TeeDspApo.dll'
-}
-if (-not (Test-Path $DllPath)) {
-    Write-Error "Cannot find TeeDspApo.dll at '$DllPath'. Pass -DllPath explicitly."
-}
-$DllPath = (Resolve-Path $DllPath).Path
+$DllPath = Resolve-ApoDllPath -ProvidedPath $DllPath
 Write-Host "DLL: $DllPath"
 
 # ---- Ensure audio services are running for endpoint detection ------------------

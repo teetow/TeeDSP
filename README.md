@@ -38,3 +38,29 @@ From an elevated PowerShell prompt:
 	scripts/uninstall_apo.ps1
 
 The installer targets the default Windows render endpoint unless an explicit endpoint GUID is provided.
+
+## Unattended Validation
+
+Run the default non-invasive validation flow:
+
+powershell -ExecutionPolicy Bypass -File scripts/validate_stack.ps1
+
+Try explicit APO target build and fail if unavailable:
+
+powershell -ExecutionPolicy Bypass -File scripts/validate_stack.ps1 -TryApoTarget -FailOnMissingApo
+
+Include install and uninstall lifecycle checks (requires elevation/UAC):
+
+powershell -ExecutionPolicy Bypass -File scripts/validate_stack.ps1 -TryApoTarget -RunInstall -RunUninstall
+
+Run contract checks without changing system state:
+
+powershell -ExecutionPolicy Bypass -File scripts/validate_stack.ps1 -RunContractChecks
+
+Run strict contract checks after install, including endpoint binding and mapping probe:
+
+powershell -ExecutionPolicy Bypass -File scripts/validate_stack.ps1 -RunInstall -RunContractChecks -RequireEndpointBinding -ProbeSharedMapping -RequireSharedMapping
+
+Require TeeDSP to be primary in slot 14 as well:
+
+powershell -ExecutionPolicy Bypass -File scripts/validate_stack.ps1 -RunInstall -RunContractChecks -RequireEndpointBinding -RequireSlot14Primary -ProbeSharedMapping -RequireSharedMapping
