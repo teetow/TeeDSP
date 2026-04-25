@@ -7,8 +7,6 @@
 #include "ChainParams.h"
 #include "ProcessorChain.h"
 
-namespace dsp { class ApoSharedClient; }
-
 namespace dsp {
 
 // QObject wrapper that owns the ProcessorChain and exposes its parameters
@@ -41,7 +39,6 @@ class DspController : public QObject
 public:
     explicit DspController(ProcessorChain *chain, QObject *parent = nullptr);
 
-    void setApoClient(ApoSharedClient *client);
     ChainParams buildSnapshot() const;
 
     bool bypass() const;
@@ -97,11 +94,9 @@ signals:
 private:
     void pushCompressorParams();
     void pushExciterParams();
-    void pushToApo();
     void applySnapshot(const ChainParams &params);
 
     ProcessorChain   *m_chain;
-    ApoSharedClient  *m_apoClient = nullptr;
     QTimer m_meterTimer;
 
     bool m_bypass = false;

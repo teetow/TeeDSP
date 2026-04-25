@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../host/WasapiDevices.h"
+
 #include <QMainWindow>
 #include <QVector>
 
@@ -7,14 +9,21 @@ class QLabel;
 class QPushButton;
 class QCheckBox;
 class QComboBox;
-class QDoubleSpinBox;
 
 namespace dsp {
 class DspController;
-class ApoSharedClient;
+class ProcessorChain;
 }
 
-class SystemOutputController;
+namespace host {
+class AudioEngine;
+}
+
+namespace ui {
+class Knob;
+class LevelMeter;
+class EqCurve;
+}
 
 class MainWindow : public QMainWindow
 {
@@ -31,49 +40,68 @@ private:
     struct EqBandWidgets {
         QCheckBox *enabled = nullptr;
         QComboBox *type = nullptr;
-        QDoubleSpinBox *frequency = nullptr;
-        QDoubleSpinBox *q = nullptr;
-        QDoubleSpinBox *gain = nullptr;
+        ui::Knob *frequency = nullptr;
+        ui::Knob *q = nullptr;
+        ui::Knob *gain = nullptr;
     };
 
     void buildUi();
+    QWidget *buildIoSection();
+    QWidget *buildEqSection();
+    QWidget *buildCompSection();
+    QWidget *buildExciterSection();
+    QWidget *buildFooter();
+
     void connectSignals();
     void pullStateFromController();
-    void refreshSystemStatus();
-    void onInstallClicked();
+    void refreshDevices();
+    void refreshEngineStatus();
+    void refreshEqCurve();
+
+    void onStartStopClicked();
     void onResetDefaultsClicked();
+    void onEngineError(const QString &message);
+
+    QString selectedCaptureDeviceId() const;
+    QString selectedRenderDeviceId() const;
+    void saveSelectedDevices() const;
+    void restoreSelectedDevices();
 
     QWidget *m_central = nullptr;
 
+    QComboBox *m_captureDevice = nullptr;
+    QComboBox *m_renderDevice = nullptr;
+    QPushButton *m_refreshDevicesButton = nullptr;
+    QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
-    QLabel *m_detailLabel = nullptr;
-    QLabel *m_errorLabel = nullptr;
-    QPushButton *m_installButton = nullptr;
 
     QCheckBox *m_globalBypass = nullptr;
 
     QCheckBox *m_compEnabled = nullptr;
-    QDoubleSpinBox *m_compThreshold = nullptr;
-    QDoubleSpinBox *m_compRatio = nullptr;
-    QDoubleSpinBox *m_compKnee = nullptr;
-    QDoubleSpinBox *m_compAttack = nullptr;
-    QDoubleSpinBox *m_compRelease = nullptr;
-    QDoubleSpinBox *m_compMakeup = nullptr;
-    QLabel *m_compGainReductionLabel = nullptr;
+    ui::Knob *m_compThreshold = nullptr;
+    ui::Knob *m_compRatio = nullptr;
+    ui::Knob *m_compKnee = nullptr;
+    ui::Knob *m_compAttack = nullptr;
+    ui::Knob *m_compRelease = nullptr;
+    ui::Knob *m_compMakeup = nullptr;
+    ui::LevelMeter *m_compMeter = nullptr;
+    QLabel *m_compMeterValue = nullptr;
 
     QCheckBox *m_exciterEnabled = nullptr;
-    QDoubleSpinBox *m_exciterDrive = nullptr;
-    QDoubleSpinBox *m_exciterMix = nullptr;
-    QDoubleSpinBox *m_exciterTone = nullptr;
+    ui::Knob *m_exciterDrive = nullptr;
+    ui::Knob *m_exciterMix = nullptr;
+    ui::Knob *m_exciterTone = nullptr;
 
     QCheckBox *m_eqEnabled = nullptr;
+    ui::EqCurve *m_eqCurve = nullptr;
     QVector<EqBandWidgets> m_eqBands;
 
     QPushButton *m_resetButton = nullptr;
 
-    dsp::ApoSharedClient *m_apoClient = nullptr;
+    dsp::ProcessorChain *m_chain = nullptr;
     dsp::DspController *m_dspController = nullptr;
-    SystemOutputController *m_systemOutput = nullptr;
+    host::AudioEngine *m_engine = nullptr;
 
+    QList<host::DeviceInfo> m_devices;
     bool m_syncingUi = false;
 };

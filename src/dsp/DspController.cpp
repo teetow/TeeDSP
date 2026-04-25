@@ -1,5 +1,4 @@
 #include "DspController.h"
-#include "ApoSharedClient.h"
 
 #include <QSettings>
 #include <QVariantMap>
@@ -33,12 +32,6 @@ DspController::DspController(ProcessorChain *chain, QObject *parent)
     m_meterTimer.setTimerType(Qt::CoarseTimer);
     connect(&m_meterTimer, &QTimer::timeout, this, &DspController::meterChanged);
     m_meterTimer.start();
-
-    // Push to APO shmem whenever any param changes.
-    connect(this, &DspController::bypassChanged,    this, &DspController::pushToApo);
-    connect(this, &DspController::compressorChanged, this, &DspController::pushToApo);
-    connect(this, &DspController::exciterChanged,   this, &DspController::pushToApo);
-    connect(this, &DspController::eqChanged,        this, &DspController::pushToApo);
 }
 
 bool DspController::bypass() const { return m_bypass; }
@@ -115,8 +108,6 @@ void DspController::setCompMakeupDb(float v)
 
 float DspController::compGainReductionDb() const
 {
-    if (m_apoClient && m_apoClient->isConnected())
-        return m_apoClient->compGainReductionDb();
     return m_chain->compressor().currentGainReductionDb();
 }
 
@@ -238,13 +229,6 @@ void DspController::pushExciterParams()
     e.setToneHz(m_exciterToneHz);
 }
 
-void DspController::setApoClient(ApoSharedClient *client)
-{
-    m_apoClient = client;
-    if (m_apoClient)
-        pushToApo();
-}
-
 ChainParams DspController::buildSnapshot() const
 {
     ChainParams p;
@@ -272,12 +256,6 @@ ChainParams DspController::buildSnapshot() const
         b.gainDb     = eq.bandGainDb(i);
     }
     return p;
-}
-
-void DspController::pushToApo()
-{
-    if (m_apoClient)
-        m_apoClient->pushParams(buildSnapshot());
 }
 
 void DspController::applySnapshot(const ChainParams &params)
