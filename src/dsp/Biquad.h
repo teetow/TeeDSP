@@ -18,6 +18,7 @@ public:
         HighShelf,
         LowPass,
         HighPass,
+        BandPass,
         Notch,
     };
 
@@ -96,6 +97,16 @@ public:
             b0 = (1.0 + cosw0) * 0.5;
             b1 = -(1.0 + cosw0);
             b2 = (1.0 + cosw0) * 0.5;
+            a0 = 1.0 + alpha;
+            a1 = -2.0 * cosw0;
+            a2 = 1.0 - alpha;
+            break;
+        }
+        case Type::BandPass: {
+            // RBJ constant skirt gain (peak gain = Q) band-pass.
+            b0 = alpha;
+            b1 = 0.0;
+            b2 = -alpha;
             a0 = 1.0 + alpha;
             a1 = -2.0 * cosw0;
             a2 = 1.0 - alpha;

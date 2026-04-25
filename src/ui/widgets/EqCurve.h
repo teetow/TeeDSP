@@ -14,6 +14,8 @@ struct EqBandData {
     float freqHz = 1000.0f;
     float q = 0.707f;
     float gainDb = 0.0f;
+    float dynThresholdDb = 0.0f;
+    float dynGainReductionDb = 0.0f;
 };
 
 // Draws a log-frequency / dB magnitude plot of the combined EQ response.
@@ -54,13 +56,17 @@ signals:
     void bandDragged(int band, float freqHz, float gainDb);
     void bandSelected(int band);
     void bandReset(int band);   // double-click — caller decides what to reset
+    void bandQAdjusted(int band, float q);
+    void bandTypeChanged(int band, int type);
 
 protected:
     void paintEvent(QPaintEvent *e) override;
+    void contextMenuEvent(QContextMenuEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
     void mouseReleaseEvent(QMouseEvent *e) override;
     void mouseDoubleClickEvent(QMouseEvent *e) override;
+    void wheelEvent(QWheelEvent *e) override;
 
 private:
     QRectF plotRect() const;
@@ -71,8 +77,8 @@ private:
     double specDbToY(double db) const;     // separate Y mapping for spectrum
 
     int hitBand(const QPointF &pos) const;
-    double combinedMagDb(double hz) const;
-    double bandMagDb(const EqBandData &b, double hz) const;
+    double combinedMagDb(double hz, bool includeDynamic) const;
+    double bandMagDb(const EqBandData &b, double hz, bool includeDynamic) const;
 
     void drawSpectrum(class QPainter &p, const QVector<float> &mag,
                       double specSampleRate, const QColor &fill,

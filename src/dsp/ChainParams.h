@@ -13,6 +13,12 @@ struct EqBandParams {
     float   freqHz;
     float   q;
     float   gainDb;
+
+    float   dynThresholdDb;
+    float   dynRatio;
+    float   dynAttackMs;
+    float   dynReleaseMs;
+    float   dynRangeDb;
 };
 
 struct ChainParams {
@@ -21,11 +27,11 @@ struct ChainParams {
 
     bool        eqEnabled = true;
     EqBandParams eqBands[5] = {
-        { true, 1, 80.0f,   0.7f, 0.0f },
-        { true, 0, 250.0f,  0.7f, 0.0f },
-        { true, 0, 1000.0f, 0.7f, 0.0f },
-        { true, 0, 4000.0f, 0.7f, 0.0f },
-        { true, 2, 10000.f, 0.7f, 0.0f },
+        { true, 1, 80.0f,   0.7f, 0.0f, 0.0f, 2.0f, 10.0f, 120.0f, 12.0f },
+        { true, 0, 250.0f,  0.7f, 0.0f, 0.0f, 2.0f, 10.0f, 120.0f, 12.0f },
+        { true, 0, 1000.0f, 0.7f, 0.0f, 0.0f, 2.0f, 10.0f, 120.0f, 12.0f },
+        { true, 0, 4000.0f, 0.7f, 0.0f, 0.0f, 2.0f, 10.0f, 120.0f, 12.0f },
+        { true, 2, 10000.f, 0.7f, 0.0f, 0.0f, 2.0f, 10.0f, 120.0f, 12.0f },
     };
 
     bool  compEnabled    = true;

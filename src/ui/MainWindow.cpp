@@ -33,6 +33,8 @@
 #include <QVariantMap>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace {
 
 constexpr const char *kCaptureDeviceKey = "io/captureDeviceId";
@@ -226,7 +228,7 @@ QWidget *MainWindow::buildIoSection()
 
 QWidget *MainWindow::buildEqSection()
 {
-    auto *section = createSection(QStringLiteral("Parametric EQ"));
+    auto *section = createSection(QStringLiteral("Dynamic EQ"));
     auto *col = new QVBoxLayout(section);
     col->setContentsMargins(12, 18, 12, 12);
     col->setSpacing(8);
@@ -258,9 +260,11 @@ QWidget *MainWindow::buildEqSection()
     m_eqCurve->setMinimumHeight(220);
     col->addWidget(m_eqCurve, 1);
 
-    // Per-band controls — 5 columns × {enable, type, freq, Q, gain}
+    auto *hint = createCaption(QStringLiteral("Drag nodes for Freq/Gain, mouse-wheel for Q, right-click for filter type."));
+    col->addWidget(hint);
+
     auto *bandsRow = new QGridLayout();
-    bandsRow->setHorizontalSpacing(8);
+    bandsRow->setHorizontalSpacing(10);
     bandsRow->setVerticalSpacing(4);
 
     m_eqBands.reserve(5);
@@ -279,30 +283,41 @@ QWidget *MainWindow::buildEqSection()
         enableWrap->addStretch();
         bandsRow->addLayout(enableWrap, 1, i);
 
-        w.type = new QComboBox();
-        w.type->addItems({QStringLiteral("Peaking"),
-                          QStringLiteral("Low Shelf"),
-                          QStringLiteral("High Shelf")});
-        bandsRow->addWidget(w.type, 2, i);
-
-        w.frequency = makeKnob(QStringLiteral("Freq"),
-                               20.0, 20000.0, 1000.0, 0,
-                               QStringLiteral("Hz"), ui::Knob::Scale::Log);
-        w.q   = makeKnob(QStringLiteral("Q"),    0.1, 20.0, 0.707, 2);
-        w.gain = makeKnob(QStringLiteral("Gain"), -24.0, 24.0, 0.0, 1, QStringLiteral("dB"));
-        w.gain->setPolarity(ui::Knob::Polarity::Bipolar);
-
-        auto *knobsRow = new QHBoxLayout();
-        knobsRow->setSpacing(2);
-        knobsRow->addWidget(w.frequency);
-        knobsRow->addWidget(w.q);
-        knobsRow->addWidget(w.gain);
-        bandsRow->addLayout(knobsRow, 3, i);
-
         m_eqBands.push_back(w);
     }
 
     col->addLayout(bandsRow);
+
+    auto *dynBox = new QGroupBox(QStringLiteral("Selected Band Dynamics"));
+    auto *dynCol = new QVBoxLayout(dynBox);
+    dynCol->setContentsMargins(8, 10, 8, 8);
+    dynCol->setSpacing(6);
+
+    auto *metaRow = new QHBoxLayout();
+    m_eqSelectedBand = new QLabel(QStringLiteral("Band 1"));
+    m_eqSelectedBand->setProperty("role", "caption");
+    metaRow->addWidget(m_eqSelectedBand);
+    metaRow->addStretch();
+    m_eqDynMeter = new QLabel(QStringLiteral("GR 0.0 dB"));
+    m_eqDynMeter->setProperty("role", "status");
+    metaRow->addWidget(m_eqDynMeter);
+    dynCol->addLayout(metaRow);
+
+    auto *dynRow = new QHBoxLayout();
+    dynRow->setSpacing(2);
+    m_eqDynThreshold = makeKnob(QStringLiteral("Thresh"), -60.0, 0.0, -18.0, 1, QStringLiteral("dB"));
+    m_eqDynRatio = makeKnob(QStringLiteral("Ratio"), 1.0, 20.0, 2.0, 2);
+    m_eqDynAttack = makeKnob(QStringLiteral("Attack"), 0.1, 200.0, 10.0, 1, QStringLiteral("ms"), ui::Knob::Scale::Log);
+    m_eqDynRelease = makeKnob(QStringLiteral("Release"), 1.0, 1000.0, 120.0, 0, QStringLiteral("ms"), ui::Knob::Scale::Log);
+    m_eqDynRange = makeKnob(QStringLiteral("Range"), 0.0, 24.0, 12.0, 1, QStringLiteral("dB"));
+    dynRow->addWidget(m_eqDynThreshold);
+    dynRow->addWidget(m_eqDynRatio);
+    dynRow->addWidget(m_eqDynAttack);
+    dynRow->addWidget(m_eqDynRelease);
+    dynRow->addWidget(m_eqDynRange);
+    dynCol->addLayout(dynRow);
+
+    col->addWidget(dynBox);
 
     return section;
 }
@@ -457,19 +472,6 @@ void MainWindow::connectSignals()
         connect(w.enabled, &QCheckBox::toggled, this, [this, band](bool c) {
             if (!m_syncingUi) m_dspController->setEqBandEnabled(band, c);
         });
-        connect(w.type, qOverload<int>(&QComboBox::currentIndexChanged),
-                this, [this, band](int t) {
-            if (!m_syncingUi) m_dspController->setEqBandType(band, t);
-        });
-        connect(w.frequency, &ui::Knob::valueChanged, this, [this, band](double v) {
-            if (!m_syncingUi) m_dspController->setEqBandFrequency(band, static_cast<float>(v));
-        });
-        connect(w.q, &ui::Knob::valueChanged, this, [this, band](double v) {
-            if (!m_syncingUi) m_dspController->setEqBandQ(band, static_cast<float>(v));
-        });
-        connect(w.gain, &ui::Knob::valueChanged, this, [this, band](double v) {
-            if (!m_syncingUi) m_dspController->setEqBandGainDb(band, static_cast<float>(v));
-        });
     }
 
     connect(m_eqCurve, &ui::EqCurve::bandDragged, this,
@@ -482,6 +484,38 @@ void MainWindow::connectSignals()
     connect(m_eqCurve, &ui::EqCurve::bandReset, this, [this](int band) {
         if (band < 0 || band >= m_eqBands.size()) return;
         m_dspController->resetBandToDefaults(band);
+    });
+
+    connect(m_eqCurve, &ui::EqCurve::bandSelected, this, [this](int band) {
+        if (band < 0 || band >= m_eqBands.size()) return;
+        m_selectedEqBand = band;
+        pullStateFromController();
+    });
+
+    connect(m_eqCurve, &ui::EqCurve::bandQAdjusted, this, [this](int band, float q) {
+        if (band < 0 || band >= m_eqBands.size()) return;
+        m_dspController->setEqBandQ(band, q);
+    });
+
+    connect(m_eqCurve, &ui::EqCurve::bandTypeChanged, this, [this](int band, int type) {
+        if (band < 0 || band >= m_eqBands.size()) return;
+        m_dspController->setEqBandType(band, type);
+    });
+
+    connect(m_eqDynThreshold, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setEqBandDynamicThresholdDb(m_selectedEqBand, static_cast<float>(v));
+    });
+    connect(m_eqDynRatio, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setEqBandDynamicRatio(m_selectedEqBand, static_cast<float>(v));
+    });
+    connect(m_eqDynAttack, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setEqBandDynamicAttackMs(m_selectedEqBand, static_cast<float>(v));
+    });
+    connect(m_eqDynRelease, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setEqBandDynamicReleaseMs(m_selectedEqBand, static_cast<float>(v));
+    });
+    connect(m_eqDynRange, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setEqBandDynamicRangeDb(m_selectedEqBand, static_cast<float>(v));
     });
 
     connect(m_showInputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
@@ -513,6 +547,17 @@ void MainWindow::connectSignals()
         const double db = m_dspController->compGainReductionDb();
         m_compMeter->setReductionDb(std::abs(db));
         m_compMeterValue->setText(QString::number(db, 'f', 1) + QStringLiteral(" dB"));
+
+        const QVariantList eq = m_dspController->eqBands();
+        if (m_selectedEqBand >= 0 && m_selectedEqBand < eq.size()) {
+            const QVariantMap b = eq[m_selectedEqBand].toMap();
+            const double gr = b.value(QStringLiteral("dynGainReductionDb")).toDouble();
+            m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(gr, 0, 'f', 1));
+        }
+
+        // Dynamic gain reduction changes continuously even when controls are
+        // static, so repaint the EQ response from meter ticks.
+        refreshEqCurve();
     });
 
     connect(m_captureDevice, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -590,10 +635,20 @@ void MainWindow::pullStateFromController()
         const QVariantMap b = eq[i].toMap();
         auto &w = m_eqBands[i];
         w.enabled->setChecked(b.value(QStringLiteral("enabled")).toBool());
-        w.type->setCurrentIndex(b.value(QStringLiteral("type")).toInt());
-        w.frequency->setValue(b.value(QStringLiteral("frequencyHz")).toDouble());
-        w.q->setValue(b.value(QStringLiteral("q")).toDouble());
-        w.gain->setValue(b.value(QStringLiteral("gainDb")).toDouble());
+    }
+
+    if (!eq.isEmpty()) {
+        const int maxBand = static_cast<int>(eq.size()) - 1;
+        m_selectedEqBand = std::clamp(m_selectedEqBand, 0, maxBand);
+        const QVariantMap selected = eq[m_selectedEqBand].toMap();
+        m_eqSelectedBand->setText(QStringLiteral("Band %1").arg(m_selectedEqBand + 1));
+        m_eqDynThreshold->setValue(selected.value(QStringLiteral("dynThresholdDb")).toDouble());
+        m_eqDynRatio->setValue(selected.value(QStringLiteral("dynRatio")).toDouble());
+        m_eqDynAttack->setValue(selected.value(QStringLiteral("dynAttackMs")).toDouble());
+        m_eqDynRelease->setValue(selected.value(QStringLiteral("dynReleaseMs")).toDouble());
+        m_eqDynRange->setValue(selected.value(QStringLiteral("dynRangeDb")).toDouble());
+        const double gr = selected.value(QStringLiteral("dynGainReductionDb")).toDouble();
+        m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(gr, 0, 'f', 1));
     }
 
     m_syncingUi = false;
@@ -614,6 +669,8 @@ void MainWindow::refreshEqCurve()
         d.freqHz  = static_cast<float>(b.value(QStringLiteral("frequencyHz")).toDouble());
         d.q       = static_cast<float>(b.value(QStringLiteral("q")).toDouble());
         d.gainDb  = static_cast<float>(b.value(QStringLiteral("gainDb")).toDouble());
+        d.dynThresholdDb = static_cast<float>(b.value(QStringLiteral("dynThresholdDb")).toDouble());
+        d.dynGainReductionDb = static_cast<float>(b.value(QStringLiteral("dynGainReductionDb")).toDouble());
         data.push_back(d);
     }
     m_eqCurve->setBands(data);

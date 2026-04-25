@@ -170,6 +170,12 @@ QVariantList DspController::eqBands() const
         map.insert(QStringLiteral("frequencyHz"), eq.bandFrequency(i));
         map.insert(QStringLiteral("q"), eq.bandQ(i));
         map.insert(QStringLiteral("gainDb"), eq.bandGainDb(i));
+        map.insert(QStringLiteral("dynThresholdDb"), eq.bandDynamicThresholdDb(i));
+        map.insert(QStringLiteral("dynRatio"), eq.bandDynamicRatio(i));
+        map.insert(QStringLiteral("dynAttackMs"), eq.bandDynamicAttackMs(i));
+        map.insert(QStringLiteral("dynReleaseMs"), eq.bandDynamicReleaseMs(i));
+        map.insert(QStringLiteral("dynRangeDb"), eq.bandDynamicRangeDb(i));
+        map.insert(QStringLiteral("dynGainReductionDb"), eq.bandDynamicGainReductionDb(i));
         list.append(map);
     }
     return list;
@@ -207,6 +213,41 @@ void DspController::setEqBandGainDb(int band, float gainDb)
 {
     if (band < 0 || band >= kEqBandCount) return;
     m_chain->eq().setBandGainDb(band, gainDb);
+    emit eqChanged();
+}
+
+void DspController::setEqBandDynamicThresholdDb(int band, float thresholdDb)
+{
+    if (band < 0 || band >= kEqBandCount) return;
+    m_chain->eq().setBandDynamicThresholdDb(band, thresholdDb);
+    emit eqChanged();
+}
+
+void DspController::setEqBandDynamicRatio(int band, float ratio)
+{
+    if (band < 0 || band >= kEqBandCount) return;
+    m_chain->eq().setBandDynamicRatio(band, ratio);
+    emit eqChanged();
+}
+
+void DspController::setEqBandDynamicAttackMs(int band, float attackMs)
+{
+    if (band < 0 || band >= kEqBandCount) return;
+    m_chain->eq().setBandDynamicAttackMs(band, attackMs);
+    emit eqChanged();
+}
+
+void DspController::setEqBandDynamicReleaseMs(int band, float releaseMs)
+{
+    if (band < 0 || band >= kEqBandCount) return;
+    m_chain->eq().setBandDynamicReleaseMs(band, releaseMs);
+    emit eqChanged();
+}
+
+void DspController::setEqBandDynamicRangeDb(int band, float rangeDb)
+{
+    if (band < 0 || band >= kEqBandCount) return;
+    m_chain->eq().setBandDynamicRangeDb(band, rangeDb);
     emit eqChanged();
 }
 
@@ -254,6 +295,11 @@ ChainParams DspController::buildSnapshot() const
         b.freqHz     = eq.bandFrequency(i);
         b.q          = eq.bandQ(i);
         b.gainDb     = eq.bandGainDb(i);
+        b.dynThresholdDb = eq.bandDynamicThresholdDb(i);
+        b.dynRatio = eq.bandDynamicRatio(i);
+        b.dynAttackMs = eq.bandDynamicAttackMs(i);
+        b.dynReleaseMs = eq.bandDynamicReleaseMs(i);
+        b.dynRangeDb = eq.bandDynamicRangeDb(i);
     }
     return p;
 }
@@ -284,6 +330,11 @@ void DspController::applySnapshot(const ChainParams &params)
         eq.setBandFrequency(i, band.freqHz);
         eq.setBandQ(i, band.q);
         eq.setBandGainDb(i, band.gainDb);
+        eq.setBandDynamicThresholdDb(i, band.dynThresholdDb);
+        eq.setBandDynamicRatio(i, band.dynRatio);
+        eq.setBandDynamicAttackMs(i, band.dynAttackMs);
+        eq.setBandDynamicReleaseMs(i, band.dynReleaseMs);
+        eq.setBandDynamicRangeDb(i, band.dynRangeDb);
     }
 
     pushCompressorParams();
@@ -332,6 +383,11 @@ void DspController::loadFromSettings()
             band.freqHz = settings.value(QStringLiteral("frequencyHz"), band.freqHz).toFloat();
             band.q = settings.value(QStringLiteral("q"), band.q).toFloat();
             band.gainDb = settings.value(QStringLiteral("gainDb"), band.gainDb).toFloat();
+            band.dynThresholdDb = settings.value(QStringLiteral("dynThresholdDb"), band.dynThresholdDb).toFloat();
+            band.dynRatio = settings.value(QStringLiteral("dynRatio"), band.dynRatio).toFloat();
+            band.dynAttackMs = settings.value(QStringLiteral("dynAttackMs"), band.dynAttackMs).toFloat();
+            band.dynReleaseMs = settings.value(QStringLiteral("dynReleaseMs"), band.dynReleaseMs).toFloat();
+            band.dynRangeDb = settings.value(QStringLiteral("dynRangeDb"), band.dynRangeDb).toFloat();
         }
     }
     settings.endArray();
@@ -351,6 +407,11 @@ void DspController::resetBandToDefaults(int band)
     eq.setBandFrequency(band, b.freqHz);
     eq.setBandQ(band, b.q);
     eq.setBandGainDb(band, b.gainDb);
+    eq.setBandDynamicThresholdDb(band, b.dynThresholdDb);
+    eq.setBandDynamicRatio(band, b.dynRatio);
+    eq.setBandDynamicAttackMs(band, b.dynAttackMs);
+    eq.setBandDynamicReleaseMs(band, b.dynReleaseMs);
+    eq.setBandDynamicRangeDb(band, b.dynRangeDb);
     emit eqChanged();
 }
 
@@ -389,6 +450,11 @@ void DspController::saveToSettings() const
         settings.setValue(QStringLiteral("frequencyHz"), eq.bandFrequency(i));
         settings.setValue(QStringLiteral("q"), eq.bandQ(i));
         settings.setValue(QStringLiteral("gainDb"), eq.bandGainDb(i));
+        settings.setValue(QStringLiteral("dynThresholdDb"), eq.bandDynamicThresholdDb(i));
+        settings.setValue(QStringLiteral("dynRatio"), eq.bandDynamicRatio(i));
+        settings.setValue(QStringLiteral("dynAttackMs"), eq.bandDynamicAttackMs(i));
+        settings.setValue(QStringLiteral("dynReleaseMs"), eq.bandDynamicReleaseMs(i));
+        settings.setValue(QStringLiteral("dynRangeDb"), eq.bandDynamicRangeDb(i));
     }
     settings.endArray();
     settings.endGroup();

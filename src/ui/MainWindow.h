@@ -40,10 +40,6 @@ protected:
 private:
     struct EqBandWidgets {
         QCheckBox *enabled = nullptr;
-        QComboBox *type = nullptr;
-        ui::Knob *frequency = nullptr;
-        ui::Knob *q = nullptr;
-        ui::Knob *gain = nullptr;
     };
 
     void buildUi();
@@ -98,8 +94,16 @@ private:
     QCheckBox *m_showInputSpectrum = nullptr;
     QCheckBox *m_showOutputSpectrum = nullptr;
     QCheckBox *m_showHeatmap = nullptr;
+    QLabel *m_eqSelectedBand = nullptr;
+    ui::Knob *m_eqDynThreshold = nullptr;
+    ui::Knob *m_eqDynRatio = nullptr;
+    ui::Knob *m_eqDynAttack = nullptr;
+    ui::Knob *m_eqDynRelease = nullptr;
+    ui::Knob *m_eqDynRange = nullptr;
+    QLabel *m_eqDynMeter = nullptr;
     ui::EqCurve *m_eqCurve = nullptr;
     QVector<EqBandWidgets> m_eqBands;
+    int m_selectedEqBand = 0;
 
     QPushButton *m_resetButton = nullptr;
 

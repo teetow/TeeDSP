@@ -3,12 +3,16 @@
 #include "../Theme.h"
 
 #include <QMouseEvent>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace ui {
 
@@ -236,18 +240,20 @@ double EqCurve::specDbToY(double db) const
     return r.bottom() - n * r.height();
 }
 
-double EqCurve::bandMagDb(const EqBandData &b, double hz) const
+double EqCurve::bandMagDb(const EqBandData &b, double hz, bool includeDynamic) const
 {
     if (!b.enabled) return 0.0;
-    const BiquadCoefs c = coefsFor(b.type, b.freqHz, b.q, b.gainDb, m_sampleRate);
+    const double dynamicOffsetDb = includeDynamic ? b.dynGainReductionDb : 0.0;
+    const double effectiveGainDb = b.gainDb - dynamicOffsetDb;
+    const BiquadCoefs c = coefsFor(b.type, b.freqHz, b.q, effectiveGainDb, m_sampleRate);
     return magDbAt(c, hz, m_sampleRate);
 }
 
-double EqCurve::combinedMagDb(double hz) const
+double EqCurve::combinedMagDb(double hz, bool includeDynamic) const
 {
     if (!m_eqEnabled) return 0.0;
     double sum = 0.0;
-    for (const auto &b : m_bands) sum += bandMagDb(b, hz);
+    for (const auto &b : m_bands) sum += bandMagDb(b, hz, includeDynamic);
     return sum;
 }
 
@@ -422,12 +428,12 @@ void EqCurve::paintEvent(QPaintEvent *)
                             : QStringLiteral("%1").arg(db, 0, 'f', 0));
     }
 
-    // --- Per-band response (faint, in band colour) ---
+    // --- Per-band response (faint, in band colour, live dynamic gain included) ---
     if (m_eqEnabled) {
         for (int i = 0; i < m_bands.size(); ++i) {
             const auto &b = m_bands[i];
             if (!b.enabled) continue;
-            const BiquadCoefs c = coefsFor(b.type, b.freqHz, b.q, b.gainDb, m_sampleRate);
+            const BiquadCoefs c = coefsFor(b.type, b.freqHz, b.q, b.gainDb - b.dynGainReductionDb, m_sampleRate);
             QPainterPath path;
             bool started = false;
             const int steps = static_cast<int>(r.width());
@@ -445,7 +451,59 @@ void EqCurve::paintEvent(QPaintEvent *)
         }
     }
 
-    // --- Combined response ---
+    // --- Dynamic threshold line (detector dB scale) ---
+    // Nova-style visual reference: connect each enabled band's threshold over frequency.
+    std::vector<std::pair<double, double>> thresholdPoints;
+    thresholdPoints.reserve(static_cast<std::size_t>(m_bands.size()));
+    for (const auto &b : m_bands) {
+        if (!b.enabled) continue;
+        thresholdPoints.emplace_back(static_cast<double>(b.freqHz), static_cast<double>(b.dynThresholdDb));
+    }
+    if (!thresholdPoints.empty()) {
+        std::sort(thresholdPoints.begin(), thresholdPoints.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+
+        QPainterPath thresholdPath;
+        for (std::size_t i = 0; i < thresholdPoints.size(); ++i) {
+            const double x = freqToX(thresholdPoints[i].first);
+            const double y = specDbToY(thresholdPoints[i].second);
+            if (i == 0) thresholdPath.moveTo(x, y);
+            else thresholdPath.lineTo(x, y);
+        }
+
+        QColor thresholdColor(0x5D, 0xA9, 0xFF, 220);
+        p.setPen(QPen(thresholdColor, 1.5, Qt::DashLine));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(thresholdPath);
+
+        p.setBrush(thresholdColor);
+        p.setPen(QPen(theme::kBgDeep, 1.2));
+        for (const auto &point : thresholdPoints) {
+            p.drawEllipse(QPointF(freqToX(point.first), specDbToY(point.second)), 3.0, 3.0);
+        }
+    }
+
+    // --- Combined static response (no dynamic GR) ---
+    {
+        QPainterPath staticPath;
+        bool started = false;
+        const int steps = static_cast<int>(r.width());
+        for (int s = 0; s <= steps; ++s) {
+            const double x = r.left() + s;
+            const double f = xToFreq(x);
+            const double y = gainToY(combinedMagDb(f, false));
+            if (!started) { staticPath.moveTo(x, y); started = true; }
+            else          { staticPath.lineTo(x, y); }
+        }
+
+        QColor staticColor = theme::kTextDim;
+        staticColor.setAlphaF(0.55);
+        p.setPen(QPen(staticColor, 1.3, Qt::DashLine));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(staticPath);
+    }
+
+    // --- Combined live response (dynamic GR applied) ---
     {
         QPainterPath path;
         bool started = false;
@@ -453,26 +511,24 @@ void EqCurve::paintEvent(QPaintEvent *)
         for (int s = 0; s <= steps; ++s) {
             const double x = r.left() + s;
             const double f = xToFreq(x);
-            const double y = gainToY(combinedMagDb(f));
+            const double y = gainToY(combinedMagDb(f, true));
             if (!started) { path.moveTo(x, y); started = true; }
             else          { path.lineTo(x, y); }
         }
-        QPainterPath fill = path;
-        fill.lineTo(r.right(), gainToY(0));
-        fill.lineTo(r.left(),  gainToY(0));
-        fill.closeSubpath();
-        // Keep the EQ curve fill very faint so the spectrum shapes underneath
-        // remain readable. The curve outline does the heavy lifting.
-        QColor fillCol = theme::kAccent;
-        fillCol.setAlphaF(0.04);
-        p.setPen(Qt::NoPen);
-        p.setBrush(fillCol);
-        p.drawPath(fill);
-
         QColor lineCol = m_eqEnabled ? theme::kAccent : theme::kTextDim;
         p.setPen(QPen(lineCol, 2.0));
         p.setBrush(Qt::NoBrush);
         p.drawPath(path);
+    }
+
+    // --- Right-side detector scale labels for threshold markers ---
+    p.setPen(theme::kTextDim);
+    const double scTicks[] = {-60.0, -48.0, -36.0, -24.0, -12.0, 0.0};
+    for (double db : scTicks) {
+        const double y = specDbToY(db);
+        p.drawText(QRectF(r.right() + 2, y - 8, 30, 16),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   QString::number(db, 'f', 0));
     }
 
     // --- Band handles ---
@@ -568,6 +624,77 @@ void EqCurve::mouseDoubleClickEvent(QMouseEvent *e)
         // Cancel any in-progress drag started by the press half of the double-click.
         m_draggingBand = -1;
         emit bandReset(hit);
+        update();
+    }
+}
+
+void EqCurve::wheelEvent(QWheelEvent *e)
+{
+    const int hit = hitBand(e->position());
+    if (hit < 0 || hit >= m_bands.size()) {
+        e->ignore();
+        return;
+    }
+
+    const float steps = static_cast<float>(e->angleDelta().y()) / 120.0f;
+    if (std::fabs(steps) < 0.001f) {
+        e->accept();
+        return;
+    }
+
+    auto &b = m_bands[hit];
+    float q = b.q;
+    q *= std::pow(1.1f, steps);
+    q = std::clamp(q, 0.1f, 20.0f);
+    b.q = q;
+    emit bandQAdjusted(hit, q);
+    update();
+    e->accept();
+}
+
+void EqCurve::contextMenuEvent(QContextMenuEvent *e)
+{
+    const int hit = hitBand(e->pos());
+    if (hit < 0 || hit >= m_bands.size()) {
+        e->ignore();
+        return;
+    }
+
+    emit bandSelected(hit);
+
+    QMenu menu(this);
+    QAction *peak = menu.addAction(QStringLiteral("Peaking"));
+    QAction *lowShelf = menu.addAction(QStringLiteral("Low Shelf"));
+    QAction *highShelf = menu.addAction(QStringLiteral("High Shelf"));
+    peak->setCheckable(true);
+    lowShelf->setCheckable(true);
+    highShelf->setCheckable(true);
+
+    const int type = std::clamp(m_bands[hit].type, 0, 2);
+    peak->setChecked(type == 0);
+    lowShelf->setChecked(type == 1);
+    highShelf->setChecked(type == 2);
+
+    menu.addSeparator();
+    QAction *resetAction = menu.addAction(QStringLiteral("Reset Band"));
+
+    QAction *selected = menu.exec(e->globalPos());
+    if (!selected)
+        return;
+
+    if (selected == resetAction) {
+        emit bandReset(hit);
+        return;
+    }
+
+    int newType = type;
+    if (selected == peak) newType = 0;
+    else if (selected == lowShelf) newType = 1;
+    else if (selected == highShelf) newType = 2;
+
+    if (newType != type) {
+        m_bands[hit].type = newType;
+        emit bandTypeChanged(hit, newType);
         update();
     }
 }

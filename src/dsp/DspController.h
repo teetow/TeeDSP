@@ -79,6 +79,11 @@ public:
     Q_INVOKABLE void setEqBandFrequency(int band, float hz);
     Q_INVOKABLE void setEqBandQ(int band, float q);
     Q_INVOKABLE void setEqBandGainDb(int band, float gainDb);
+    Q_INVOKABLE void setEqBandDynamicThresholdDb(int band, float thresholdDb);
+    Q_INVOKABLE void setEqBandDynamicRatio(int band, float ratio);
+    Q_INVOKABLE void setEqBandDynamicAttackMs(int band, float attackMs);
+    Q_INVOKABLE void setEqBandDynamicReleaseMs(int band, float releaseMs);
+    Q_INVOKABLE void setEqBandDynamicRangeDb(int band, float rangeDb);
     Q_INVOKABLE void resetBandToDefaults(int band);
     Q_INVOKABLE void resetToDefaults();
 
