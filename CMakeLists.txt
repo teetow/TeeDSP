@@ -10,7 +10,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC OFF)
 set(CMAKE_AUTORCC OFF)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets)
 
 set(DSP_SOURCES
 	src/dsp/Compressor.cpp
@@ -64,6 +64,8 @@ target_link_libraries(TeeDsp PRIVATE
 	Qt6::Core
 	Qt6::Gui
 	Qt6::Widgets
+	Qt6::OpenGL
+	Qt6::OpenGLWidgets
 	Avrt
 	Mmdevapi
 	Ole32

@@ -61,10 +61,6 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
     m_bypassAction->setCheckable(true);
     connect(m_bypassAction, &QAction::toggled, this, &TrayController::onBypass);
 
-    m_autoRouteAction = m_menu->addAction(QStringLiteral("&Auto-route to physical output"));
-    m_autoRouteAction->setCheckable(true);
-    connect(m_autoRouteAction, &QAction::toggled, this, &TrayController::onAutoRoute);
-
     m_startWithWindowsAction = m_menu->addAction(QStringLiteral("Start &with Windows"));
     m_startWithWindowsAction->setCheckable(true);
     connect(m_startWithWindowsAction, &QAction::toggled, this, &TrayController::onStartWithWindows);
@@ -108,14 +104,6 @@ void TrayController::setBypass(bool bypass)
     }
 }
 
-void TrayController::setAutoRoute(bool on)
-{
-    if (m_autoRouteAction) {
-        QSignalBlocker block(m_autoRouteAction);
-        m_autoRouteAction->setChecked(on);
-    }
-}
-
 void TrayController::setStartWithWindows(bool on)
 {
     if (m_startWithWindowsAction) {
@@ -144,7 +132,6 @@ void TrayController::onShowToggle()
 }
 
 void TrayController::onBypass(bool b)               { emit bypassToggled(b); }
-void TrayController::onAutoRoute(bool b)            { emit autoRouteToggled(b); }
 void TrayController::onStartWithWindows(bool b)     { emit startWithWindowsToggled(b); }
 void TrayController::onQuit()                       { emit quitRequested(); }
 

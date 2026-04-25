@@ -98,19 +98,18 @@ void AudioEngine::stop()
     m_captureSampleRate = 0;
     m_captureChannels = 0;
     m_currentRenderId.clear();
+    // Park meters at silence so the UI doesn't show the last-seen value while
+    // capture is stopped.
+    m_recentHotDbfs.store(-120.0f, std::memory_order_relaxed);
+    m_recentInputPeakDbfs.store(-120.0f, std::memory_order_relaxed);
+    m_recentOutputPeakDbfs.store(-120.0f, std::memory_order_relaxed);
+    m_recentOutputRmsDbfs.store(-120.0f, std::memory_order_relaxed);
     emit runningChanged();
 }
 
 bool AudioEngine::isRunning() const
 {
     return m_capture.isRunning() && m_render.isRunning();
-}
-
-void AudioEngine::setAutoRoute(bool enabled)
-{
-    if (m_autoRoute == enabled) return;
-    m_autoRoute = enabled;
-    if (isRunning()) onDevicesChanged();
 }
 
 void AudioEngine::setPreferredRender(const QString &id)
@@ -120,14 +119,10 @@ void AudioEngine::setPreferredRender(const QString &id)
     if (isRunning()) onDevicesChanged();
 }
 
-// Returns the device id we should be rendering to right now, given the
-// current capture target, the user's preference, and auto-route mode.
-//
-//  - In manual mode, this is just the preferred render id (or empty if it
-//    isn't in the device list at all).
-//  - In auto-route mode, the preferred wins when active+non-virtual; if it's
-//    inactive we fall back to the first non-virtual active endpoint, ignoring
-//    the capture endpoint to prevent a feedback loop.
+// Returns the device id we should be rendering to right now. The preferred
+// endpoint wins when it's active and non-virtual; otherwise we fall back to
+// the first non-virtual active endpoint, skipping the capture endpoint to
+// prevent a feedback loop.
 QString AudioEngine::pickRenderId() const
 {
     const auto devices = WasapiDevices::enumerateRender();
@@ -141,13 +136,6 @@ QString AudioEngine::pickRenderId() const
     auto eligible = [&](const DeviceInfo &d) {
         return d.isActive && !d.isVirtual && d.id != m_captureDeviceId;
     };
-
-    if (!m_autoRoute) {
-        const auto *p = byId(m_preferredRenderId);
-        if (p && p->isActive && p->id != m_captureDeviceId)
-            return p->id;
-        return m_preferredRenderId;
-    }
 
     if (!m_preferredRenderId.isEmpty()) {
         const auto *p = byId(m_preferredRenderId);
@@ -196,21 +184,19 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 {
     if (!m_chain || numFrames <= 0 || numChannels <= 0) return;
 
-    // Pre-DSP peak telemetry for input edge meter.
-    float prePeak = 0.0f;
+    // Pre-DSP peak telemetry for input edge meter. Always store — including
+    // -120 for silent packets — so the UI sees a fresh value every packet
+    // and can decay toward silence smoothly rather than tearing to -inf.
     {
+        float prePeak = 0.0f;
         const int sampleCount = numFrames * numChannels;
         for (int i = 0; i < sampleCount; ++i) {
             const float a = std::fabs(interleaved[i]);
             if (a > prePeak)
                 prePeak = a;
         }
-        if (prePeak > 0.0f) {
-            const float dbfs = 20.0f * std::log10(prePeak);
-            float cur = m_recentInputPeakDbfs.load(std::memory_order_relaxed);
-            while (dbfs > cur
-                   && !m_recentInputPeakDbfs.compare_exchange_weak(cur, dbfs, std::memory_order_relaxed)) {}
-        }
+        const float dbfs = (prePeak > 1e-6f) ? 20.0f * std::log10(prePeak) : -120.0f;
+        m_recentInputPeakDbfs.store(dbfs, std::memory_order_relaxed);
     }
 
     if (!m_chainPrepared
@@ -245,22 +231,18 @@ void AudioEngine::onCapturePacket(const float *interleaved,
             peak = a;
         sumSq += static_cast<double>(s) * static_cast<double>(s);
     }
-    if (peak > 0.0f) {
-        const float dbfs = 20.0f * std::log10(peak);
-        float cur = m_recentHotDbfs.load(std::memory_order_relaxed);
-        while (dbfs > cur
-               && !m_recentHotDbfs.compare_exchange_weak(cur, dbfs, std::memory_order_relaxed)) {}
-
-        cur = m_recentOutputPeakDbfs.load(std::memory_order_relaxed);
-        while (dbfs > cur
-               && !m_recentOutputPeakDbfs.compare_exchange_weak(cur, dbfs, std::memory_order_relaxed)) {}
+    {
+        const float dbfs = (peak > 1e-6f) ? 20.0f * std::log10(peak) : -120.0f;
+        m_recentHotDbfs.store(dbfs, std::memory_order_relaxed);
+        m_recentOutputPeakDbfs.store(dbfs, std::memory_order_relaxed);
     }
-    if (sampleCount > 0 && sumSq > 0.0) {
-        const double rms = std::sqrt(sumSq / static_cast<double>(sampleCount));
-        const float rmsDbfs = static_cast<float>(20.0 * std::log10(rms));
-        float cur = m_recentOutputRmsDbfs.load(std::memory_order_relaxed);
-        while (rmsDbfs > cur
-               && !m_recentOutputRmsDbfs.compare_exchange_weak(cur, rmsDbfs, std::memory_order_relaxed)) {}
+    {
+        float rmsDbfs = -120.0f;
+        if (sampleCount > 0 && sumSq > 0.0) {
+            const double rms = std::sqrt(sumSq / static_cast<double>(sampleCount));
+            if (rms > 1e-6) rmsDbfs = static_cast<float>(20.0 * std::log10(rms));
+        }
+        m_recentOutputRmsDbfs.store(rmsDbfs, std::memory_order_relaxed);
     }
 
     if (m_analyzer) m_analyzer->pushPost(interleaved, numFrames, numChannels);

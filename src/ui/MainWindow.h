@@ -57,9 +57,11 @@ private:
     void refreshDevices();
     void refreshEngineStatus();
     void refreshEqCurve();
+    // Lightweight refresh of just the dynamic knobs/labels for the currently
+    // selected band — used on band-selection changes to avoid a full UI sync.
+    void syncSelectedBandDyn();
 
     void onStartStopClicked();
-    void onResetDefaultsClicked();
     void onEngineError(const QString &message);
 
     QString selectedCaptureDeviceId() const;
@@ -71,7 +73,6 @@ private:
 
     QComboBox *m_captureDevice = nullptr;
     QComboBox *m_renderDevice = nullptr;
-    QCheckBox *m_autoRoute = nullptr;
     QPushButton *m_refreshDevicesButton = nullptr;
     QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
@@ -117,7 +118,6 @@ private:
     QVector<EqBandWidgets> m_eqBands;
     int m_selectedEqBand = 0;
 
-    QPushButton *m_resetButton = nullptr;
 
     dsp::ProcessorChain *m_chain = nullptr;
     dsp::DspController *m_dspController = nullptr;
@@ -127,4 +127,13 @@ private:
     QList<host::DeviceInfo> m_devices;
     bool m_syncingUi = false;
     bool m_quitting = false;
+
+    // Smoothed meter state. Each tick: instant attack, exponential release
+    // with kMeterReleaseTauMs time-constant. Avoids alternating -inf frames
+    // when meter polling outpaces the WASAPI packet rate.
+    float m_dispInPeakDbfs = -120.0f;
+    float m_dispOutPeakDbfs = -120.0f;
+    float m_dispOutRmsDbfs = -120.0f;
+    float m_dispOutHotDbfs = -120.0f;
+    qint64 m_lastMeterTickMs = 0;
 };

@@ -8,7 +8,7 @@
 namespace host {
 
 namespace {
-constexpr int kTickIntervalMs = 33;          // ~30 Hz spectrum updates
+constexpr int kTickIntervalMs = 16;          // ~60 Hz spectrum updates
 constexpr float kSmoothingAlpha = 0.55f;     // EMA on the dB output
 
 constexpr int kBins = SpectrumAnalyzer::kFftSize / 2 + 1;
@@ -25,7 +25,7 @@ SpectrumAnalyzer::SpectrumAnalyzer(QObject *parent)
     m_outDb.fill(-120.0f);
 
     m_timer.setInterval(kTickIntervalMs);
-    m_timer.setTimerType(Qt::CoarseTimer);
+    m_timer.setTimerType(Qt::PreciseTimer);
     connect(&m_timer, &QTimer::timeout, this, &SpectrumAnalyzer::tick);
     // Always-on: tick() short-circuits if !m_running. start()/stop() can be
     // called from the WASAPI capture thread, and QTimer::start() across threads

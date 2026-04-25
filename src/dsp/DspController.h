@@ -4,10 +4,29 @@
 #include <QTimer>
 #include <QVariantList>
 
+#include <array>
+
 #include "ChainParams.h"
 #include "ProcessorChain.h"
 
 namespace dsp {
+
+// Lightweight POD view of a single EQ band, for high-frequency UI reads
+// (paint loops). Intentionally NOT exposed via QVariant — direct field access
+// avoids QVariantMap allocation and QString hashing on every meter tick.
+struct EqBandView {
+    bool  enabled;
+    int   type;
+    float freqHz;
+    float q;
+    float gainDb;
+    float dynThresholdDb;
+    float dynRatio;
+    float dynAttackMs;
+    float dynReleaseMs;
+    float dynRangeDb;
+    float dynGainReductionDb;
+};
 
 // QObject wrapper that owns the ProcessorChain and exposes its parameters
 // to QML. The audio thread reads parameters via std::atomic loads inside
@@ -79,6 +98,10 @@ public:
     void setEqEnabled(bool b);
     int eqBandCount() const { return kEqBandCount; }
     QVariantList eqBands() const;
+
+    // Typed snapshot — preferred for high-frequency UI reads.
+    void eqBandViews(std::array<EqBandView, kEqBandCount> &out) const;
+    EqBandView eqBandView(int band) const;
 
     Q_INVOKABLE void setEqBandEnabled(int band, bool enabled);
     Q_INVOKABLE void setEqBandType(int band, int type);

@@ -6,7 +6,10 @@
 namespace dsp {
 
 namespace {
-constexpr int kMeterIntervalMs = 50;
+// ~125 Hz polling — drives both the meter readouts and the EQ-curve repaint.
+// With the EqCurve on QOpenGLWidget, update() requests are coalesced to
+// vsync, so this rate doesn't burn extra GPU above the display refresh.
+constexpr int kMeterIntervalMs = 8;
 constexpr const char *kSettingsGroup = "dsp";
 
 ChainParams defaultParams()
@@ -31,7 +34,7 @@ DspController::DspController(ProcessorChain *chain, QObject *parent)
     m_chain->setBypass(m_bypass);
 
     m_meterTimer.setInterval(kMeterIntervalMs);
-    m_meterTimer.setTimerType(Qt::CoarseTimer);
+    m_meterTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_meterTimer, &QTimer::timeout, this, &DspController::meterChanged);
     m_meterTimer.start();
 }
@@ -197,6 +200,44 @@ QVariantList DspController::eqBands() const
         list.append(map);
     }
     return list;
+}
+
+void DspController::eqBandViews(std::array<EqBandView, kEqBandCount> &out) const
+{
+    auto &eq = m_chain->eq();
+    for (int i = 0; i < kEqBandCount; ++i) {
+        EqBandView &v = out[i];
+        v.enabled            = eq.bandEnabled(i);
+        v.type               = static_cast<int>(eq.bandType(i));
+        v.freqHz             = eq.bandFrequency(i);
+        v.q                  = eq.bandQ(i);
+        v.gainDb             = eq.bandGainDb(i);
+        v.dynThresholdDb     = eq.bandDynamicThresholdDb(i);
+        v.dynRatio           = eq.bandDynamicRatio(i);
+        v.dynAttackMs        = eq.bandDynamicAttackMs(i);
+        v.dynReleaseMs       = eq.bandDynamicReleaseMs(i);
+        v.dynRangeDb         = eq.bandDynamicRangeDb(i);
+        v.dynGainReductionDb = eq.bandDynamicGainReductionDb(i);
+    }
+}
+
+EqBandView DspController::eqBandView(int band) const
+{
+    EqBandView v{};
+    if (band < 0 || band >= kEqBandCount) return v;
+    auto &eq = m_chain->eq();
+    v.enabled            = eq.bandEnabled(band);
+    v.type               = static_cast<int>(eq.bandType(band));
+    v.freqHz             = eq.bandFrequency(band);
+    v.q                  = eq.bandQ(band);
+    v.gainDb             = eq.bandGainDb(band);
+    v.dynThresholdDb     = eq.bandDynamicThresholdDb(band);
+    v.dynRatio           = eq.bandDynamicRatio(band);
+    v.dynAttackMs        = eq.bandDynamicAttackMs(band);
+    v.dynReleaseMs       = eq.bandDynamicReleaseMs(band);
+    v.dynRangeDb         = eq.bandDynamicRangeDb(band);
+    v.dynGainReductionDb = eq.bandDynamicGainReductionDb(band);
+    return v;
 }
 
 void DspController::setEqBandEnabled(int band, bool enabled)

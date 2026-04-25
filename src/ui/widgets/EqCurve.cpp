@@ -8,9 +8,11 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
+#include <QResizeEvent>
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace ui {
@@ -119,9 +121,8 @@ BiquadCoefs coefsFor(int type, double freqHz, double q, double gainDb, double sr
     return c;
 }
 
-double magDbAt(const BiquadCoefs &c, double hz, double sr)
+inline double magDbAt(const BiquadCoefs &c, double w)
 {
-    const double w = 2.0 * M_PI * hz / sr;
     const double cw  = std::cos(w);
     const double cw2 = std::cos(2.0 * w);
     const double sw  = std::sin(w);
@@ -140,20 +141,30 @@ double magDbAt(const BiquadCoefs &c, double hz, double sr)
 
 } // namespace
 
-EqCurve::EqCurve(QWidget *parent) : QWidget(parent)
+EqCurve::EqCurve(QWidget *parent) : QOpenGLWidget(parent)
 {
     setMouseTracking(true);
     setAttribute(Qt::WA_Hover, true);
+    // Background is fully drawn each frame — let Qt skip its automatic clear.
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
 }
 
 void EqCurve::setSampleRate(double sr)    { m_sampleRate = sr; update(); }
-void EqCurve::setBands(const QVector<EqBandData> &bands) { m_bands = bands; update(); }
+
+void EqCurve::setBands(const QVector<EqBandData> &bands)
+{
+    m_bands = bands;
+    update();
+}
+
 void EqCurve::setEqEnabled(bool enabled)  { m_eqEnabled = enabled; update(); }
 
 void EqCurve::setInputSpectrum(const QVector<float> &mag, double sr, int /*fftSize*/)
 {
     m_inSpec = mag;
     m_inSpecSr = sr;
+    if (m_showHeatmap)
+        renderHeatmapImage(m_inSpec, m_inSpecSr, m_heatInImage);
     update();
 }
 
@@ -161,6 +172,8 @@ void EqCurve::setOutputSpectrum(const QVector<float> &mag, double sr, int /*fftS
 {
     m_outSpec = mag;
     m_outSpecSr = sr;
+    if (m_showHeatmap)
+        renderHeatmapImage(m_outSpec, m_outSpecSr, m_heatOutImage);
     update();
 }
 
@@ -168,6 +181,8 @@ void EqCurve::clearSpectra()
 {
     m_inSpec.clear();
     m_outSpec.clear();
+    m_heatInImage = QImage();
+    m_heatOutImage = QImage();
     update();
 }
 
@@ -178,22 +193,15 @@ void EqCurve::setShowHeatmap(bool show)
 {
     if (m_showHeatmap == show) return;
     m_showHeatmap = show;
-    update();
-}
-
-void EqCurve::pushHeatmapFrame(const QVector<float> &magDb, double sr)
-{
-    if (magDb.isEmpty()) return;
-    m_heatmapSr = sr;
-    m_heatmapFrames.push_back(magDb);
-    while (static_cast<int>(m_heatmapFrames.size()) > kHeatmapHistory)
-        m_heatmapFrames.pop_front();
-    if (m_showHeatmap) update();
-}
-
-void EqCurve::clearHeatmap()
-{
-    m_heatmapFrames.clear();
+    if (show) {
+        if (!m_inSpec.isEmpty())
+            renderHeatmapImage(m_inSpec, m_inSpecSr, m_heatInImage);
+        if (!m_outSpec.isEmpty())
+            renderHeatmapImage(m_outSpec, m_outSpecSr, m_heatOutImage);
+    } else {
+        m_heatInImage = QImage();
+        m_heatOutImage = QImage();
+    }
     update();
 }
 
@@ -239,23 +247,6 @@ double EqCurve::specDbToY(double db) const
     return r.bottom() - n * r.height();
 }
 
-double EqCurve::bandMagDb(const EqBandData &b, double hz, bool includeDynamic) const
-{
-    if (!b.enabled) return 0.0;
-    const double dynamicOffsetDb = includeDynamic ? b.dynGainReductionDb : 0.0;
-    const double effectiveGainDb = b.gainDb - dynamicOffsetDb;
-    const BiquadCoefs c = coefsFor(b.type, b.freqHz, b.q, effectiveGainDb, m_sampleRate);
-    return magDbAt(c, hz, m_sampleRate);
-}
-
-double EqCurve::combinedMagDb(double hz, bool includeDynamic) const
-{
-    if (!m_eqEnabled) return 0.0;
-    double sum = 0.0;
-    for (const auto &b : m_bands) sum += bandMagDb(b, hz, includeDynamic);
-    return sum;
-}
-
 int EqCurve::hitBand(const QPointF &pos) const
 {
     int best = -1;
@@ -269,37 +260,127 @@ int EqCurve::hitBand(const QPointF &pos) const
     return best;
 }
 
-void EqCurve::drawSpectrum(QPainter &p, const QVector<float> &mag,
-                           double specSr, const QColor &fill,
-                           const QColor &stroke) const
+void EqCurve::resizeEvent(QResizeEvent *e)
+{
+    QOpenGLWidget::resizeEvent(e);
+    rebuildColumnTables();
+}
+
+void EqCurve::rebuildColumnTables()
+{
+    const QRectF r = plotRect();
+    const int w = std::max(1, static_cast<int>(r.width()));
+    const int h = std::max(1, static_cast<int>(r.height()));
+    if (w == m_cachedPlotWidth && h == m_cachedPlotHeight) return;
+
+    m_cachedPlotWidth = w;
+    m_cachedPlotHeight = h;
+
+    m_colFreq.resize(w + 1);
+    const double logMin = std::log10(kFreqMin);
+    const double logMax = std::log10(kFreqMax);
+    const double invW = 1.0 / static_cast<double>(w);
+    for (int i = 0; i <= w; ++i) {
+        const double n = static_cast<double>(i) * invW;
+        m_colFreq[i] = std::pow(10.0, logMin + n * (logMax - logMin));
+    }
+
+    // Rasterize size changed → invalidate cached heatmap stripes.
+    m_heatInImage = QImage();
+    m_heatOutImage = QImage();
+    if (m_showHeatmap) {
+        if (!m_inSpec.isEmpty())
+            renderHeatmapImage(m_inSpec, m_inSpecSr, m_heatInImage);
+        if (!m_outSpec.isEmpty())
+            renderHeatmapImage(m_outSpec, m_outSpecSr, m_heatOutImage);
+    }
+}
+
+void EqCurve::renderHeatmapImage(const QVector<float> &mag, double specSr,
+                                  QImage &out) const
+{
+    if (mag.isEmpty() || m_cachedPlotWidth <= 0 || m_cachedPlotHeight <= 0) {
+        out = QImage();
+        return;
+    }
+    const int bins = mag.size();
+    if (bins < 2) { out = QImage(); return; }
+
+    const int w = m_cachedPlotWidth;
+    const int h = m_cachedPlotHeight;
+    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
+    const float invRange = 1.0f / static_cast<float>(kSpecDbMax - kSpecDbMin);
+
+    if (out.width() != w || out.height() != h ||
+        out.format() != QImage::Format_ARGB32_Premultiplied)
+    {
+        out = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
+    }
+    out.fill(Qt::transparent);
+
+    for (int s = 0; s < w; ++s) {
+        const double f = std::clamp(m_colFreq[s], kFreqMin, kFreqMax);
+        const double bin = f / binHz;
+        const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
+        const int b1 = std::min(b0 + 1, bins - 1);
+        const double frac = bin - b0;
+        const double db = mag[b0] * (1.0 - frac) + mag[b1] * frac;
+
+        // Vertical extent of the column: from the spectrum height (top) down.
+        const double n = std::clamp(
+            (db - kSpecDbMin) / (kSpecDbMax - kSpecDbMin), 0.0, 1.0);
+        const int top = static_cast<int>(std::round((1.0 - n) * (h - 1)));
+
+        const float u = (static_cast<float>(db) - static_cast<float>(kSpecDbMin)) * invRange;
+        const QRgb col = infernoRgb(u);
+
+        for (int y = top; y < h; ++y) {
+            QRgb *line = reinterpret_cast<QRgb *>(out.scanLine(y));
+            line[s] = col;
+        }
+    }
+}
+
+void EqCurve::drawSpectrumOutline(QPainter &p, const QVector<float> &mag,
+                                   double specSr, const QColor &fill,
+                                   const QColor &stroke)
 {
     if (mag.isEmpty()) return;
-    const QRectF r = plotRect();
-
-    QPainterPath path;
-    bool started = false;
     const int bins = mag.size();
     if (bins < 2) return;
-    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
 
-    // Walk the plot's X resolution and pick the matching bin (or interpolate).
-    const int steps = static_cast<int>(r.width());
-    for (int s = 0; s <= steps; ++s) {
-        const double x = r.left() + s;
-        const double f = std::clamp(xToFreq(x), kFreqMin, kFreqMax);
+    const QRectF r = plotRect();
+    const int w = m_cachedPlotWidth;
+    if (w <= 0 || m_colFreq.size() < w) return;
+
+    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
+    const double rTop = r.top();
+    const double rBottom = r.bottom();
+    const double rHeight = r.height();
+    const double dbSpan = kSpecDbMax - kSpecDbMin;
+
+    QVector<QPointF> &poly = m_scratchPolyA;
+    poly.resize(w);
+    for (int s = 0; s < w; ++s) {
+        const double f = std::clamp(m_colFreq[s], kFreqMin, kFreqMax);
         const double bin = f / binHz;
         const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
         const int b1 = std::min(b0 + 1, bins - 1);
         const double t = bin - b0;
-        const double db = mag[b0] * (1.0 - t) + mag[b1] * t;
-        const double y = specDbToY(db);
-        if (!started) { path.moveTo(x, y); started = true; }
-        else          { path.lineTo(x, y); }
+        double db = mag[b0] * (1.0 - t) + mag[b1] * t;
+        if (db < kSpecDbMin) db = kSpecDbMin;
+        if (db > kSpecDbMax) db = kSpecDbMax;
+        const double n = (db - kSpecDbMin) / dbSpan;
+        const double y = rBottom - n * rHeight;
+        poly[s] = QPointF(r.left() + s, y);
     }
 
-    QPainterPath fillPath = path;
-    fillPath.lineTo(r.right(), r.bottom());
-    fillPath.lineTo(r.left(),  r.bottom());
+    // Filled area: stroke poly + close to bottom corners.
+    QPainterPath fillPath;
+    fillPath.moveTo(poly.first());
+    for (int i = 1; i < poly.size(); ++i) fillPath.lineTo(poly[i]);
+    fillPath.lineTo(r.right(), rBottom);
+    fillPath.lineTo(r.left(),  rBottom);
     fillPath.closeSubpath();
 
     p.setPen(Qt::NoPen);
@@ -308,51 +389,61 @@ void EqCurve::drawSpectrum(QPainter &p, const QVector<float> &mag,
 
     p.setPen(QPen(stroke, 1.2));
     p.setBrush(Qt::NoBrush);
-    p.drawPath(path);
+    p.drawPolyline(poly.constData(), poly.size());
+    Q_UNUSED(rTop);
 }
 
 void EqCurve::drawSpectrumHeatmap(QPainter &p, const QVector<float> &mag,
-                                   double specSr) const
+                                   double specSr, QImage &cache)
 {
     if (mag.isEmpty()) return;
     const QRectF r = plotRect();
-    const int bins = mag.size();
-    if (bins < 2) return;
-    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
-    const float invRange = 1.0f / static_cast<float>(kSpecDbMax - kSpecDbMin);
+    const int w = m_cachedPlotWidth;
+    const int h = m_cachedPlotHeight;
+    if (w <= 0 || h <= 0) return;
 
-    const int steps = static_cast<int>(r.width());
+    if (cache.isNull() || cache.width() != w || cache.height() != h)
+        renderHeatmapImage(mag, specSr, cache);
+    if (cache.isNull()) return;
 
-    // Build outline path while drawing per-column inferno bars in one pass.
-    QPainterPath outline;
     p.setRenderHint(QPainter::Antialiasing, false);
-    for (int s = 0; s <= steps; ++s) {
-        const double x = r.left() + s;
-        const double f = std::clamp(xToFreq(x), kFreqMin, kFreqMax);
+    p.drawImage(QPointF(r.left(), r.top()), cache);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    // Spectrum outline on top — warm off-white so it reads over all inferno tones.
+    const int bins = mag.size();
+    if (bins < 2 || m_colFreq.size() < w) return;
+
+    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
+    const double rBottom = r.bottom();
+    const double rHeight = r.height();
+    const double dbSpan = kSpecDbMax - kSpecDbMin;
+
+    QVector<QPointF> &poly = m_scratchPolyB;
+    poly.resize(w);
+    for (int s = 0; s < w; ++s) {
+        const double f = std::clamp(m_colFreq[s], kFreqMin, kFreqMax);
         const double bin = f / binHz;
         const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
         const int b1 = std::min(b0 + 1, bins - 1);
-        const double frac = bin - b0;
-        const double db = mag[b0] * (1.0 - frac) + mag[b1] * frac;
-        const double y  = specDbToY(db);
-
-        const float u = (static_cast<float>(db) - static_cast<float>(kSpecDbMin)) * invRange;
-        p.setPen(QPen(QColor(infernoRgb(u)), 1.0, Qt::SolidLine, Qt::FlatCap));
-        p.drawLine(QPointF(x, y), QPointF(x, r.bottom() + 1.0));
-
-        if (s == 0) outline.moveTo(x, y);
-        else        outline.lineTo(x, y);
+        const double t = bin - b0;
+        double db = mag[b0] * (1.0 - t) + mag[b1] * t;
+        if (db < kSpecDbMin) db = kSpecDbMin;
+        if (db > kSpecDbMax) db = kSpecDbMax;
+        const double n = (db - kSpecDbMin) / dbSpan;
+        const double y = rBottom - n * rHeight;
+        poly[s] = QPointF(r.left() + s, y);
     }
-
-    // Spectrum outline on top — warm off-white so it reads over all inferno tones.
-    p.setRenderHint(QPainter::Antialiasing, true);
     p.setPen(QPen(QColor(255, 230, 160, 200), 1.2));
     p.setBrush(Qt::NoBrush);
-    p.drawPath(outline);
+    p.drawPolyline(poly.constData(), poly.size());
 }
 
 void EqCurve::paintEvent(QPaintEvent *)
 {
+    if (m_cachedPlotWidth <= 0)
+        rebuildColumnTables();
+
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
@@ -363,38 +454,35 @@ void EqCurve::paintEvent(QPaintEvent *)
     p.drawRoundedRect(full, 5, 5);
 
     const QRectF r = plotRect();
+    const int W = m_cachedPlotWidth;
 
     // Clip subsequent fills/lines to the plot area so spectra don't bleed.
     p.save();
     p.setClipRect(r);
 
     // --- Spectra ---
-    // When heatmap mode is on, each spectrum column is filled with an
-    // inferno-gradient bar whose color encodes its magnitude — peaks pop out
-    // immediately. When off, the conventional flat-fill + stroke is used.
     if (m_showInputSpectrum && !m_inSpec.isEmpty()) {
         if (m_showHeatmap) {
-            drawSpectrumHeatmap(p, m_inSpec, m_inSpecSr);
+            drawSpectrumHeatmap(p, m_inSpec, m_inSpecSr, m_heatInImage);
         } else {
             QColor fill(0x4F, 0xC1, 0xE9);  fill.setAlphaF(0.18);
             QColor stroke(0x4F, 0xC1, 0xE9); stroke.setAlphaF(0.55);
-            drawSpectrum(p, m_inSpec, m_inSpecSr, fill, stroke);
+            drawSpectrumOutline(p, m_inSpec, m_inSpecSr, fill, stroke);
         }
     }
     if (m_showOutputSpectrum && !m_outSpec.isEmpty()) {
         if (m_showHeatmap) {
-            drawSpectrumHeatmap(p, m_outSpec, m_outSpecSr);
+            drawSpectrumHeatmap(p, m_outSpec, m_outSpecSr, m_heatOutImage);
         } else {
             QColor fill(0xE6, 0x7E, 0x22); fill.setAlphaF(0.20);
             QColor stroke(0xE6, 0x7E, 0x22); stroke.setAlphaF(0.60);
-            drawSpectrum(p, m_outSpec, m_outSpecSr, fill, stroke);
+            drawSpectrumOutline(p, m_outSpec, m_outSpecSr, fill, stroke);
         }
     }
 
     p.restore();
 
     // --- Grid: vertical freq lines + labels ---
-    p.setPen(QPen(theme::kBorderSoft, 1.0, Qt::SolidLine));
     const double freqTicks[] = {50, 100, 200, 500, 1000, 2000, 5000, 10000};
     QFont fLabel = p.font();
     fLabel.setPointSizeF(7.5);
@@ -427,66 +515,87 @@ void EqCurve::paintEvent(QPaintEvent *)
                             : QStringLiteral("%1").arg(db, 0, 'f', 0));
     }
 
-    // --- Per-band response (faint, in band colour, live dynamic gain included) ---
+    // --- Cache filter coefficients once per band, per paint ---
+    // Previously combinedMagDb() recomputed coefsFor() per pixel per band
+    // (5000+ trig calls/frame). With this lift, each band runs cos/sin/sqrt
+    // exactly twice per paint regardless of width.
+    const int N = m_bands.size();
+    std::array<BiquadCoefs, 16> liveCoefs{};
+    std::array<BiquadCoefs, 16> staticCoefs{};
+    std::array<bool, 16> bandActive{};
+    const int Nclamp = std::min(N, static_cast<int>(liveCoefs.size()));
+    for (int i = 0; i < Nclamp; ++i) {
+        const auto &b = m_bands[i];
+        bandActive[i] = b.enabled;
+        if (!b.enabled) continue;
+        liveCoefs[i]   = coefsFor(b.type, b.freqHz, b.q,
+                                  b.gainDb - b.dynGainReductionDb, m_sampleRate);
+        staticCoefs[i] = coefsFor(b.type, b.freqHz, b.q, b.gainDb, m_sampleRate);
+    }
+
+    // Precompute angular frequency per column. magDbAt operates on w = 2π·f/fs.
+    QVector<double> colW(W);
+    const double wScale = 2.0 * M_PI / m_sampleRate;
+    for (int s = 0; s < W; ++s) colW[s] = m_colFreq[s] * wScale;
+
+    // --- Per-band response (faint, in band colour, live dynamic gain) ---
+    QVector<QPointF> &polyBand = m_scratchPolyA;
+    polyBand.resize(W);
     if (m_eqEnabled) {
-        for (int i = 0; i < m_bands.size(); ++i) {
-            const auto &b = m_bands[i];
-            if (!b.enabled) continue;
-            const BiquadCoefs c = coefsFor(b.type, b.freqHz, b.q, b.gainDb - b.dynGainReductionDb, m_sampleRate);
-            QPainterPath path;
-            bool started = false;
-            const int steps = static_cast<int>(r.width());
-            for (int s = 0; s <= steps; ++s) {
-                const double x = r.left() + s;
-                const double f = xToFreq(x);
-                const double y = gainToY(magDbAt(c, f, m_sampleRate));
-                if (!started) { path.moveTo(x, y); started = true; }
-                else          { path.lineTo(x, y); }
+        for (int i = 0; i < Nclamp; ++i) {
+            if (!bandActive[i]) continue;
+            const BiquadCoefs &c = liveCoefs[i];
+            for (int s = 0; s < W; ++s) {
+                const double y = gainToY(magDbAt(c, colW[s]));
+                polyBand[s] = QPointF(r.left() + s, y);
             }
             QColor c2 = bandColor(i);
             c2.setAlphaF(0.30);
             p.setPen(QPen(c2, 1.2));
             p.setBrush(Qt::NoBrush);
-            p.drawPath(path);
+            p.drawPolyline(polyBand.constData(), polyBand.size());
         }
     }
 
     // --- Combined static response (no dynamic GR) ---
     {
-        QPainterPath staticPath;
-        bool started = false;
-        const int steps = static_cast<int>(r.width());
-        for (int s = 0; s <= steps; ++s) {
-            const double x = r.left() + s;
-            const double f = xToFreq(x);
-            const double y = gainToY(combinedMagDb(f, false));
-            if (!started) { staticPath.moveTo(x, y); started = true; }
-            else          { staticPath.lineTo(x, y); }
+        QVector<QPointF> &poly = m_scratchPolyB;
+        poly.resize(W);
+        for (int s = 0; s < W; ++s) {
+            double sumDb = 0.0;
+            if (m_eqEnabled) {
+                const double w = colW[s];
+                for (int i = 0; i < Nclamp; ++i) {
+                    if (bandActive[i]) sumDb += magDbAt(staticCoefs[i], w);
+                }
+            }
+            poly[s] = QPointF(r.left() + s, gainToY(sumDb));
         }
-
         QColor staticColor = theme::kTextDim;
         staticColor.setAlphaF(0.55);
         p.setPen(QPen(staticColor, 1.3, Qt::DashLine));
         p.setBrush(Qt::NoBrush);
-        p.drawPath(staticPath);
+        p.drawPolyline(poly.constData(), poly.size());
     }
 
     // --- Combined live response (dynamic GR applied) ---
     {
-        QPainterPath path;
-        bool started = false;
-        const int steps = static_cast<int>(r.width());
-        for (int s = 0; s <= steps; ++s) {
-            const double x = r.left() + s;
-            const double f = xToFreq(x);
-            const double y = gainToY(combinedMagDb(f, true));
-            if (!started) { path.moveTo(x, y); started = true; }
-            else          { path.lineTo(x, y); }
+        QVector<QPointF> &poly = m_scratchPolyA;
+        poly.resize(W);
+        for (int s = 0; s < W; ++s) {
+            double sumDb = 0.0;
+            if (m_eqEnabled) {
+                const double w = colW[s];
+                for (int i = 0; i < Nclamp; ++i) {
+                    if (bandActive[i]) sumDb += magDbAt(liveCoefs[i], w);
+                }
+            }
+            poly[s] = QPointF(r.left() + s, gainToY(sumDb));
         }
         QColor lineCol = m_eqEnabled ? theme::kAccent : theme::kTextDim;
         p.setPen(QPen(lineCol, 2.0));
         p.setBrush(Qt::NoBrush);
-        p.drawPath(path);
+        p.drawPolyline(poly.constData(), poly.size());
     }
 
     // --- Right-side detector dB scale labels (spectrum reference) ---
@@ -500,7 +609,7 @@ void EqCurve::paintEvent(QPaintEvent *)
     }
 
     // --- Band handles ---
-    for (int i = 0; i < m_bands.size(); ++i) {
+    for (int i = 0; i < N; ++i) {
         const auto &b = m_bands[i];
         const QPointF bp(freqToX(b.freqHz), gainToY(b.gainDb));
         const bool dragging = (i == m_draggingBand);

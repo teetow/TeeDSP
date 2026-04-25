@@ -25,11 +25,15 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QProgressBar>
+#include <QDateTime>
 #include <QSettings>
 #include <QSizePolicy>
 #include <QSpacerItem>
+#include <QStatusBar>
 #include <QStyle>
 #include <QTimer>
+
+#include <cmath>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVBoxLayout>
@@ -40,8 +44,11 @@ namespace {
 
 constexpr const char *kCaptureDeviceKey = "io/captureDeviceId";
 constexpr const char *kRenderDeviceKey  = "io/renderDeviceId";
-constexpr const char *kAutoRouteKey     = "io/autoRoute";
 constexpr const char *kFirstRunKey      = "ui/initialized";
+constexpr const char *kGeometryKey      = "ui/geometry";
+constexpr const char *kShowInputSpecKey  = "ui/showInputSpectrum";
+constexpr const char *kShowOutputSpecKey = "ui/showOutputSpectrum";
+constexpr const char *kShowHeatmapKey    = "ui/showHeatmap";
 
 QGroupBox *createSection(const QString &title)
 {
@@ -85,38 +92,42 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_engine = new host::AudioEngine(m_chain, this);
 
-    // First-run defaults: register Start-with-Windows + auto-route ON.
+    // First-run defaults: register Start-with-Windows.
     {
         QSettings s;
         if (!s.value(QString::fromLatin1(kFirstRunKey), false).toBool()) {
             ui::startup::setEnabled(true);
-            s.setValue(QString::fromLatin1(kAutoRouteKey), true);
             s.setValue(QString::fromLatin1(kFirstRunKey), true);
         }
     }
 
     setWindowTitle(QStringLiteral("TeeDSP"));
-    resize(1100, 660);
+
+    {
+        QSettings s;
+        const QByteArray geo = s.value(QString::fromLatin1(kGeometryKey)).toByteArray();
+        if (geo.isEmpty())
+            resize(1100, 660);
+        else
+            restoreGeometry(geo);
+    }
 
     buildUi();
 
-    QSettings s;
-    const bool autoRoute = s.value(QString::fromLatin1(kAutoRouteKey), true).toBool();
-    {
-        const bool was = m_syncingUi;
-        m_syncingUi = true;
-        m_autoRoute->setChecked(autoRoute);
-        m_syncingUi = was;
-    }
-    m_engine->setAutoRoute(autoRoute);
-
     m_tray = new ui::TrayController(this, this);
-    m_tray->setAutoRoute(autoRoute);
     m_tray->setStartWithWindows(ui::startup::isEnabled());
 
     connectSignals();
     refreshDevices();
     restoreSelectedDevices();
+
+    {
+        QSettings s;
+        m_showInputSpectrum->setChecked( s.value(QString::fromLatin1(kShowInputSpecKey),  true).toBool());
+        m_showOutputSpectrum->setChecked(s.value(QString::fromLatin1(kShowOutputSpecKey), true).toBool());
+        m_showHeatmap->setChecked(       s.value(QString::fromLatin1(kShowHeatmapKey),    false).toBool());
+    }
+
     pullStateFromController();
     refreshEngineStatus();
 
@@ -171,6 +182,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // quitting — so the user never loses settings on either path.
     if (m_dspController) m_dspController->saveToSettings();
     saveSelectedDevices();
+    {
+        QSettings s;
+        s.setValue(QString::fromLatin1(kGeometryKey), saveGeometry());
+        s.setValue(QString::fromLatin1(kShowInputSpecKey),  m_showInputSpectrum->isChecked());
+        s.setValue(QString::fromLatin1(kShowOutputSpecKey), m_showOutputSpectrum->isChecked());
+        s.setValue(QString::fromLatin1(kShowHeatmapKey),    m_showHeatmap->isChecked());
+    }
 
     if (m_quitting || !m_tray) {
         // Heal the gap: restore Windows default output to TeeDSP's render
@@ -230,12 +248,12 @@ QWidget *MainWindow::buildIoSection()
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(8);
 
-    grid->addWidget(createCaption(QStringLiteral("Capture (loopback source)")), 0, 0);
+    grid->addWidget(createCaption(QStringLiteral("Input")), 0, 0);
     m_captureDevice = new QComboBox();
     m_captureDevice->setMinimumWidth(220);
     grid->addWidget(m_captureDevice, 0, 1);
 
-    grid->addWidget(createCaption(QStringLiteral("Render (output)")), 0, 2);
+    grid->addWidget(createCaption(QStringLiteral("Output")), 0, 2);
     m_renderDevice = new QComboBox();
     m_renderDevice->setMinimumWidth(220);
     grid->addWidget(m_renderDevice, 0, 3);
@@ -243,21 +261,20 @@ QWidget *MainWindow::buildIoSection()
     m_refreshDevicesButton = new QPushButton(QStringLiteral("Refresh"));
     grid->addWidget(m_refreshDevicesButton, 0, 4);
 
+    m_globalBypass = new QCheckBox(QStringLiteral("Bypass"));
+    grid->addWidget(m_globalBypass, 0, 5);
+
     m_startStopButton = new QPushButton(QStringLiteral("Start"));
     m_startStopButton->setProperty("role", "primary");
     m_startStopButton->setMinimumWidth(110);
-    grid->addWidget(m_startStopButton, 0, 5);
+    grid->addWidget(m_startStopButton, 0, 6);
 
     grid->setColumnStretch(1, 2);
     grid->setColumnStretch(3, 2);
 
-    m_autoRoute = new QCheckBox(QStringLiteral("Auto-route to physical output (fall back when preferred is unavailable)"));
-    grid->addWidget(m_autoRoute, 1, 0, 1, 6);
-
     m_statusLabel = new QLabel(QStringLiteral("Idle."));
     m_statusLabel->setProperty("role", "status");
-    m_statusLabel->setWordWrap(true);
-    grid->addWidget(m_statusLabel, 2, 0, 1, 6);
+    statusBar()->addWidget(m_statusLabel, 1);
 
     return section;
 }
@@ -295,9 +312,6 @@ QWidget *MainWindow::buildEqSection()
     m_eqCurve->setSampleRate(48000.0);
     m_eqCurve->setMinimumHeight(220);
     col->addWidget(m_eqCurve, 1);
-
-    auto *hint = createCaption(QStringLiteral("Drag nodes for Freq/Gain, mouse-wheel for Q, right-click for filter type."));
-    col->addWidget(hint);
 
     auto *bandsRow = new QGridLayout();
     bandsRow->setHorizontalSpacing(10);
@@ -518,13 +532,7 @@ QWidget *MainWindow::buildFooter()
     auto *footer = new QFrame();
     auto *row = new QHBoxLayout(footer);
     row->setContentsMargins(0, 0, 0, 0);
-
-    m_globalBypass = new QCheckBox(QStringLiteral("Bypass entire chain"));
-    row->addWidget(m_globalBypass);
     row->addStretch();
-
-    m_resetButton = new QPushButton(QStringLiteral("Reset to Defaults"));
-    row->addWidget(m_resetButton);
     return footer;
 }
 
@@ -532,7 +540,6 @@ void MainWindow::connectSignals()
 {
     connect(m_refreshDevicesButton, &QPushButton::clicked, this, &MainWindow::refreshDevices);
     connect(m_startStopButton, &QPushButton::clicked, this, &MainWindow::onStartStopClicked);
-    connect(m_resetButton, &QPushButton::clicked, this, &MainWindow::onResetDefaultsClicked);
 
     connect(m_engine, &host::AudioEngine::runningChanged, this, &MainWindow::refreshEngineStatus);
     connect(m_engine, &host::AudioEngine::errorOccurred, this, &MainWindow::onEngineError);
@@ -612,7 +619,7 @@ void MainWindow::connectSignals()
     connect(m_eqCurve, &ui::EqCurve::bandSelected, this, [this](int band) {
         if (band < 0 || band >= m_eqBands.size()) return;
         m_selectedEqBand = band;
-        pullStateFromController();
+        syncSelectedBandDyn();
     });
 
     connect(m_eqCurve, &ui::EqCurve::bandQAdjusted, this, [this](int band, float q) {
@@ -650,7 +657,6 @@ void MainWindow::connectSignals()
 
     connect(m_showHeatmap, &QCheckBox::toggled, this, [this](bool on) {
         m_eqCurve->setShowHeatmap(on);
-        if (!on) m_eqCurve->clearHeatmap();
     });
 
     if (auto *analyzer = m_engine->analyzer()) {
@@ -677,16 +683,41 @@ void MainWindow::connectSignals()
             return static_cast<int>((dbfs + 60.0f) * (100.0f / 60.0f));
         };
 
-        const float inPeakDbfs = m_engine ? m_engine->consumeInputPeakDbfs() : -120.0f;
-        const float outPeakDbfs = m_engine ? m_engine->consumeOutputPeakDbfs() : -120.0f;
-        const float outRmsDbfs = m_engine ? m_engine->consumeOutputRmsDbfs() : -120.0f;
+        // Tick delta drives the smoothing alpha. Skew a missing first sample
+        // toward the nominal 8 ms timer interval so initial transitions don't
+        // snap.
+        constexpr float kMeterReleaseTauMs = 10.0f;
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        float dtMs = (m_lastMeterTickMs > 0)
+            ? static_cast<float>(nowMs - m_lastMeterTickMs)
+            : 8.0f;
+        if (dtMs <= 0.0f) dtMs = 1.0f;
+        m_lastMeterTickMs = nowMs;
+        const float alpha = 1.0f - std::exp(-dtMs / kMeterReleaseTauMs);
 
-        m_inputMeterBar->setValue(dbToMeterPct(inPeakDbfs));
-        m_outputMeterBar->setValue(dbToMeterPct(outPeakDbfs));
+        const auto smooth = [alpha](float &disp, float fresh) {
+            if (fresh > disp) disp = fresh;                  // attack: snap up
+            else              disp += alpha * (fresh - disp); // release: smooth
+        };
 
-        if (outRmsDbfs > -120.0f) {
-            const float vu = outRmsDbfs + 18.0f;      // 0 VU ~= -18 dBFS reference
-            const float lufsApprox = outRmsDbfs - 0.7f; // rough unweighted estimate
+        const float inPeakRaw  = m_engine ? m_engine->currentInputPeakDbfs()  : -120.0f;
+        const float outPeakRaw = m_engine ? m_engine->currentOutputPeakDbfs() : -120.0f;
+        const float outRmsRaw  = m_engine ? m_engine->currentOutputRmsDbfs()  : -120.0f;
+        const float outHotRaw  = m_engine ? m_engine->currentOutputHotDbfs()  : -120.0f;
+
+        smooth(m_dispInPeakDbfs,  inPeakRaw);
+        smooth(m_dispOutPeakDbfs, outPeakRaw);
+        smooth(m_dispOutRmsDbfs,  outRmsRaw);
+        smooth(m_dispOutHotDbfs,  outHotRaw);
+
+        m_inputMeterBar->setValue(dbToMeterPct(m_dispInPeakDbfs));
+        m_outputMeterBar->setValue(dbToMeterPct(m_dispOutPeakDbfs));
+
+        // Treat anything below -100 dBFS as silence — exponential decay would
+        // otherwise asymptote toward -120 forever and never display "-inf".
+        if (m_dispOutRmsDbfs > -100.0f) {
+            const float vu = m_dispOutRmsDbfs + 18.0f;       // 0 VU ~= -18 dBFS reference
+            const float lufsApprox = m_dispOutRmsDbfs - 0.7f; // rough unweighted estimate
             m_outputVuLabel->setText(QStringLiteral("VU: %1").arg(vu, 0, 'f', 1));
             m_outputLufsLabel->setText(QStringLiteral("LUFS: %1").arg(lufsApprox, 0, 'f', 1));
         } else {
@@ -694,7 +725,7 @@ void MainWindow::connectSignals()
             m_outputLufsLabel->setText(QStringLiteral("LUFS: -inf"));
         }
 
-        const float hotDbfs = m_engine ? m_engine->consumeOutputHotDbfs() : -120.0f;
+        const float hotDbfs = m_dispOutHotDbfs;
         if (hotDbfs > -0.2f) {
             m_outputHotIndicator->setText(QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
             m_outputHotIndicator->setStyleSheet(QStringLiteral("color:#ff6b6b;"));
@@ -706,15 +737,14 @@ void MainWindow::connectSignals()
             m_outputHotIndicator->setStyleSheet(QString());
         }
 
-        const QVariantList eq = m_dspController->eqBands();
-        if (m_selectedEqBand >= 0 && m_selectedEqBand < eq.size()) {
-            const QVariantMap b = eq[m_selectedEqBand].toMap();
-            const double gr = b.value(QStringLiteral("dynGainReductionDb")).toDouble();
-            m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(gr, 0, 'f', 1));
+        if (m_selectedEqBand >= 0 && m_selectedEqBand < dsp::kEqBandCount) {
+            const dsp::EqBandView v = m_dspController->eqBandView(m_selectedEqBand);
+            m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(v.dynGainReductionDb, 0, 'f', 1));
         }
 
         // Dynamic gain reduction changes continuously even when controls are
-        // static, so repaint the EQ response from meter ticks.
+        // static, so refresh the EQ response from meter ticks. update() on the
+        // (QOpenGLWidget) curve is coalesced to vsync, so this is cheap.
         refreshEqCurve();
     });
 
@@ -729,13 +759,6 @@ void MainWindow::connectSignals()
         m_engine->setPreferredRender(selectedRenderDeviceId());
     });
 
-    connect(m_autoRoute, &QCheckBox::toggled, this, [this](bool on){
-        if (m_syncingUi) return;
-        QSettings().setValue(QString::fromLatin1(kAutoRouteKey), on);
-        m_engine->setAutoRoute(on);
-        if (m_tray) m_tray->setAutoRoute(on);
-    });
-
     connect(m_engine, &host::AudioEngine::currentRenderChanged,
             this, [this](const QString &) { refreshEngineStatus(); });
     connect(m_engine, &host::AudioEngine::captureFormatChanged,
@@ -744,14 +767,6 @@ void MainWindow::connectSignals()
     if (m_tray) {
         connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
             m_dspController->setBypass(b);
-        });
-        connect(m_tray, &ui::TrayController::autoRouteToggled, this, [this](bool on) {
-            const bool was = m_syncingUi;
-            m_syncingUi = true;
-            m_autoRoute->setChecked(on);
-            m_syncingUi = was;
-            QSettings().setValue(QString::fromLatin1(kAutoRouteKey), on);
-            m_engine->setAutoRoute(on);
         });
         connect(m_tray, &ui::TrayController::startWithWindowsToggled,
                 this, [](bool on) { ui::startup::setEnabled(on); });
@@ -790,26 +805,21 @@ void MainWindow::pullStateFromController()
 
     m_eqEnabled->setChecked(m_dspController->eqEnabled());
 
-    const QVariantList eq = m_dspController->eqBands();
-    for (int i = 0; i < m_eqBands.size() && i < eq.size(); ++i) {
-        const QVariantMap b = eq[i].toMap();
-        auto &w = m_eqBands[i];
-        w.enabled->setChecked(b.value(QStringLiteral("enabled")).toBool());
+    std::array<dsp::EqBandView, dsp::kEqBandCount> views{};
+    m_dspController->eqBandViews(views);
+    for (int i = 0; i < m_eqBands.size() && i < static_cast<int>(views.size()); ++i) {
+        m_eqBands[i].enabled->setChecked(views[i].enabled);
     }
 
-    if (!eq.isEmpty()) {
-        const int maxBand = static_cast<int>(eq.size()) - 1;
-        m_selectedEqBand = std::clamp(m_selectedEqBand, 0, maxBand);
-        const QVariantMap selected = eq[m_selectedEqBand].toMap();
-        m_eqSelectedBand->setText(QStringLiteral("Band %1").arg(m_selectedEqBand + 1));
-        m_eqDynThreshold->setValue(selected.value(QStringLiteral("dynThresholdDb")).toDouble());
-        m_eqDynRatio->setValue(selected.value(QStringLiteral("dynRatio")).toDouble());
-        m_eqDynAttack->setValue(selected.value(QStringLiteral("dynAttackMs")).toDouble());
-        m_eqDynRelease->setValue(selected.value(QStringLiteral("dynReleaseMs")).toDouble());
-        m_eqDynRange->setValue(selected.value(QStringLiteral("dynRangeDb")).toDouble());
-        const double gr = selected.value(QStringLiteral("dynGainReductionDb")).toDouble();
-        m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(gr, 0, 'f', 1));
-    }
+    m_selectedEqBand = std::clamp(m_selectedEqBand, 0, dsp::kEqBandCount - 1);
+    const dsp::EqBandView &selected = views[m_selectedEqBand];
+    m_eqSelectedBand->setText(QStringLiteral("Band %1").arg(m_selectedEqBand + 1));
+    m_eqDynThreshold->setValue(selected.dynThresholdDb);
+    m_eqDynRatio->setValue(selected.dynRatio);
+    m_eqDynAttack->setValue(selected.dynAttackMs);
+    m_eqDynRelease->setValue(selected.dynReleaseMs);
+    m_eqDynRange->setValue(selected.dynRangeDb);
+    m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(selected.dynGainReductionDb, 0, 'f', 1));
 
     m_syncingUi = false;
     refreshEqCurve();
@@ -818,23 +828,43 @@ void MainWindow::pullStateFromController()
 void MainWindow::refreshEqCurve()
 {
     if (!m_eqCurve) return;
+    // Hot path: avoid QVariant. Pull a typed snapshot directly from the
+    // controller and copy into the curve's input buffer.
+    std::array<dsp::EqBandView, dsp::kEqBandCount> views{};
+    m_dspController->eqBandViews(views);
     QVector<ui::EqBandData> data;
-    data.reserve(m_eqBands.size());
-    const QVariantList eq = m_dspController->eqBands();
-    for (int i = 0; i < eq.size(); ++i) {
-        const QVariantMap b = eq[i].toMap();
+    data.reserve(static_cast<int>(views.size()));
+    for (const auto &v : views) {
         ui::EqBandData d;
-        d.enabled = b.value(QStringLiteral("enabled")).toBool();
-        d.type    = b.value(QStringLiteral("type")).toInt();
-        d.freqHz  = static_cast<float>(b.value(QStringLiteral("frequencyHz")).toDouble());
-        d.q       = static_cast<float>(b.value(QStringLiteral("q")).toDouble());
-        d.gainDb  = static_cast<float>(b.value(QStringLiteral("gainDb")).toDouble());
-        d.dynThresholdDb = static_cast<float>(b.value(QStringLiteral("dynThresholdDb")).toDouble());
-        d.dynGainReductionDb = static_cast<float>(b.value(QStringLiteral("dynGainReductionDb")).toDouble());
+        d.enabled            = v.enabled;
+        d.type               = v.type;
+        d.freqHz             = v.freqHz;
+        d.q                  = v.q;
+        d.gainDb             = v.gainDb;
+        d.dynThresholdDb     = v.dynThresholdDb;
+        d.dynGainReductionDb = v.dynGainReductionDb;
         data.push_back(d);
     }
     m_eqCurve->setBands(data);
     m_eqCurve->setEqEnabled(m_dspController->eqEnabled());
+}
+
+void MainWindow::syncSelectedBandDyn()
+{
+    if (!m_dspController) return;
+    if (m_selectedEqBand < 0 || m_selectedEqBand >= dsp::kEqBandCount) return;
+    const dsp::EqBandView v = m_dspController->eqBandView(m_selectedEqBand);
+
+    const bool was = m_syncingUi;
+    m_syncingUi = true;
+    m_eqSelectedBand->setText(QStringLiteral("Band %1").arg(m_selectedEqBand + 1));
+    m_eqDynThreshold->setValue(v.dynThresholdDb);
+    m_eqDynRatio->setValue(v.dynRatio);
+    m_eqDynAttack->setValue(v.dynAttackMs);
+    m_eqDynRelease->setValue(v.dynReleaseMs);
+    m_eqDynRange->setValue(v.dynRangeDb);
+    m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(v.dynGainReductionDb, 0, 'f', 1));
+    m_syncingUi = was;
 }
 
 void MainWindow::refreshDevices()
@@ -936,12 +966,6 @@ void MainWindow::onStartStopClicked()
     refreshEngineStatus();
 }
 
-void MainWindow::onResetDefaultsClicked()
-{
-    m_dspController->resetToDefaults();
-    pullStateFromController();
-}
-
 void MainWindow::onEngineError(const QString &message)
 {
     m_statusLabel->setProperty("role", "statusError");
@@ -985,6 +1009,12 @@ void MainWindow::refreshEngineStatus()
         m_outputMeterBar->setValue(0);
         m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
         m_outputLufsLabel->setText(QStringLiteral("LUFS: -inf"));
+        // Reset smoothing state too — otherwise the next meter tick after
+        // stop would smoothly decay from the last observed level back to 0.
+        m_dispInPeakDbfs  = -120.0f;
+        m_dispOutPeakDbfs = -120.0f;
+        m_dispOutRmsDbfs  = -120.0f;
+        m_dispOutHotDbfs  = -120.0f;
     }
     m_statusLabel->style()->unpolish(m_statusLabel);
     m_statusLabel->style()->polish(m_statusLabel);

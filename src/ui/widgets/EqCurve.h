@@ -1,10 +1,8 @@
 #pragma once
 
 #include <QImage>
+#include <QOpenGLWidget>
 #include <QVector>
-#include <QWidget>
-
-#include <deque>
 
 namespace ui {
 
@@ -22,7 +20,11 @@ struct EqBandData {
 // Band handles can be dragged to change frequency + gain in one gesture.
 // Double-clicking a handle resets that band's gain to 0 dB.
 // Optional pre/post-DSP magnitude spectra can be drawn behind the EQ curve.
-class EqCurve : public QWidget
+//
+// Implemented as a QOpenGLWidget so update() requests are coalesced to the
+// display refresh rate by the platform compositor — repaints can be triggered
+// freely from data sources without burning CPU above vsync.
+class EqCurve : public QOpenGLWidget
 {
     Q_OBJECT
 
@@ -42,12 +44,7 @@ public:
     void setShowInputSpectrum(bool show);
     void setShowOutputSpectrum(bool show);
 
-    // Scrolling output spectrogram (FL-style heat map). Caller pushes the
-    // most recent post-DSP magDb every analyzer tick; the widget keeps a
-    // rolling history and renders it behind the curve.
     void setShowHeatmap(bool show);
-    void pushHeatmapFrame(const QVector<float> &magDb, double sampleRate);
-    void clearHeatmap();
 
     QSize sizeHint() const override { return {560, 240}; }
     QSize minimumSizeHint() const override { return {360, 160}; }
@@ -61,6 +58,7 @@ signals:
 
 protected:
     void paintEvent(QPaintEvent *e) override;
+    void resizeEvent(QResizeEvent *e) override;
     void contextMenuEvent(QContextMenuEvent *e) override;
     void mousePressEvent(QMouseEvent *e) override;
     void mouseMoveEvent(QMouseEvent *e) override;
@@ -77,17 +75,18 @@ private:
     double specDbToY(double db) const;     // separate Y mapping for spectrum
 
     int hitBand(const QPointF &pos) const;
-    double combinedMagDb(double hz, bool includeDynamic) const;
-    double bandMagDb(const EqBandData &b, double hz, bool includeDynamic) const;
 
-    void drawSpectrum(class QPainter &p, const QVector<float> &mag,
-                      double specSampleRate, const QColor &fill,
-                      const QColor &stroke) const;
-    // Inferno-gradient per-column fill: each x column is coloured by the
-    // magnitude at that frequency and drawn from the spectrum curve down to
-    // the bottom of the plot. Outline is drawn on top.
+    // Builds column-indexed frequency table + clears heatmap cache for the
+    // current plot width. Called from resizeEvent.
+    void rebuildColumnTables();
+    void renderHeatmapImage(const QVector<float> &mag, double specSr,
+                            QImage &out) const;
+
+    void drawSpectrumOutline(class QPainter &p, const QVector<float> &mag,
+                             double specSampleRate, const QColor &fill,
+                             const QColor &stroke);
     void drawSpectrumHeatmap(class QPainter &p, const QVector<float> &mag,
-                             double specSampleRate) const;
+                             double specSampleRate, QImage &cache);
 
     QVector<EqBandData> m_bands;
     double m_sampleRate = 48000.0;
@@ -100,15 +99,25 @@ private:
     bool m_showInputSpectrum = true;
     bool m_showOutputSpectrum = true;
 
-    // Heat-map history. Each entry is a full magDb frame (kept whole so we can
-    // re-rasterize the image when the plot resizes).
     bool m_showHeatmap = false;
-    static constexpr int kHeatmapHistory = 256;
-    std::deque<QVector<float>> m_heatmapFrames;
-    double m_heatmapSr = 48000.0;
 
     int m_draggingBand = -1;
     int m_hoverBand = -1;
+
+    // --- Per-resize caches ---
+    // m_colFreq[i] = frequency at pixel-column i (i=0..plotWidth-1).
+    QVector<double> m_colFreq;
+    int m_cachedPlotWidth = 0;
+    int m_cachedPlotHeight = 0;
+    // Pre-rendered heatmap stripes for input/output. Re-rasterized when the
+    // spectrum or geometry changes; blitted with drawImage (much cheaper than
+    // per-column setPen + drawLine).
+    QImage m_heatInImage;
+    QImage m_heatOutImage;
+
+    // Reusable scratch buffers for line strokes — avoids allocation per paint.
+    QVector<QPointF> m_scratchPolyA;
+    QVector<QPointF> m_scratchPolyB;
 
     static constexpr double kFreqMin = 20.0;
     static constexpr double kFreqMax = 20000.0;

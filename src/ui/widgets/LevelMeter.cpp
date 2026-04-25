@@ -23,11 +23,9 @@ LevelMeter::LevelMeter(QWidget *parent) : QWidget(parent)
 void LevelMeter::setReductionDb(double db)
 {
     db = std::max(0.0, std::min(kMaxDb, db));
-    if (std::abs(db - m_valueDb) < 1e-3 && std::abs(db - m_peakDb) < 1e-3) {
-        // Even if numerically similar, we still want the peak to decay.
-        update();
-        return;
-    }
+    const double prevValue = m_valueDb;
+    const double prevPeak = m_peakDb;
+
     m_valueDb = db;
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -41,6 +39,13 @@ void LevelMeter::setReductionDb(double db)
             m_peakDb = std::max(m_valueDb, m_peakDb - drop);
             m_peakStampMs = now;
         }
+    }
+
+    // Skip the repaint when nothing visibly changed — the meter is polled at
+    // ~125 Hz, but most ticks have idle audio and no peak motion.
+    if (std::abs(m_valueDb - prevValue) < 1e-3 &&
+        std::abs(m_peakDb - prevPeak)  < 1e-3) {
+        return;
     }
     update();
 }

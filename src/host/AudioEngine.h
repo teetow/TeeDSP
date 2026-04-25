@@ -20,10 +20,10 @@ class WasapiDeviceNotifier;
 // Orchestrates capture -> DSP -> render.
 //
 // Capture is loopback from a chosen render endpoint (typically a virtual
-// cable, e.g. VB-CABLE). Render is to a chosen physical endpoint. When
-// auto-route is enabled, the render side dynamically follows device events:
-// the preferred render endpoint is used when active, with the first available
-// non-virtual endpoint as fallback.
+// cable, e.g. VB-CABLE). Render is to a chosen physical endpoint. The render
+// side dynamically follows device events: the preferred render endpoint is
+// used when it's active and non-virtual, with the first available non-virtual
+// endpoint as fallback.
 class AudioEngine : public QObject
 {
     Q_OBJECT
@@ -33,9 +33,9 @@ public:
     ~AudioEngine() override;
 
     // captureDeviceId is the loopback source — typically VB-CABLE.
-    // preferredRenderId is the user's preferred physical output. When
-    // autoRoute is true, routing falls back to the best available non-virtual
-    // endpoint if the preferred is unavailable.
+    // preferredRenderId is the user's preferred physical output. Routing
+    // falls back to the best available non-virtual endpoint if the preferred
+    // one is unavailable.
     QString start(const QString &captureDeviceId,
                   const QString &preferredRenderId);
     void stop();
@@ -48,20 +48,19 @@ public:
 
     SpectrumAnalyzer *analyzer() const { return m_analyzer; }
 
-    void setAutoRoute(bool enabled);
-    bool autoRoute() const { return m_autoRoute; }
-
     void setPreferredRender(const QString &id);
     QString preferredRender() const { return m_preferredRenderId; }
     QString currentRender() const { return m_currentRenderId; }
 
-    // Returns max observed post-DSP peak level in dBFS since last call,
-    // then resets the accumulator. Values near 0 dBFS indicate likely
-    // hard limiting or imminent clipping in downstream paths.
-    float consumeOutputHotDbfs() { return m_recentHotDbfs.exchange(-120.0f, std::memory_order_relaxed); }
-    float consumeInputPeakDbfs() { return m_recentInputPeakDbfs.exchange(-120.0f, std::memory_order_relaxed); }
-    float consumeOutputPeakDbfs() { return m_recentOutputPeakDbfs.exchange(-120.0f, std::memory_order_relaxed); }
-    float consumeOutputRmsDbfs() { return m_recentOutputRmsDbfs.exchange(-120.0f, std::memory_order_relaxed); }
+    // Latest-packet meter telemetry in dBFS. Each capture packet stores its
+    // own peak / RMS (silent packets store -120). The UI loads non-destructively
+    // and applies its own peak-hold + smooth release on top — destructive
+    // reset-on-read used to produce alternating -inf frames whenever the UI
+    // poll rate ran ahead of the WASAPI packet rate.
+    float currentOutputHotDbfs()  const { return m_recentHotDbfs.load(std::memory_order_relaxed); }
+    float currentInputPeakDbfs()  const { return m_recentInputPeakDbfs.load(std::memory_order_relaxed); }
+    float currentOutputPeakDbfs() const { return m_recentOutputPeakDbfs.load(std::memory_order_relaxed); }
+    float currentOutputRmsDbfs()  const { return m_recentOutputRmsDbfs.load(std::memory_order_relaxed); }
 
 signals:
     void runningChanged();
@@ -88,7 +87,6 @@ private:
     QString m_captureDeviceId;
     QString m_preferredRenderId;
     QString m_currentRenderId;
-    bool m_autoRoute = true;
 
     int m_captureSampleRate = 0;
     int m_captureChannels = 0;
