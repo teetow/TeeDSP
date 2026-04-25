@@ -7,14 +7,30 @@
 #include <QPainterPath>
 #include <QPen>
 
+#include <algorithm>
 #include <cmath>
 
 namespace ui {
 
 namespace {
 
-constexpr double kBandHitRadius = 10.0;
-constexpr double kBandDrawRadius = 5.5;
+constexpr double kBandHitRadius = 14.0;
+constexpr double kBandDrawRadius = 8.0;
+
+// FL-Studio-style per-band palette. Distinct hues, easy to track at a glance.
+const QColor kBandColors[] = {
+    QColor(0xE7, 0x4C, 0x3C),   // band 1 — red
+    QColor(0xF3, 0x9C, 0x12),   // band 2 — orange
+    QColor(0xF1, 0xC4, 0x0F),   // band 3 — yellow
+    QColor(0x2E, 0xCC, 0x71),   // band 4 — green
+    QColor(0x4F, 0xC1, 0xE9),   // band 5 — teal/blue
+};
+
+QColor bandColor(int i)
+{
+    const int n = sizeof(kBandColors) / sizeof(kBandColors[0]);
+    return kBandColors[std::clamp(i, 0, n - 1)];
+}
 
 struct BiquadCoefs { double b0, b1, b2, a1, a2; };
 
@@ -96,6 +112,30 @@ void EqCurve::setSampleRate(double sr)    { m_sampleRate = sr; update(); }
 void EqCurve::setBands(const QVector<EqBandData> &bands) { m_bands = bands; update(); }
 void EqCurve::setEqEnabled(bool enabled)  { m_eqEnabled = enabled; update(); }
 
+void EqCurve::setInputSpectrum(const QVector<float> &mag, double sr, int /*fftSize*/)
+{
+    m_inSpec = mag;
+    m_inSpecSr = sr;
+    update();
+}
+
+void EqCurve::setOutputSpectrum(const QVector<float> &mag, double sr, int /*fftSize*/)
+{
+    m_outSpec = mag;
+    m_outSpecSr = sr;
+    update();
+}
+
+void EqCurve::clearSpectra()
+{
+    m_inSpec.clear();
+    m_outSpec.clear();
+    update();
+}
+
+void EqCurve::setShowInputSpectrum(bool show)  { m_showInputSpectrum = show;  update(); }
+void EqCurve::setShowOutputSpectrum(bool show) { m_showOutputSpectrum = show; update(); }
+
 QRectF EqCurve::plotRect() const
 {
     return QRectF(36, 10, width() - 46, height() - 26);
@@ -130,6 +170,14 @@ double EqCurve::yToGain(double y) const
     return -kDbRange + n * (2.0 * kDbRange);
 }
 
+double EqCurve::specDbToY(double db) const
+{
+    const QRectF r = plotRect();
+    db = std::max(kSpecDbMin, std::min(kSpecDbMax, db));
+    const double n = (db - kSpecDbMin) / (kSpecDbMax - kSpecDbMin);
+    return r.bottom() - n * r.height();
+}
+
 double EqCurve::bandMagDb(const EqBandData &b, double hz) const
 {
     if (!b.enabled) return 0.0;
@@ -158,6 +206,48 @@ int EqCurve::hitBand(const QPointF &pos) const
     return best;
 }
 
+void EqCurve::drawSpectrum(QPainter &p, const QVector<float> &mag,
+                           double specSr, const QColor &fill,
+                           const QColor &stroke) const
+{
+    if (mag.isEmpty()) return;
+    const QRectF r = plotRect();
+
+    QPainterPath path;
+    bool started = false;
+    const int bins = mag.size();
+    if (bins < 2) return;
+    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
+
+    // Walk the plot's X resolution and pick the matching bin (or interpolate).
+    const int steps = static_cast<int>(r.width());
+    for (int s = 0; s <= steps; ++s) {
+        const double x = r.left() + s;
+        const double f = std::clamp(xToFreq(x), kFreqMin, kFreqMax);
+        const double bin = f / binHz;
+        const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
+        const int b1 = std::min(b0 + 1, bins - 1);
+        const double t = bin - b0;
+        const double db = mag[b0] * (1.0 - t) + mag[b1] * t;
+        const double y = specDbToY(db);
+        if (!started) { path.moveTo(x, y); started = true; }
+        else          { path.lineTo(x, y); }
+    }
+
+    QPainterPath fillPath = path;
+    fillPath.lineTo(r.right(), r.bottom());
+    fillPath.lineTo(r.left(),  r.bottom());
+    fillPath.closeSubpath();
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(fill);
+    p.drawPath(fillPath);
+
+    p.setPen(QPen(stroke, 1.2));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(path);
+}
+
 void EqCurve::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
@@ -165,14 +255,31 @@ void EqCurve::paintEvent(QPaintEvent *)
 
     const QRectF full(0.5, 0.5, width() - 1.0, height() - 1.0);
 
-    // Plot well
     p.setPen(QPen(theme::kBorderSoft, 1.0));
     p.setBrush(theme::kBgSunken);
     p.drawRoundedRect(full, 5, 5);
 
     const QRectF r = plotRect();
 
-    // --- Grid: vertical freq lines ---
+    // Clip subsequent fills/lines to the plot area so spectra don't bleed.
+    p.save();
+    p.setClipRect(r);
+
+    // --- Spectra (drawn first, behind everything else) ---
+    if (m_showInputSpectrum && !m_inSpec.isEmpty()) {
+        QColor fill(0x4F, 0xC1, 0xE9);  fill.setAlphaF(0.18);   // teal (in)
+        QColor stroke(0x4F, 0xC1, 0xE9); stroke.setAlphaF(0.55);
+        drawSpectrum(p, m_inSpec, m_inSpecSr, fill, stroke);
+    }
+    if (m_showOutputSpectrum && !m_outSpec.isEmpty()) {
+        QColor fill(0xE6, 0x7E, 0x22); fill.setAlphaF(0.20);    // orange (out)
+        QColor stroke(0xE6, 0x7E, 0x22); stroke.setAlphaF(0.60);
+        drawSpectrum(p, m_outSpec, m_outSpecSr, fill, stroke);
+    }
+
+    p.restore();
+
+    // --- Grid: vertical freq lines + labels ---
     p.setPen(QPen(theme::kBorderSoft, 1.0, Qt::SolidLine));
     const double freqTicks[] = {50, 100, 200, 500, 1000, 2000, 5000, 10000};
     QFont fLabel = p.font();
@@ -189,7 +296,7 @@ void EqCurve::paintEvent(QPaintEvent *)
         p.drawText(QRectF(x - 20, r.bottom() + 2, 40, 14), Qt::AlignCenter, lbl);
     }
 
-    // --- Grid: horizontal dB lines ---
+    // --- Grid: horizontal dB lines + labels ---
     const double dbTicks[] = {-18, -12, -6, 0, 6, 12, 18};
     for (double db : dbTicks) {
         const double y = gainToY(db);
@@ -206,7 +313,7 @@ void EqCurve::paintEvent(QPaintEvent *)
                             : QStringLiteral("%1").arg(db, 0, 'f', 0));
     }
 
-    // --- Per-band curves (faint) ---
+    // --- Per-band response (faint, in band colour) ---
     if (m_eqEnabled) {
         for (int i = 0; i < m_bands.size(); ++i) {
             const auto &b = m_bands[i];
@@ -222,8 +329,8 @@ void EqCurve::paintEvent(QPaintEvent *)
                 if (!started) { path.moveTo(x, y); started = true; }
                 else          { path.lineTo(x, y); }
             }
-            QColor c2 = theme::kAccentDim;
-            c2.setAlphaF(0.35);
+            QColor c2 = bandColor(i);
+            c2.setAlphaF(0.30);
             p.setPen(QPen(c2, 1.2));
             p.drawPath(path);
         }
@@ -241,13 +348,12 @@ void EqCurve::paintEvent(QPaintEvent *)
             if (!started) { path.moveTo(x, y); started = true; }
             else          { path.lineTo(x, y); }
         }
-        // Fill under curve with soft gradient
         QPainterPath fill = path;
         fill.lineTo(r.right(), gainToY(0));
         fill.lineTo(r.left(),  gainToY(0));
         fill.closeSubpath();
         QColor fillCol = theme::kAccent;
-        fillCol.setAlphaF(0.12);
+        fillCol.setAlphaF(0.10);
         p.setPen(Qt::NoPen);
         p.setBrush(fillCol);
         p.drawPath(fill);
@@ -266,20 +372,32 @@ void EqCurve::paintEvent(QPaintEvent *)
         const bool hover    = (i == m_hoverBand);
         const bool engaged  = m_eqEnabled && b.enabled;
 
-        QColor fill = engaged ? theme::kAccent : theme::kTextDim;
-        if (dragging) fill = theme::kWarn;
+        QColor fill = bandColor(i);
+        if (!engaged) {
+            fill = QColor::fromHsl(fill.hslHue(), fill.hslSaturation() / 4, 120);
+        }
+
+        const double rad = (hover || dragging) ? kBandDrawRadius + 2.0 : kBandDrawRadius;
+
+        // Soft outer halo so the handle pops over busy spectrum content.
+        if (engaged) {
+            QColor halo = fill; halo.setAlphaF(0.25);
+            p.setPen(Qt::NoPen);
+            p.setBrush(halo);
+            p.drawEllipse(bp, rad + 4.0, rad + 4.0);
+        }
 
         p.setPen(QPen(theme::kBgDeep, 2.0));
         p.setBrush(fill);
-        const double rad = hover || dragging ? kBandDrawRadius + 1.5 : kBandDrawRadius;
         p.drawEllipse(bp, rad, rad);
 
+        // Centred number in a contrasting shade.
         p.setPen(theme::kBgDeep);
         QFont lf = p.font();
-        lf.setPointSizeF(7.0);
+        lf.setPointSizeF(8.0);
         lf.setBold(true);
         p.setFont(lf);
-        p.drawText(QRectF(bp.x() - 8, bp.y() - 8, 16, 16), Qt::AlignCenter,
+        p.drawText(QRectF(bp.x() - 10, bp.y() - 10, 20, 20), Qt::AlignCenter,
                    QString::number(i + 1));
     }
 }
@@ -327,6 +445,18 @@ void EqCurve::mouseReleaseEvent(QMouseEvent *e)
 {
     if (e->button() == Qt::LeftButton && m_draggingBand >= 0) {
         m_draggingBand = -1;
+        update();
+    }
+}
+
+void EqCurve::mouseDoubleClickEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    const int hit = hitBand(e->position());
+    if (hit >= 0) {
+        // Cancel any in-progress drag started by the press half of the double-click.
+        m_draggingBand = -1;
+        emit bandReset(hit);
         update();
     }
 }

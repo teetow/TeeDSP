@@ -25,6 +25,8 @@ set(HOST_SOURCES
 	src/host/WasapiLoopbackCapture.cpp
 	src/host/WasapiRender.cpp
 	src/host/AudioEngine.cpp
+	src/host/Fft.cpp
+	src/host/SpectrumAnalyzer.cpp
 )
 
 set(UI_SOURCES

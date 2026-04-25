@@ -8,6 +8,7 @@
 #include "../dsp/DspController.h"
 #include "../dsp/ProcessorChain.h"
 #include "../host/AudioEngine.h"
+#include "../host/SpectrumAnalyzer.h"
 #include "../host/WasapiDevices.h"
 
 #include <QCheckBox>
@@ -170,7 +171,20 @@ QWidget *MainWindow::buildEqSection()
     m_eqEnabled = new QCheckBox(QStringLiteral("Enable EQ"));
     headerRow->addWidget(m_eqEnabled);
     headerRow->addStretch();
-    auto *hint = new QLabel(QStringLiteral("Drag points · double-click knob to reset"));
+
+    m_showInputSpectrum = new QCheckBox(QStringLiteral("Input"));
+    m_showInputSpectrum->setChecked(true);
+    m_showInputSpectrum->setStyleSheet(
+        QStringLiteral("QCheckBox::indicator:checked { background-color: #4FC1E9; border-color: #4FC1E9; }"));
+    headerRow->addWidget(m_showInputSpectrum);
+
+    m_showOutputSpectrum = new QCheckBox(QStringLiteral("Output"));
+    m_showOutputSpectrum->setChecked(true);
+    m_showOutputSpectrum->setStyleSheet(
+        QStringLiteral("QCheckBox::indicator:checked { background-color: #E67E22; border-color: #E67E22; }"));
+    headerRow->addWidget(m_showOutputSpectrum);
+
+    auto *hint = new QLabel(QStringLiteral("Drag · dbl-click resets"));
     hint->setProperty("role", "caption");
     headerRow->addWidget(hint);
     col->addLayout(headerRow);
@@ -212,6 +226,7 @@ QWidget *MainWindow::buildEqSection()
                                QStringLiteral("Hz"), ui::Knob::Scale::Log);
         w.q   = makeKnob(QStringLiteral("Q"),    0.1, 20.0, 0.707, 2);
         w.gain = makeKnob(QStringLiteral("Gain"), -24.0, 24.0, 0.0, 1, QStringLiteral("dB"));
+        w.gain->setPolarity(ui::Knob::Polarity::Bipolar);
 
         auto *knobsRow = new QHBoxLayout();
         knobsRow->setSpacing(2);
@@ -248,6 +263,8 @@ QWidget *MainWindow::buildCompSection()
     m_compAttack    = makeKnob(QStringLiteral("Attack"),    0.1,  200.0,  10.0, 1, QStringLiteral("ms"), ui::Knob::Scale::Log);
     m_compRelease   = makeKnob(QStringLiteral("Release"),   1.0, 1000.0, 120.0, 0, QStringLiteral("ms"), ui::Knob::Scale::Log);
     m_compMakeup    = makeKnob(QStringLiteral("Makeup"),  -12.0,   24.0,   0.0, 1, QStringLiteral("dB"));
+    m_compMakeup->setPolarity(ui::Knob::Polarity::Bipolar);
+    m_compMakeup->setBipolarOrigin(0.0);
 
     grid->addWidget(m_compThreshold, 0, 0);
     grid->addWidget(m_compRatio,     0, 1);
@@ -393,12 +410,30 @@ void MainWindow::connectSignals()
     connect(m_eqCurve, &ui::EqCurve::bandDragged, this,
             [this](int band, float freqHz, float gainDb) {
         if (band < 0 || band >= m_eqBands.size()) return;
-        // Updating the controller will fire eqChanged → pullStateFromController,
-        // which we want, but it also flicks the curve via setBands. Avoid
-        // re-entrancy by setting m_syncingUi here only for the knob updates.
         m_dspController->setEqBandFrequency(band, freqHz);
         m_dspController->setEqBandGainDb(band, gainDb);
     });
+
+    connect(m_eqCurve, &ui::EqCurve::bandReset, this, [this](int band) {
+        if (band < 0 || band >= m_eqBands.size()) return;
+        m_dspController->setEqBandGainDb(band, 0.0f);
+    });
+
+    connect(m_showInputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
+        m_eqCurve->setShowInputSpectrum(on);
+    });
+    connect(m_showOutputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
+        m_eqCurve->setShowOutputSpectrum(on);
+    });
+
+    if (auto *analyzer = m_engine->analyzer()) {
+        connect(analyzer, &host::SpectrumAnalyzer::spectraUpdated,
+                this, [this](QVector<float> inDb, QVector<float> outDb,
+                             double sr, int fftSize) {
+            m_eqCurve->setInputSpectrum(inDb, sr, fftSize);
+            m_eqCurve->setOutputSpectrum(outDb, sr, fftSize);
+        });
+    }
 
     connect(m_dspController, &dsp::DspController::bypassChanged,    this, &MainWindow::pullStateFromController);
     connect(m_dspController, &dsp::DspController::compressorChanged, this, &MainWindow::pullStateFromController);

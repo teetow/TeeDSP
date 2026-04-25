@@ -13,6 +13,7 @@ class Knob : public QWidget
 
 public:
     enum class Scale { Linear, Log };
+    enum class Polarity { Unipolar, Bipolar };
 
     explicit Knob(QWidget *parent = nullptr);
 
@@ -24,6 +25,14 @@ public:
     void setLabel(const QString &text);    // e.g. "Threshold"
     void setUnit(const QString &text);     // e.g. "dB"
     void setDecimals(int decimals);        // value label precision
+
+    // Unipolar (default): arc fills from the lower-left toward the value.
+    // Bipolar: arc fills from 12 o'clock outward; the origin value sits at
+    // the top, min at lower-left, max at lower-right. Default origin is
+    // (min + max) / 2 — call setBipolarOrigin to anchor the visual zero
+    // somewhere else (useful for asymmetric ranges).
+    void setPolarity(Polarity p);
+    void setBipolarOrigin(double v);
 
     QSize sizeHint() const override { return {72, 92}; }
     QSize minimumSizeHint() const override { return {64, 84}; }
@@ -44,12 +53,16 @@ private:
     double valueFromNorm(double n) const;
     void setNormalized(double n);
     QString formatValue() const;
+    double angleForValue(double v) const;    // degrees, math/Qt convention
 
     double m_min = 0.0;
     double m_max = 1.0;
     double m_value = 0.0;
     double m_default = 0.0;
     Scale m_scale = Scale::Linear;
+    Polarity m_polarity = Polarity::Unipolar;
+    double m_bipolarOrigin = 0.0;
+    bool m_bipolarOriginExplicit = false;
 
     QString m_label;
     QString m_unit;

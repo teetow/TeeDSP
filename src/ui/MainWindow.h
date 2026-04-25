@@ -93,6 +93,8 @@ private:
     ui::Knob *m_exciterTone = nullptr;
 
     QCheckBox *m_eqEnabled = nullptr;
+    QCheckBox *m_showInputSpectrum = nullptr;
+    QCheckBox *m_showOutputSpectrum = nullptr;
     ui::EqCurve *m_eqCurve = nullptr;
     QVector<EqBandWidgets> m_eqBands;
 

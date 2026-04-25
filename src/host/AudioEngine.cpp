@@ -1,12 +1,14 @@
 #include "AudioEngine.h"
 
 #include "../dsp/ProcessorChain.h"
+#include "SpectrumAnalyzer.h"
 
 namespace host {
 
 AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
     : QObject(parent)
     , m_chain(chain)
+    , m_analyzer(new SpectrumAnalyzer(this))
 {
 }
 
@@ -53,6 +55,7 @@ void AudioEngine::stop()
 {
     m_capture.stop();
     m_render.stop();
+    if (m_analyzer) m_analyzer->stop();
     m_chainPrepared = false;
     m_captureSampleRate = 0;
     m_captureChannels = 0;
@@ -78,12 +81,15 @@ void AudioEngine::onCapturePacket(const float *interleaved,
         m_captureSampleRate = sampleRate;
         m_captureChannels = numChannels;
         m_chainPrepared = true;
+        if (m_analyzer) m_analyzer->start(sampleRate, numChannels);
     }
 
-    // Process in place. The capture-side scratch buffer is mutable; the UI
-    // thread never reads it.
+    if (m_analyzer) m_analyzer->pushPre(interleaved, numFrames, numChannels);
+
     m_chain->process(const_cast<float *>(interleaved),
                      static_cast<std::size_t>(numFrames));
+
+    if (m_analyzer) m_analyzer->pushPost(interleaved, numFrames, numChannels);
 
     m_render.write(interleaved, numFrames, numChannels);
 }
