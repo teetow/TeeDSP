@@ -9,6 +9,123 @@
 
 namespace host {
 
+// ---- BS.1770-3 K-weighted LUFS monitor ---------------------------------- //
+namespace {
+
+struct KWeightBiquad {
+    double b0{1}, b1{0}, b2{0}, a1{0}, a2{0};
+    double z1{0}, z2{0};
+    float process(float x) noexcept {
+        const double y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return static_cast<float>(y);
+    }
+    void reset() noexcept { z1 = z2 = 0.0; }
+};
+
+} // anonymous namespace
+
+struct LufsMonitor {
+    static constexpr int kMaxCh = 8;
+
+    struct ChannelState {
+        KWeightBiquad s1, s2;
+        std::vector<float> ring;
+        double sumSq = 0.0;
+    } ch[kMaxCh];
+
+    int numCh         = 0;
+    int writePos      = 0;
+    int windowSamples = 0;
+    std::atomic<float> lufsM{-70.0f};
+    std::atomic<float> lufsChL{-70.0f};
+    std::atomic<float> lufsChR{-70.0f};
+
+    static void computeCoeffs(double fs, KWeightBiquad &s1, KWeightBiquad &s2) {
+        static constexpr double kPi = 3.14159265358979323846;
+        // Stage 1: ITU-R BS.1770 high-shelf pre-filter
+        const double f1 = 1681.974450955533, G = 3.999843853973347, Q1 = 0.7071752369554196;
+        const double K1 = std::tan(kPi * f1 / fs);
+        const double Vh = std::pow(10.0, G / 20.0);
+        const double Vb = std::pow(Vh, 0.4996667741545416);
+        const double d1 = 1.0 + K1 / Q1 + K1 * K1;
+        s1.b0 = (Vh + Vb * K1 / Q1 + K1 * K1) / d1;
+        s1.b1 = 2.0 * (K1 * K1 - Vh) / d1;
+        s1.b2 = (Vh - Vb * K1 / Q1 + K1 * K1) / d1;
+        s1.a1 = 2.0 * (K1 * K1 - 1.0) / d1;
+        s1.a2 = (1.0 - K1 / Q1 + K1 * K1) / d1;
+        // Stage 2: RLB high-pass
+        const double f2 = 38.13547087602444, Q2 = 0.5003270373238773;
+        const double K2 = std::tan(kPi * f2 / fs);
+        const double d2 = 1.0 + K2 / Q2 + K2 * K2;
+        s2.b0 =  1.0 / d2;  s2.b1 = -2.0 / d2;  s2.b2 = 1.0 / d2;
+        s2.a1 = 2.0 * (K2 * K2 - 1.0) / d2;
+        s2.a2 = (1.0 - K2 / Q2 + K2 * K2) / d2;
+    }
+
+    void prepare(double fs, int channels) {
+        numCh = std::min(channels, kMaxCh);
+        windowSamples = std::max(1, static_cast<int>(fs * 0.4)); // 400 ms
+        KWeightBiquad s1, s2;
+        computeCoeffs(fs, s1, s2);
+        for (int c = 0; c < numCh; ++c) {
+            ch[c].s1 = s1;  ch[c].s1.reset();
+            ch[c].s2 = s2;  ch[c].s2.reset();
+            ch[c].ring.assign(static_cast<size_t>(windowSamples), 0.0f);
+            ch[c].sumSq = 0.0;
+        }
+        writePos = 0;
+        lufsM.store(-70.0f, std::memory_order_relaxed);
+        lufsChL.store(-70.0f, std::memory_order_relaxed);
+        lufsChR.store(-70.0f, std::memory_order_relaxed);
+    }
+
+    void resetBuffers() noexcept {
+        for (int c = 0; c < numCh; ++c) {
+            ch[c].s1.reset(); ch[c].s2.reset();
+            std::fill(ch[c].ring.begin(), ch[c].ring.end(), 0.0f);
+            ch[c].sumSq = 0.0;
+        }
+        writePos = 0;
+        lufsM.store(-70.0f, std::memory_order_relaxed);
+        lufsChL.store(-70.0f, std::memory_order_relaxed);
+        lufsChR.store(-70.0f, std::memory_order_relaxed);
+    }
+
+    void process(const float *interleaved, int frames, int inCh) noexcept {
+        if (numCh <= 0 || windowSamples <= 0) return;
+        const int nCh = std::min(inCh, numCh);
+        for (int i = 0; i < frames; ++i) {
+            for (int c = 0; c < nCh; ++c) {
+                const float y  = ch[c].s2.process(ch[c].s1.process(interleaved[i * inCh + c]));
+                const float sq = y * y;
+                ch[c].sumSq -= static_cast<double>(ch[c].ring[writePos]);
+                ch[c].ring[writePos] = sq;
+                ch[c].sumSq += static_cast<double>(sq);
+            }
+            writePos = (writePos + 1) % windowSamples;
+        }
+        // Momentary LUFS: G_i=1.0 for L/R/C, 1.41 for Ls/Rs (BS.1770 §2)
+        double power = 0.0;
+        for (int c = 0; c < nCh; ++c)
+            power += ((c >= 3) ? 1.41 : 1.0) * (ch[c].sumSq / windowSamples);
+        lufsM.store(power > 1e-10
+            ? static_cast<float>(-0.691 + 10.0 * std::log10(power))
+            : -70.0f,
+            std::memory_order_relaxed);
+
+        const auto chToLufs = [this](int c) {
+            if (c >= numCh || windowSamples <= 0) return -70.0f;
+            const double p = ch[c].sumSq / static_cast<double>(windowSamples);
+            return static_cast<float>(p > 1e-10 ? (-0.691 + 10.0 * std::log10(p)) : -70.0);
+        };
+        lufsChL.store(chToLufs(0), std::memory_order_relaxed);
+        lufsChR.store(chToLufs(1), std::memory_order_relaxed);
+    }
+};
+// ---- end LufsMonitor ---------------------------------------------------- //
+
 AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
     : QObject(parent)
     , m_chain(chain)
@@ -19,6 +136,7 @@ AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
             this, &AudioEngine::onDevicesChanged);
     connect(m_notifier, &WasapiDeviceNotifier::devicesChanged,
             this, &AudioEngine::devicesChanged);
+    m_lufsMonitor = std::make_unique<LufsMonitor>();
 }
 
 AudioEngine::~AudioEngine()
@@ -98,12 +216,15 @@ void AudioEngine::stop()
     m_captureSampleRate = 0;
     m_captureChannels = 0;
     m_currentRenderId.clear();
-    // Park meters at silence so the UI doesn't show the last-seen value while
-    // capture is stopped.
-    m_recentHotDbfs.store(-120.0f, std::memory_order_relaxed);
-    m_recentInputPeakDbfs.store(-120.0f, std::memory_order_relaxed);
-    m_recentOutputPeakDbfs.store(-120.0f, std::memory_order_relaxed);
-    m_recentOutputRmsDbfs.store(-120.0f, std::memory_order_relaxed);
+    // Park all meters at silence.
+    for (auto *a : {&m_recentHotDbfs, &m_recentInputPeakDbfs, &m_recentOutputPeakDbfs,
+                    &m_recentOutputRmsDbfs, &m_recentInputPeakChL, &m_recentInputPeakChR,
+                    &m_recentOutputPeakChL, &m_recentOutputPeakChR})
+        a->store(-120.0f, std::memory_order_relaxed);
+    m_recentLufsM.store(-70.0f, std::memory_order_relaxed);
+    m_recentLufsChL.store(-70.0f, std::memory_order_relaxed);
+    m_recentLufsChR.store(-70.0f, std::memory_order_relaxed);
+    if (m_lufsMonitor) m_lufsMonitor->resetBuffers();
     emit runningChanged();
 }
 
@@ -184,19 +305,23 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 {
     if (!m_chain || numFrames <= 0 || numChannels <= 0) return;
 
-    // Pre-DSP peak telemetry for input edge meter. Always store — including
-    // -120 for silent packets — so the UI sees a fresh value every packet
-    // and can decay toward silence smoothly rather than tearing to -inf.
+    // Pre-DSP peak — per-channel and mono-mixed.
     {
-        float prePeak = 0.0f;
+        float prePeakL = 0.0f, prePeakR = 0.0f;
         const int sampleCount = numFrames * numChannels;
-        for (int i = 0; i < sampleCount; ++i) {
-            const float a = std::fabs(interleaved[i]);
-            if (a > prePeak)
-                prePeak = a;
+        for (int i = 0; i < numFrames; ++i) {
+            const float aL = std::fabs(interleaved[i * numChannels + 0]);
+            const float aR = std::fabs(interleaved[i * numChannels + std::min(1, numChannels - 1)]);
+            if (aL > prePeakL) prePeakL = aL;
+            if (aR > prePeakR) prePeakR = aR;
         }
-        const float dbfs = (prePeak > 1e-6f) ? 20.0f * std::log10(prePeak) : -120.0f;
-        m_recentInputPeakDbfs.store(dbfs, std::memory_order_relaxed);
+        const auto toDbfs = [](float a) {
+            return (a > 1e-6f) ? 20.0f * std::log10(a) : -120.0f;
+        };
+        const float dbL = toDbfs(prePeakL), dbR = toDbfs(prePeakR);
+        m_recentInputPeakChL.store(dbL, std::memory_order_relaxed);
+        m_recentInputPeakChR.store(dbR, std::memory_order_relaxed);
+        m_recentInputPeakDbfs.store(std::max(dbL, dbR), std::memory_order_relaxed);
     }
 
     if (!m_chainPrepared
@@ -209,6 +334,7 @@ void AudioEngine::onCapturePacket(const float *interleaved,
         m_captureChannels = numChannels;
         m_chainPrepared = true;
         if (m_analyzer) m_analyzer->start(sampleRate, numChannels);
+        if (m_lufsMonitor) m_lufsMonitor->prepare(static_cast<double>(sampleRate), numChannels);
         // The capture thread hits this on the very first packet — let the UI
         // know the real format so the status line stops showing 0 Hz / 0 ch.
         emit captureFormatChanged(sampleRate, numChannels);
@@ -221,20 +347,29 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 
     // Track near-full-scale output as a practical indicator that a hidden
     // limiter/safety clamp may be pumping somewhere downstream.
-    float peak = 0.0f;
+    float peakL = 0.0f, peakR = 0.0f;
     double sumSq = 0.0;
     const int sampleCount = numFrames * numChannels;
-    for (int i = 0; i < sampleCount; ++i) {
-        const float s = interleaved[i];
-        const float a = std::fabs(s);
-        if (a > peak)
-            peak = a;
-        sumSq += static_cast<double>(s) * static_cast<double>(s);
+    for (int i = 0; i < numFrames; ++i) {
+        const float sL = interleaved[i * numChannels + 0];
+        const float sR = interleaved[i * numChannels + std::min(1, numChannels - 1)];
+        if (std::fabs(sL) > peakL) peakL = std::fabs(sL);
+        if (std::fabs(sR) > peakR) peakR = std::fabs(sR);
+        for (int c = 0; c < numChannels; ++c) {
+            const float s = interleaved[i * numChannels + c];
+            sumSq += static_cast<double>(s) * static_cast<double>(s);
+        }
     }
     {
-        const float dbfs = (peak > 1e-6f) ? 20.0f * std::log10(peak) : -120.0f;
-        m_recentHotDbfs.store(dbfs, std::memory_order_relaxed);
-        m_recentOutputPeakDbfs.store(dbfs, std::memory_order_relaxed);
+        const auto toDbfs = [](float a) {
+            return (a > 1e-6f) ? 20.0f * std::log10(a) : -120.0f;
+        };
+        const float dbL = toDbfs(peakL), dbR = toDbfs(peakR);
+        m_recentOutputPeakChL.store(dbL, std::memory_order_relaxed);
+        m_recentOutputPeakChR.store(dbR, std::memory_order_relaxed);
+        const float dbPeak = std::max(dbL, dbR);
+        m_recentHotDbfs.store(dbPeak, std::memory_order_relaxed);
+        m_recentOutputPeakDbfs.store(dbPeak, std::memory_order_relaxed);
     }
     {
         float rmsDbfs = -120.0f;
@@ -246,6 +381,14 @@ void AudioEngine::onCapturePacket(const float *interleaved,
     }
 
     if (m_analyzer) m_analyzer->pushPost(interleaved, numFrames, numChannels);
+
+    if (m_lufsMonitor) m_lufsMonitor->process(interleaved, numFrames, numChannels);
+    m_recentLufsM.store(m_lufsMonitor ? m_lufsMonitor->lufsM.load(std::memory_order_relaxed) : -70.0f,
+                        std::memory_order_relaxed);
+    m_recentLufsChL.store(m_lufsMonitor ? m_lufsMonitor->lufsChL.load(std::memory_order_relaxed) : -70.0f,
+                          std::memory_order_relaxed);
+    m_recentLufsChR.store(m_lufsMonitor ? m_lufsMonitor->lufsChR.load(std::memory_order_relaxed) : -70.0f,
+                          std::memory_order_relaxed);
 
     // Resample if capture and render disagree on sample rate (e.g., capturing
     // VB-CABLE @ 48 kHz while rendering to a Focusrite negotiated at 44.1 kHz).
@@ -276,3 +419,21 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 }
 
 } // namespace host
+
+float host::AudioEngine::currentInputPeakDbfs(int ch) const
+{
+    return (ch == 0 ? m_recentInputPeakChL : m_recentInputPeakChR)
+        .load(std::memory_order_relaxed);
+}
+
+float host::AudioEngine::currentOutputPeakDbfs(int ch) const
+{
+    return (ch == 0 ? m_recentOutputPeakChL : m_recentOutputPeakChR)
+        .load(std::memory_order_relaxed);
+}
+
+float host::AudioEngine::currentOutputLufsM(int ch) const
+{
+    return (ch == 0 ? m_recentLufsChL : m_recentLufsChR)
+        .load(std::memory_order_relaxed);
+}

@@ -3,7 +3,6 @@
 #include "../Theme.h"
 
 #include <QDateTime>
-#include <QLinearGradient>
 #include <QPainter>
 
 #include <cmath>
@@ -20,15 +19,38 @@ LevelMeter::LevelMeter(QWidget *parent) : QWidget(parent)
     setAttribute(Qt::WA_OpaquePaintEvent, false);
 }
 
+void LevelMeter::setLevelDbfs(double dbfs)
+{
+    // Map -60..0 dBFS → 0..kMaxDb
+    const double mapped = std::max(0.0, (dbfs + 60.0) * (kMaxDb / 60.0));
+    setReductionDb(mapped);
+}
+
+void LevelMeter::setBarColor(BarColor c)
+{
+    if (m_barColor == c) return;
+    m_barColor = c;
+    update();
+}
+
 void LevelMeter::setReductionDb(double db)
 {
     db = std::max(0.0, std::min(kMaxDb, db));
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const double prevValue = m_valueDb;
     const double prevPeak = m_peakDb;
 
-    m_valueDb = db;
+    // Global meter feel: instant attack, ~60 ms exponential release.
+    constexpr double kReleaseTauMs = 60.0;
+    double dtMs = (m_lastUpdateMs > 0)
+        ? static_cast<double>(now - m_lastUpdateMs)
+        : 8.0;
+    if (dtMs <= 0.0) dtMs = 1.0;
+    m_lastUpdateMs = now;
+    const double alpha = 1.0 - std::exp(-dtMs / kReleaseTauMs);
+    if (db > m_valueDb) m_valueDb = db;
+    else                m_valueDb += alpha * (db - m_valueDb);
 
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (db > m_peakDb) {
         m_peakDb = db;
         m_peakStampMs = now;
@@ -67,20 +89,25 @@ void LevelMeter::paintEvent(QPaintEvent *)
     const double frac = std::min(1.0, m_valueDb / kMaxDb);
     const double peakFrac = std::min(1.0, m_peakDb / kMaxDb);
 
-    // Fill — gradient from accent (low GR) to warn (heavy GR).
-    QLinearGradient g(full.left(), 0, full.right(), 0);
-    g.setColorAt(0.0, theme::kAccent);
-    g.setColorAt(0.5, QColor(0xF1, 0xC4, 0x0F));   // amber middle
-    g.setColorAt(1.0, theme::kWarn);
+    // Fill — color depends on bar role.
+    QBrush fillBrush;
+    if (m_barColor == BarColor::Input) {
+        fillBrush = theme::kAccent;                     // blue
+    } else if (m_barColor == BarColor::Output) {
+        fillBrush = theme::kOk;                         // green
+    } else {
+        // GainReduction — amber/yellow
+        fillBrush = QColor(0xF1, 0xC4, 0x0F);
+    }
 
     QRectF fillRect = full.adjusted(1.5, 1.5, 0, -1.5);
     fillRect.setWidth((full.width() - 2.0) * frac);
     p.setPen(Qt::NoPen);
-    p.setBrush(g);
+    p.setBrush(fillBrush);
     p.drawRoundedRect(fillRect, 2, 2);
 
     // Peak tick
-    if (peakFrac > 0.0) {
+    if (peakFrac > 0.0 && m_barColor != BarColor::GainReduction) {
         const double x = full.left() + 1.5 + (full.width() - 2.0) * peakFrac;
         p.setPen(QPen(theme::kTextPrimary, 1.4));
         p.drawLine(QPointF(x, full.top() + 1.5),

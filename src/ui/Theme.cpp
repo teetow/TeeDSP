@@ -22,8 +22,8 @@ QGroupBox {
     background-color: #1C1E24;
     border: 1px solid #2A2C33;
     border-radius: 6px;
-    margin-top: 14px;
-    padding: 16px 12px 12px 12px;
+    margin-top: 4px;
+    padding: 22px 12px 12px 12px;
     font-weight: 600;
     color: #9AA0AE;
     letter-spacing: 0.4px;
@@ -31,10 +31,12 @@ QGroupBox {
 }
 
 QGroupBox::title {
-    subcontrol-origin: margin;
+    subcontrol-origin: border;
     subcontrol-position: top left;
+    left: 12px;
+    top: 7px;
     padding: 0 6px;
-    background-color: #16171B;
+    background-color: transparent;
     color: #9AA0AE;
     font-size: 8pt;
 }
@@ -197,6 +199,29 @@ QToolTip {
     color: #EAECF0;
     border: 1px solid #34363D;
     padding: 4px 6px;
+}
+
+/* ---------- EQ band tab buttons ---------- */
+QPushButton[role="bandTab"] {
+    background-color: #1C1E24;
+    border: 1px solid #2A2C33;
+    border-radius: 4px;
+    padding: 5px 10px;
+    color: #9AA0AE;
+    font-size: 9pt;
+    font-weight: 500;
+    min-height: 20px;
+}
+QPushButton[role="bandTab"]:hover {
+    background-color: #22242A;
+    border-color: #4FC1E9;
+    color: #EAECF0;
+}
+QPushButton[role="bandTab"]:checked {
+    background-color: #22242A;
+    border-color: #4FC1E9;
+    color: #EAECF0;
+    font-weight: 600;
 }
 )");
 }

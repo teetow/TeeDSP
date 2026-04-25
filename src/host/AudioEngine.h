@@ -8,12 +8,14 @@
 #include <QString>
 
 #include <atomic>
+#include <memory>
 #include <vector>
 
 namespace dsp { class ProcessorChain; }
 
 namespace host {
 
+struct LufsMonitor;  // defined in AudioEngine.cpp
 class SpectrumAnalyzer;
 class WasapiDeviceNotifier;
 
@@ -53,14 +55,14 @@ public:
     QString currentRender() const { return m_currentRenderId; }
 
     // Latest-packet meter telemetry in dBFS. Each capture packet stores its
-    // own peak / RMS (silent packets store -120). The UI loads non-destructively
-    // and applies its own peak-hold + smooth release on top — destructive
-    // reset-on-read used to produce alternating -inf frames whenever the UI
-    // poll rate ran ahead of the WASAPI packet rate.
-    float currentOutputHotDbfs()  const { return m_recentHotDbfs.load(std::memory_order_relaxed); }
-    float currentInputPeakDbfs()  const { return m_recentInputPeakDbfs.load(std::memory_order_relaxed); }
-    float currentOutputPeakDbfs() const { return m_recentOutputPeakDbfs.load(std::memory_order_relaxed); }
-    float currentOutputRmsDbfs()  const { return m_recentOutputRmsDbfs.load(std::memory_order_relaxed); }
+    // Latest-packet meter telemetry in dBFS.
+    // ch=0 → L, ch=1 → R; default ch=0 for backwards-compatible call sites.
+    float currentOutputHotDbfs()            const { return m_recentHotDbfs.load(std::memory_order_relaxed); }
+    float currentInputPeakDbfs(int ch = 0)  const;
+    float currentOutputPeakDbfs(int ch = 0) const;
+    float currentOutputRmsDbfs()            const { return m_recentOutputRmsDbfs.load(std::memory_order_relaxed); }
+    float currentOutputLufsM()              const { return m_recentLufsM.load(std::memory_order_relaxed); }
+    float currentOutputLufsM(int ch)        const;
 
 signals:
     void runningChanged();
@@ -100,9 +102,17 @@ private:
     std::vector<float> m_resampleScratch;
 
     std::atomic<float> m_recentHotDbfs{-120.0f};
-    std::atomic<float> m_recentInputPeakDbfs{-120.0f};
-    std::atomic<float> m_recentOutputPeakDbfs{-120.0f};
+    std::atomic<float> m_recentInputPeakDbfs{-120.0f};   // mono-mixed, kept for compat
+    std::atomic<float> m_recentOutputPeakDbfs{-120.0f};  // mono-mixed, kept for compat
     std::atomic<float> m_recentOutputRmsDbfs{-120.0f};
+    std::atomic<float> m_recentInputPeakChL{-120.0f};
+    std::atomic<float> m_recentInputPeakChR{-120.0f};
+    std::atomic<float> m_recentOutputPeakChL{-120.0f};
+    std::atomic<float> m_recentOutputPeakChR{-120.0f};
+    std::atomic<float> m_recentLufsM{-70.0f};
+    std::atomic<float> m_recentLufsChL{-70.0f};
+    std::atomic<float> m_recentLufsChR{-70.0f};
+    std::unique_ptr<LufsMonitor> m_lufsMonitor;
 };
 
 } // namespace host

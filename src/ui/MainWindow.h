@@ -39,9 +39,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private:
-    struct EqBandWidgets {
-        QCheckBox *enabled = nullptr;
-    };
+    struct EqBandWidgets {};
 
     void buildUi();
     QWidget *buildIoSection();
@@ -77,10 +75,14 @@ private:
     QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
 
-    QProgressBar *m_inputMeterBar = nullptr;
+    QProgressBar *m_inputMeterBarL = nullptr;
+    QProgressBar *m_inputMeterBarR = nullptr;
     ui::Knob *m_inputTrim = nullptr;
 
-    QProgressBar *m_outputMeterBar = nullptr;
+    QProgressBar *m_outputMeterBarL = nullptr;
+    QProgressBar *m_outputMeterBarR = nullptr;
+    QProgressBar *m_outputLufsBarL  = nullptr;
+    QProgressBar *m_outputLufsBarR  = nullptr;
     QLabel *m_outputVuLabel = nullptr;
     QLabel *m_outputLufsLabel = nullptr;
     ui::Knob *m_outputTrim = nullptr;
@@ -107,13 +109,17 @@ private:
     QCheckBox *m_showInputSpectrum = nullptr;
     QCheckBox *m_showOutputSpectrum = nullptr;
     QCheckBox *m_showHeatmap = nullptr;
-    QLabel *m_eqSelectedBand = nullptr;
+    QCheckBox *m_eqBandEnabled = nullptr;
+    QVector<QPushButton *> m_eqBandTabs;
     ui::Knob *m_eqDynThreshold = nullptr;
     ui::Knob *m_eqDynRatio = nullptr;
     ui::Knob *m_eqDynAttack = nullptr;
     ui::Knob *m_eqDynRelease = nullptr;
     ui::Knob *m_eqDynRange = nullptr;
     QLabel *m_eqDynMeter = nullptr;
+    ui::LevelMeter *m_eqDynInputMeter = nullptr;
+    ui::LevelMeter *m_eqDynOutputMeter = nullptr;
+    ui::LevelMeter *m_eqDynGrMeter = nullptr;
     ui::EqCurve *m_eqCurve = nullptr;
     QVector<EqBandWidgets> m_eqBands;
     int m_selectedEqBand = 0;
@@ -132,8 +138,12 @@ private:
     // with kMeterReleaseTauMs time-constant. Avoids alternating -inf frames
     // when meter polling outpaces the WASAPI packet rate.
     float m_dispInPeakDbfs = -120.0f;
+    float m_dispInPeakDbfsR = -120.0f;
     float m_dispOutPeakDbfs = -120.0f;
+    float m_dispOutPeakDbfsR = -120.0f;
     float m_dispOutRmsDbfs = -120.0f;
     float m_dispOutHotDbfs = -120.0f;
+    float m_dispOutLufsPctL = 0.0f;
+    float m_dispOutLufsPctR = 0.0f;
     qint64 m_lastMeterTickMs = 0;
 };

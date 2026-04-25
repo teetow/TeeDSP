@@ -242,9 +242,9 @@ void MainWindow::buildUi()
 
 QWidget *MainWindow::buildIoSection()
 {
-    auto *section = createSection(QStringLiteral("Audio I/O"));
+    auto *section = new QWidget();
     auto *grid = new QGridLayout(section);
-    grid->setContentsMargins(12, 18, 12, 12);
+    grid->setContentsMargins(0, 4, 0, 4);
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(8);
 
@@ -265,8 +265,6 @@ QWidget *MainWindow::buildIoSection()
     grid->addWidget(m_globalBypass, 0, 5);
 
     m_startStopButton = new QPushButton(QStringLiteral("Start"));
-    m_startStopButton->setProperty("role", "primary");
-    m_startStopButton->setMinimumWidth(110);
     grid->addWidget(m_startStopButton, 0, 6);
 
     grid->setColumnStretch(1, 2);
@@ -313,40 +311,32 @@ QWidget *MainWindow::buildEqSection()
     m_eqCurve->setMinimumHeight(220);
     col->addWidget(m_eqCurve, 1);
 
-    auto *bandsRow = new QGridLayout();
-    bandsRow->setHorizontalSpacing(10);
-    bandsRow->setVerticalSpacing(4);
+    auto *tabBar = new QHBoxLayout();
+    tabBar->setSpacing(2);
 
     m_eqBands.reserve(5);
+    m_eqBandTabs.reserve(5);
     for (int i = 0; i < 5; ++i) {
-        EqBandWidgets w;
-
-        auto *header = new QLabel(QStringLiteral("Band %1").arg(i + 1));
-        header->setAlignment(Qt::AlignCenter);
-        header->setProperty("role", "caption");
-        bandsRow->addWidget(header, 0, i);
-
-        w.enabled = new QCheckBox();
-        auto *enableWrap = new QHBoxLayout();
-        enableWrap->addStretch();
-        enableWrap->addWidget(w.enabled);
-        enableWrap->addStretch();
-        bandsRow->addLayout(enableWrap, 1, i);
-
-        m_eqBands.push_back(w);
+        auto *btn = new QPushButton(QStringLiteral("Band %1").arg(i + 1));
+        btn->setProperty("role", "bandTab");
+        btn->setCheckable(true);
+        btn->setChecked(i == 0);
+        btn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        m_eqBandTabs.push_back(btn);
+        tabBar->addWidget(btn);
+        m_eqBands.push_back(EqBandWidgets{});
     }
 
-    col->addLayout(bandsRow);
+    col->addLayout(tabBar);
 
-    auto *dynBox = new QGroupBox(QStringLiteral("Selected Band Dynamics"));
+    auto *dynBox = new QGroupBox();
     auto *dynCol = new QVBoxLayout(dynBox);
     dynCol->setContentsMargins(8, 10, 8, 8);
     dynCol->setSpacing(6);
 
     auto *metaRow = new QHBoxLayout();
-    m_eqSelectedBand = new QLabel(QStringLiteral("Band 1"));
-    m_eqSelectedBand->setProperty("role", "caption");
-    metaRow->addWidget(m_eqSelectedBand);
+    m_eqBandEnabled = new QCheckBox(QStringLiteral("Enable band"));
+    metaRow->addWidget(m_eqBandEnabled);
     metaRow->addStretch();
     m_eqDynMeter = new QLabel(QStringLiteral("GR 0.0 dB"));
     m_eqDynMeter->setProperty("role", "status");
@@ -366,6 +356,34 @@ QWidget *MainWindow::buildEqSection()
     dynRow->addWidget(m_eqDynRelease);
     dynRow->addWidget(m_eqDynRange);
     dynCol->addLayout(dynRow);
+
+    // Mini signal / GR meters
+    auto *meterGrid = new QGridLayout();
+    meterGrid->setHorizontalSpacing(6);
+    meterGrid->setVerticalSpacing(3);
+
+    auto *inCaption = createCaption(QStringLiteral("In"));
+    auto *outCaption = createCaption(QStringLiteral("Out"));
+    auto *grCaption  = createCaption(QStringLiteral("GR"));
+    inCaption->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    outCaption->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    grCaption->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    m_eqDynInputMeter  = new ui::LevelMeter();
+    m_eqDynOutputMeter = new ui::LevelMeter();
+    m_eqDynGrMeter     = new ui::LevelMeter();
+    m_eqDynInputMeter->setBarColor(ui::LevelMeter::BarColor::Input);
+    m_eqDynOutputMeter->setBarColor(ui::LevelMeter::BarColor::Output);
+    // GainReduction is the default (yellow)
+
+    meterGrid->addWidget(inCaption,           0, 0);
+    meterGrid->addWidget(m_eqDynInputMeter,   0, 1);
+    meterGrid->addWidget(outCaption,          1, 0);
+    meterGrid->addWidget(m_eqDynOutputMeter,  1, 1);
+    meterGrid->addWidget(grCaption,           2, 0);
+    meterGrid->addWidget(m_eqDynGrMeter,      2, 1);
+    meterGrid->setColumnStretch(1, 1);
+    dynCol->addLayout(meterGrid);
 
     col->addWidget(dynBox);
 
@@ -461,19 +479,30 @@ QWidget *MainWindow::buildInputPane()
     col->setContentsMargins(10, 18, 10, 10);
     col->setSpacing(8);
 
-    m_inputMeterBar = new QProgressBar();
-    m_inputMeterBar->setOrientation(Qt::Vertical);
-    m_inputMeterBar->setRange(0, 100);
-    m_inputMeterBar->setValue(0);
-    m_inputMeterBar->setTextVisible(false);
-    m_inputMeterBar->setMinimumHeight(260);
-    m_inputMeterBar->setStyleSheet(QStringLiteral(
-        "QProgressBar { border: 1px solid #2A2C33; background: #121418; width: 18px; }"
-        "QProgressBar::chunk { background: #4FC1E9; }"));
+    const auto makeVBar = [](const QString &chunkColor, bool narrow = false) {
+        auto *b = new QProgressBar();
+        b->setOrientation(Qt::Vertical);
+        b->setRange(0, 100);
+        b->setValue(0);
+        b->setTextVisible(false);
+        b->setMinimumHeight(200);
+        const int w = narrow ? 7 : 14;
+        b->setStyleSheet(QStringLiteral(
+            "QProgressBar { border: 1px solid #2A2C33; background: #121418; width: %1px; }"
+            "QProgressBar::chunk { background: %2; }").arg(w).arg(chunkColor));
+        return b;
+    };
+
+    m_inputMeterBarL = makeVBar(QStringLiteral("#4FC1E9"));
+    m_inputMeterBarR = makeVBar(QStringLiteral("#4FC1E9"));
+    m_inputMeterBarL->setMinimumHeight(260);
+    m_inputMeterBarR->setMinimumHeight(260);
 
     auto *meterWrap = new QHBoxLayout();
+    meterWrap->setSpacing(3);
     meterWrap->addStretch();
-    meterWrap->addWidget(m_inputMeterBar);
+    meterWrap->addWidget(m_inputMeterBarL);
+    meterWrap->addWidget(m_inputMeterBarR);
     meterWrap->addStretch();
     col->addLayout(meterWrap, 1);
 
@@ -495,19 +524,49 @@ QWidget *MainWindow::buildOutputPane()
     col->setContentsMargins(10, 18, 10, 10);
     col->setSpacing(8);
 
-    m_outputMeterBar = new QProgressBar();
-    m_outputMeterBar->setOrientation(Qt::Vertical);
-    m_outputMeterBar->setRange(0, 100);
-    m_outputMeterBar->setValue(0);
-    m_outputMeterBar->setTextVisible(false);
-    m_outputMeterBar->setMinimumHeight(220);
-    m_outputMeterBar->setStyleSheet(QStringLiteral(
-        "QProgressBar { border: 1px solid #2A2C33; background: #121418; width: 18px; }"
-        "QProgressBar::chunk { background: #2ECC71; }"));
+    const auto makeVBarOut = [](const QString &chunkColor, bool narrow, bool framed = true) {
+        auto *b = new QProgressBar();
+        b->setOrientation(Qt::Vertical);
+        b->setRange(0, 100);
+        b->setValue(0);
+        b->setTextVisible(false);
+        b->setMinimumHeight(200);
+        const int w = narrow ? 4 : 11;
+        const QString border = framed
+            ? QStringLiteral("border: 1px solid #2A2C33;")
+            : QStringLiteral("border: none;");
+        b->setStyleSheet(QStringLiteral(
+            "QProgressBar { %1 background: #121418; width: %2px; }"
+            "QProgressBar::chunk { background: %3; }").arg(border).arg(w).arg(chunkColor));
+        return b;
+    };
+
+    m_outputLufsBarL  = makeVBarOut(QStringLiteral("#F1C40F"), true);   // LUFS-L (thin)
+    m_outputMeterBarL = makeVBarOut(QStringLiteral("#2ECC71"), false, false); // VU-L (center frame)
+    m_outputMeterBarR = makeVBarOut(QStringLiteral("#2ECC71"), false, false); // VU-R (center frame)
+    m_outputLufsBarR  = makeVBarOut(QStringLiteral("#F1C40F"), true);   // LUFS-R (thin)
+    m_outputLufsBarL->setMinimumHeight(220);
+    m_outputMeterBarL->setMinimumHeight(220);
+    m_outputMeterBarR->setMinimumHeight(220);
+    m_outputLufsBarR->setMinimumHeight(220);
+
+    auto *stereoFrame = new QFrame();
+    stereoFrame->setStyleSheet(QStringLiteral(
+        "QFrame { border: 1px solid #2A2C33; border-radius: 3px; background: #121418; }"));
+    auto *stereoRow = new QHBoxLayout(stereoFrame);
+    stereoRow->setContentsMargins(3, 3, 3, 3);
+    stereoRow->setSpacing(2);
+    stereoRow->addWidget(m_outputMeterBarL);
+    stereoRow->addWidget(m_outputMeterBarR);
 
     auto *meterWrap = new QHBoxLayout();
+    meterWrap->setSpacing(2);
     meterWrap->addStretch();
-    meterWrap->addWidget(m_outputMeterBar);
+    meterWrap->addWidget(m_outputLufsBarL);
+    meterWrap->addSpacing(3);
+    meterWrap->addWidget(stereoFrame);
+    meterWrap->addSpacing(3);
+    meterWrap->addWidget(m_outputLufsBarR);
     meterWrap->addStretch();
     col->addLayout(meterWrap, 1);
 
@@ -595,12 +654,18 @@ void MainWindow::connectSignals()
         if (!m_syncingUi) m_dspController->setEqEnabled(c);
     });
 
-    for (int i = 0; i < m_eqBands.size(); ++i) {
-        const int band = i;
-        auto &w = m_eqBands[i];
+    connect(m_eqBandEnabled, &QCheckBox::toggled, this, [this](bool c) {
+        if (!m_syncingUi) m_dspController->setEqBandEnabled(m_selectedEqBand, c);
+    });
 
-        connect(w.enabled, &QCheckBox::toggled, this, [this, band](bool c) {
-            if (!m_syncingUi) m_dspController->setEqBandEnabled(band, c);
+    for (int i = 0; i < m_eqBandTabs.size(); ++i) {
+        const int band = i;
+        connect(m_eqBandTabs[i], &QPushButton::clicked, this, [this, band]() {
+            m_selectedEqBand = band;
+            for (int j = 0; j < m_eqBandTabs.size(); ++j)
+                m_eqBandTabs[j]->setChecked(j == band);
+            syncSelectedBandDyn();
+            refreshEqCurve();
         });
     }
 
@@ -619,6 +684,8 @@ void MainWindow::connectSignals()
     connect(m_eqCurve, &ui::EqCurve::bandSelected, this, [this](int band) {
         if (band < 0 || band >= m_eqBands.size()) return;
         m_selectedEqBand = band;
+        for (int j = 0; j < m_eqBandTabs.size(); ++j)
+            m_eqBandTabs[j]->setChecked(j == band);
         syncSelectedBandDyn();
     });
 
@@ -650,13 +717,16 @@ void MainWindow::connectSignals()
 
     connect(m_showInputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
         m_eqCurve->setShowInputSpectrum(on);
+        QSettings().setValue(QString::fromLatin1(kShowInputSpecKey), on);
     });
     connect(m_showOutputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
         m_eqCurve->setShowOutputSpectrum(on);
+        QSettings().setValue(QString::fromLatin1(kShowOutputSpecKey), on);
     });
 
     connect(m_showHeatmap, &QCheckBox::toggled, this, [this](bool on) {
         m_eqCurve->setShowHeatmap(on);
+        QSettings().setValue(QString::fromLatin1(kShowHeatmapKey), on);
     });
 
     if (auto *analyzer = m_engine->analyzer()) {
@@ -682,11 +752,16 @@ void MainWindow::connectSignals()
             if (dbfs >= 0.0f) return 100;
             return static_cast<int>((dbfs + 60.0f) * (100.0f / 60.0f));
         };
+        const auto lufsToMeterPct = [](float lufs) {
+            if (lufs <= -70.0f) return 0;
+            if (lufs >= 0.0f) return 100;
+            return static_cast<int>((lufs + 70.0f) * (100.0f / 70.0f));
+        };
 
         // Tick delta drives the smoothing alpha. Skew a missing first sample
         // toward the nominal 8 ms timer interval so initial transitions don't
         // snap.
-        constexpr float kMeterReleaseTauMs = 10.0f;
+        constexpr float kMeterReleaseTauMs = 60.0f;
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         float dtMs = (m_lastMeterTickMs > 0)
             ? static_cast<float>(nowMs - m_lastMeterTickMs)
@@ -701,29 +776,49 @@ void MainWindow::connectSignals()
         };
 
         const float inPeakRaw  = m_engine ? m_engine->currentInputPeakDbfs()  : -120.0f;
-        const float outPeakRaw = m_engine ? m_engine->currentOutputPeakDbfs() : -120.0f;
-        const float outRmsRaw  = m_engine ? m_engine->currentOutputRmsDbfs()  : -120.0f;
-        const float outHotRaw  = m_engine ? m_engine->currentOutputHotDbfs()  : -120.0f;
+        const float inPeakRawR  = m_engine ? m_engine->currentInputPeakDbfs(1)  : -120.0f;
+        const float outPeakRaw  = m_engine ? m_engine->currentOutputPeakDbfs()  : -120.0f;
+        const float outPeakRawR = m_engine ? m_engine->currentOutputPeakDbfs(1) : -120.0f;
+        const float outRmsRaw   = m_engine ? m_engine->currentOutputRmsDbfs()   : -120.0f;
+        const float outHotRaw   = m_engine ? m_engine->currentOutputHotDbfs()   : -120.0f;
+        const float outLufsRawL = m_engine ? m_engine->currentOutputLufsM(0)    : -70.0f;
+        const float outLufsRawR = m_engine ? m_engine->currentOutputLufsM(1)    : -70.0f;
 
         smooth(m_dispInPeakDbfs,  inPeakRaw);
+        smooth(m_dispInPeakDbfsR, inPeakRawR);
         smooth(m_dispOutPeakDbfs, outPeakRaw);
+        smooth(m_dispOutPeakDbfsR, outPeakRawR);
         smooth(m_dispOutRmsDbfs,  outRmsRaw);
         smooth(m_dispOutHotDbfs,  outHotRaw);
+        {
+            const float lufsPctL = static_cast<float>(lufsToMeterPct(outLufsRawL));
+            const float lufsPctR = static_cast<float>(lufsToMeterPct(outLufsRawR));
+            if (lufsPctL > m_dispOutLufsPctL) m_dispOutLufsPctL = lufsPctL;
+            else m_dispOutLufsPctL += alpha * (lufsPctL - m_dispOutLufsPctL);
+            if (lufsPctR > m_dispOutLufsPctR) m_dispOutLufsPctR = lufsPctR;
+            else m_dispOutLufsPctR += alpha * (lufsPctR - m_dispOutLufsPctR);
+        }
 
-        m_inputMeterBar->setValue(dbToMeterPct(m_dispInPeakDbfs));
-        m_outputMeterBar->setValue(dbToMeterPct(m_dispOutPeakDbfs));
+        m_inputMeterBarL->setValue(dbToMeterPct(m_dispInPeakDbfs));
+        m_inputMeterBarR->setValue(dbToMeterPct(m_dispInPeakDbfsR));
+        m_outputMeterBarL->setValue(dbToMeterPct(m_dispOutPeakDbfs));
+        m_outputMeterBarR->setValue(dbToMeterPct(m_dispOutPeakDbfsR));
+        m_outputLufsBarL->setValue(static_cast<int>(m_dispOutLufsPctL));
+        m_outputLufsBarR->setValue(static_cast<int>(m_dispOutLufsPctR));
 
         // Treat anything below -100 dBFS as silence — exponential decay would
         // otherwise asymptote toward -120 forever and never display "-inf".
         if (m_dispOutRmsDbfs > -100.0f) {
             const float vu = m_dispOutRmsDbfs + 18.0f;       // 0 VU ~= -18 dBFS reference
-            const float lufsApprox = m_dispOutRmsDbfs - 0.7f; // rough unweighted estimate
             m_outputVuLabel->setText(QStringLiteral("VU: %1").arg(vu, 0, 'f', 1));
-            m_outputLufsLabel->setText(QStringLiteral("LUFS: %1").arg(lufsApprox, 0, 'f', 1));
         } else {
             m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
-            m_outputLufsLabel->setText(QStringLiteral("LUFS: -inf"));
         }
+        const float lufsM = m_engine ? m_engine->currentOutputLufsM() : -70.0f;
+        if (lufsM > -69.0f)
+            m_outputLufsLabel->setText(QStringLiteral("LUFS-M: %1").arg(lufsM, 0, 'f', 1));
+        else
+            m_outputLufsLabel->setText(QStringLiteral("LUFS-M: -inf"));
 
         const float hotDbfs = m_dispOutHotDbfs;
         if (hotDbfs > -0.2f) {
@@ -740,6 +835,9 @@ void MainWindow::connectSignals()
         if (m_selectedEqBand >= 0 && m_selectedEqBand < dsp::kEqBandCount) {
             const dsp::EqBandView v = m_dspController->eqBandView(m_selectedEqBand);
             m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(v.dynGainReductionDb, 0, 'f', 1));
+            m_eqDynInputMeter->setLevelDbfs(m_dispInPeakDbfs);
+            m_eqDynOutputMeter->setLevelDbfs(m_dispOutPeakDbfs);
+            m_eqDynGrMeter->setReductionDb(std::abs(v.dynGainReductionDb));
         }
 
         // Dynamic gain reduction changes continuously even when controls are
@@ -808,12 +906,12 @@ void MainWindow::pullStateFromController()
     std::array<dsp::EqBandView, dsp::kEqBandCount> views{};
     m_dspController->eqBandViews(views);
     for (int i = 0; i < m_eqBands.size() && i < static_cast<int>(views.size()); ++i) {
-        m_eqBands[i].enabled->setChecked(views[i].enabled);
+        // keep per-band tab visual in sync
     }
 
     m_selectedEqBand = std::clamp(m_selectedEqBand, 0, dsp::kEqBandCount - 1);
     const dsp::EqBandView &selected = views[m_selectedEqBand];
-    m_eqSelectedBand->setText(QStringLiteral("Band %1").arg(m_selectedEqBand + 1));
+    m_eqBandEnabled->setChecked(selected.enabled);
     m_eqDynThreshold->setValue(selected.dynThresholdDb);
     m_eqDynRatio->setValue(selected.dynRatio);
     m_eqDynAttack->setValue(selected.dynAttackMs);
@@ -857,7 +955,7 @@ void MainWindow::syncSelectedBandDyn()
 
     const bool was = m_syncingUi;
     m_syncingUi = true;
-    m_eqSelectedBand->setText(QStringLiteral("Band %1").arg(m_selectedEqBand + 1));
+    m_eqBandEnabled->setChecked(v.enabled);
     m_eqDynThreshold->setValue(v.dynThresholdDb);
     m_eqDynRatio->setValue(v.dynRatio);
     m_eqDynAttack->setValue(v.dynAttackMs);
@@ -1005,16 +1103,24 @@ void MainWindow::refreshEngineStatus()
         m_statusLabel->setText(QStringLiteral("Idle."));
         m_statusLabel->setProperty("role", "status");
         m_eqCurve->clearSpectra();
-        m_inputMeterBar->setValue(0);
-        m_outputMeterBar->setValue(0);
+        m_inputMeterBarL->setValue(0);
+        m_inputMeterBarR->setValue(0);
+        m_outputMeterBarL->setValue(0);
+        m_outputMeterBarR->setValue(0);
+        if (m_outputLufsBarL) m_outputLufsBarL->setValue(0);
+        if (m_outputLufsBarR) m_outputLufsBarR->setValue(0);
         m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
-        m_outputLufsLabel->setText(QStringLiteral("LUFS: -inf"));
+        m_outputLufsLabel->setText(QStringLiteral("LUFS-M: -inf"));
         // Reset smoothing state too — otherwise the next meter tick after
         // stop would smoothly decay from the last observed level back to 0.
         m_dispInPeakDbfs  = -120.0f;
+        m_dispInPeakDbfsR = -120.0f;
         m_dispOutPeakDbfs = -120.0f;
+        m_dispOutPeakDbfsR = -120.0f;
         m_dispOutRmsDbfs  = -120.0f;
         m_dispOutHotDbfs  = -120.0f;
+        m_dispOutLufsPctL = 0.0f;
+        m_dispOutLufsPctR = 0.0f;
     }
     m_statusLabel->style()->unpolish(m_statusLabel);
     m_statusLabel->style()->polish(m_statusLabel);
