@@ -3,7 +3,50 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFont>
+#include <QIcon>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPalette>
+#include <QPixmap>
+
+namespace {
+
+QPixmap renderAppIcon(int size)
+{
+    QPixmap pm(size, size);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    const qreal r = size * 0.18;
+    QPainterPath body;
+    body.addRoundedRect(QRectF(0, 0, size, size), r, r);
+    p.fillPath(body, ui::theme::kBgPanel);
+
+    p.setPen(QPen(ui::theme::kAccent, std::max(1.0, size / 32.0)));
+    p.drawPath(body);
+
+    QFont f;
+    f.setFamily(QStringLiteral("Segoe UI"));
+    f.setBold(true);
+    f.setPointSizeF(size * 0.55);
+    p.setFont(f);
+    p.setPen(ui::theme::kAccent);
+    p.drawText(QRectF(0, 0, size, size), Qt::AlignCenter, QStringLiteral("T"));
+    return pm;
+}
+
+QIcon buildAppIcon()
+{
+    QIcon icon;
+    for (int s : {16, 24, 32, 48, 64, 128, 256}) {
+        icon.addPixmap(renderAppIcon(s));
+    }
+    return icon;
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -32,7 +75,11 @@ int main(int argc, char *argv[])
 
     app.setStyleSheet(ui::theme::globalStylesheet());
 
+    const QIcon appIcon = buildAppIcon();
+    app.setWindowIcon(appIcon);
+
     MainWindow window;
+    window.setWindowIcon(appIcon);
     window.show();
     return app.exec();
 }

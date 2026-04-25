@@ -447,6 +447,7 @@ void EqCurve::paintEvent(QPaintEvent *)
             QColor c2 = bandColor(i);
             c2.setAlphaF(0.30);
             p.setPen(QPen(c2, 1.2));
+            p.setBrush(Qt::NoBrush);
             p.drawPath(path);
         }
     }

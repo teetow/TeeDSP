@@ -1,11 +1,11 @@
+- [x] When releasing the mouse button after tweaking a knob, it should not have moved from the knob down-point
+- [x] Missing an app icon.
+- [x] Double check the fills on ALL EQ curves, still seeing some strange black fill
+- [x] Add build timestamp to the context menu
+- [x] Context menu doesn't look native. no mouseovers on menu items, no accelerator keys (underscored characters indicating what key to hit)
 
 - [x] On launch, TeeDSP should "inject" itself in the Windows output chain -- set Windows output to whatever TeeDSP is set to listen to (normally the loopback) and set its output to whatever Windows was sending to
 - [x] I can hear what seems to be a limiter "pumping" when the signal goes to hot (it's not the compressor). can we get an indicator for this somewhere? 
-- [ ] Missing an app icon.
-- [ ] Double check the fills on ALL EQ curves, still seeing some strange black fill
-- [ ] Add build timestamp to the context menu
-- [ ] Context menu doesn't look native. no mouseovers on menu items, no accelerator keys (underscored characters indicating what key to hit)
-
 - [x] Deep-dive in how the FL Studio "heat map" style spectrogram works, it's incredibly useful.
 - [x] middle-click knob to reset
 - [x] make curve fill semi-transparent so it doesn't fully occlude the spectrogram

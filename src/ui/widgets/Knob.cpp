@@ -2,6 +2,7 @@
 
 #include "../Theme.h"
 
+#include <QCursor>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -222,6 +223,7 @@ void Knob::mousePressEvent(QMouseEvent *e)
     if (e->button() == Qt::LeftButton) {
         m_dragging = true;
         m_dragStart = e->pos();
+        m_dragStartGlobal = e->globalPosition().toPoint();
         m_dragStartNorm = normFromValue(m_value);
         m_shiftHeld = e->modifiers().testFlag(Qt::ShiftModifier);
         setCursor(Qt::BlankCursor);
@@ -246,6 +248,9 @@ void Knob::mouseReleaseEvent(QMouseEvent *e)
 {
     if (e->button() == Qt::LeftButton && m_dragging) {
         m_dragging = false;
+        // Warp the cursor back to the press point so it doesn't end up far
+        // from the knob after a long vertical drag.
+        QCursor::setPos(m_dragStartGlobal);
         setCursor(Qt::PointingHandCursor);
         e->accept();
     }

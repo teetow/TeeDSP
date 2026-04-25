@@ -162,6 +162,35 @@ QCheckBox::indicator:checked {
     border-color: #4FC1E9;
 }
 
+/* ---------- menus ---------- */
+QMenu {
+    background-color: #1C1E24;
+    color: #EAECF0;
+    border: 1px solid #34363D;
+    padding: 4px 0px;
+}
+QMenu::item {
+    background: transparent;
+    padding: 6px 28px 6px 24px;
+}
+QMenu::item:selected {
+    background-color: #4FC1E9;
+    color: #0E0F13;
+}
+QMenu::item:disabled {
+    color: #6B6F7A;
+}
+QMenu::separator {
+    height: 1px;
+    background: #2A2C33;
+    margin: 4px 8px;
+}
+QMenu::indicator {
+    width: 14px;
+    height: 14px;
+    margin-left: 6px;
+}
+
 /* ---------- scroll / misc ---------- */
 QToolTip {
     background-color: #1C1E24;

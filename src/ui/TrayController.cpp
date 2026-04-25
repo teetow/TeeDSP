@@ -2,6 +2,8 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QDateTime>
+#include <QFileInfo>
 #include <QIcon>
 #include <QMainWindow>
 #include <QMenu>
@@ -50,27 +52,36 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
 
     m_menu = new QMenu();
 
-    m_showAction = m_menu->addAction(QStringLiteral("Show TeeDSP"));
+    m_showAction = m_menu->addAction(QStringLiteral("&Show TeeDSP"));
     connect(m_showAction, &QAction::triggered, this, &TrayController::onShowToggle);
 
     m_menu->addSeparator();
 
-    m_bypassAction = m_menu->addAction(QStringLiteral("Bypass DSP"));
+    m_bypassAction = m_menu->addAction(QStringLiteral("&Bypass DSP"));
     m_bypassAction->setCheckable(true);
     connect(m_bypassAction, &QAction::toggled, this, &TrayController::onBypass);
 
-    m_autoRouteAction = m_menu->addAction(QStringLiteral("Auto-route to physical output"));
+    m_autoRouteAction = m_menu->addAction(QStringLiteral("&Auto-route to physical output"));
     m_autoRouteAction->setCheckable(true);
     connect(m_autoRouteAction, &QAction::toggled, this, &TrayController::onAutoRoute);
 
-    m_startWithWindowsAction = m_menu->addAction(QStringLiteral("Start with Windows"));
+    m_startWithWindowsAction = m_menu->addAction(QStringLiteral("Start &with Windows"));
     m_startWithWindowsAction->setCheckable(true);
     connect(m_startWithWindowsAction, &QAction::toggled, this, &TrayController::onStartWithWindows);
 
     m_menu->addSeparator();
 
-    m_quitAction = m_menu->addAction(QStringLiteral("Quit TeeDSP"));
+    m_quitAction = m_menu->addAction(QStringLiteral("&Quit TeeDSP"));
     connect(m_quitAction, &QAction::triggered, this, &TrayController::onQuit);
+
+    m_menu->addSeparator();
+
+    // Use the executable's mtime so the timestamp reflects the actual binary
+    // we're running, not just when this .cpp last compiled.
+    const QFileInfo appBinary(QCoreApplication::applicationFilePath());
+    const QString buildStamp = appBinary.lastModified().toString(QStringLiteral("yyyy-MM-dd HH:mm"));
+    QAction *buildInfo = m_menu->addAction(QStringLiteral("Build %1").arg(buildStamp));
+    buildInfo->setEnabled(false);
 
     m_tray->setContextMenu(m_menu);
     connect(m_tray, &QSystemTrayIcon::activated, this,

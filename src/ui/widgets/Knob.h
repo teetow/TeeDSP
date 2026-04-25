@@ -70,6 +70,7 @@ private:
 
     bool m_dragging = false;
     QPoint m_dragStart;
+    QPoint m_dragStartGlobal;
     double m_dragStartNorm = 0.0;
     bool m_shiftHeld = false;
 };
