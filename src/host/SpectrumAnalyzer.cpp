@@ -27,19 +27,23 @@ SpectrumAnalyzer::SpectrumAnalyzer(QObject *parent)
     m_timer.setInterval(kTickIntervalMs);
     m_timer.setTimerType(Qt::CoarseTimer);
     connect(&m_timer, &QTimer::timeout, this, &SpectrumAnalyzer::tick);
+    // Always-on: tick() short-circuits if !m_running. start()/stop() can be
+    // called from the WASAPI capture thread, and QTimer::start() across threads
+    // is undefined — keeping the timer alive sidesteps the issue.
+    m_timer.start();
 }
 
 void SpectrumAnalyzer::start(double sampleRate, int /*channels*/)
 {
     m_sampleRate.store(sampleRate);
+    m_preWriteIdx.store(0);
+    m_postWriteIdx.store(0);
     m_running.store(true);
-    if (!m_timer.isActive()) m_timer.start();
 }
 
 void SpectrumAnalyzer::stop()
 {
     m_running.store(false);
-    m_timer.stop();
     m_inDb.fill(-120.0f);
     m_outDb.fill(-120.0f);
     m_preWriteIdx.store(0);

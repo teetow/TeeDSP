@@ -340,6 +340,20 @@ void DspController::loadFromSettings()
     applySnapshot(params);
 }
 
+void DspController::resetBandToDefaults(int band)
+{
+    if (band < 0 || band >= kEqBandCount) return;
+    const ChainParams defaults = defaultParams();
+    const auto &b = defaults.eqBands[band];
+    auto &eq = m_chain->eq();
+    eq.setBandEnabled(band, b.enabled);
+    eq.setBandType(band, static_cast<ParametricEQ::BandType>(b.type));
+    eq.setBandFrequency(band, b.freqHz);
+    eq.setBandQ(band, b.q);
+    eq.setBandGainDb(band, b.gainDb);
+    emit eqChanged();
+}
+
 void DspController::resetToDefaults()
 {
     applySnapshot(defaultParams());

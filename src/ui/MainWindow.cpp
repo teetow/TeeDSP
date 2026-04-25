@@ -24,6 +24,7 @@
 #include <QSizePolicy>
 #include <QSpacerItem>
 #include <QStyle>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVBoxLayout>
@@ -84,6 +85,19 @@ MainWindow::MainWindow(QWidget *parent)
     restoreSelectedDevices();
     pullStateFromController();
     refreshEngineStatus();
+
+    // Auto-start on launch if both endpoints are remembered. Deferred to the
+    // event loop so the engine's QObject signals fire on the UI thread once
+    // it's up, and the window is already visible if anything fails.
+    QTimer::singleShot(0, this, [this]() {
+        if (selectedCaptureDeviceId().isEmpty() || selectedRenderDeviceId().isEmpty())
+            return;
+        if (m_engine->isRunning()) return;
+        const QString err = m_engine->start(selectedCaptureDeviceId(),
+                                            selectedRenderDeviceId());
+        if (!err.isEmpty()) m_statusLabel->setText(err);
+        refreshEngineStatus();
+    });
 }
 
 MainWindow::~MainWindow()
@@ -416,7 +430,7 @@ void MainWindow::connectSignals()
 
     connect(m_eqCurve, &ui::EqCurve::bandReset, this, [this](int band) {
         if (band < 0 || band >= m_eqBands.size()) return;
-        m_dspController->setEqBandGainDb(band, 0.0f);
+        m_dspController->resetBandToDefaults(band);
     });
 
     connect(m_showInputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
@@ -446,9 +460,9 @@ void MainWindow::connectSignals()
     });
 
     connect(m_captureDevice, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int){ saveSelectedDevices(); });
+            this, [this](int){ if (!m_syncingUi) saveSelectedDevices(); });
     connect(m_renderDevice, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int){ saveSelectedDevices(); });
+            this, [this](int){ if (!m_syncingUi) saveSelectedDevices(); });
 }
 
 void MainWindow::pullStateFromController()
@@ -516,6 +530,10 @@ void MainWindow::refreshDevices()
 
     m_devices = host::WasapiDevices::enumerateRender();
 
+    // Hold m_syncingUi across the entire populate + select sequence — every
+    // setCurrentIndex emits currentIndexChanged, and we don't want any of
+    // those to clobber persisted device IDs.
+    const bool wasSyncing = m_syncingUi;
     m_syncingUi = true;
     m_captureDevice->clear();
     m_renderDevice->clear();
@@ -526,7 +544,6 @@ void MainWindow::refreshDevices()
         m_captureDevice->addItem(label, d.id);
         m_renderDevice->addItem(label, d.id);
     }
-    m_syncingUi = false;
 
     auto selectById = [](QComboBox *cb, const QString &id) {
         if (id.isEmpty()) return;
@@ -553,6 +570,7 @@ void MainWindow::refreshDevices()
         }
         if (m_renderDevice->currentIndex() < 0) m_renderDevice->setCurrentIndex(0);
     }
+    m_syncingUi = wasSyncing;
 }
 
 QString MainWindow::selectedCaptureDeviceId() const
@@ -577,6 +595,9 @@ void MainWindow::restoreSelectedDevices()
     QSettings s;
     const QString cap = s.value(QString::fromLatin1(kCaptureDeviceKey)).toString();
     const QString ren = s.value(QString::fromLatin1(kRenderDeviceKey)).toString();
+
+    const bool wasSyncing = m_syncingUi;
+    m_syncingUi = true;
     if (!cap.isEmpty()) {
         const int idx = m_captureDevice->findData(cap);
         if (idx >= 0) m_captureDevice->setCurrentIndex(idx);
@@ -585,6 +606,7 @@ void MainWindow::restoreSelectedDevices()
         const int idx = m_renderDevice->findData(ren);
         if (idx >= 0) m_renderDevice->setCurrentIndex(idx);
     }
+    m_syncingUi = wasSyncing;
 }
 
 void MainWindow::onStartStopClicked()
