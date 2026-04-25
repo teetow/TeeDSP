@@ -15,8 +15,8 @@ QGroupBox {
     background-color: #1C1E24;
     border: 1px solid #2A2C33;
     border-radius: 6px;
-    margin-top: 4px;
-    padding: 22px 12px 12px 12px;
+    margin-top: 0;
+    padding: 16px 0;
     font-weight: 600;
     color: #9AA0AE;
     letter-spacing: 0.4px;
@@ -28,7 +28,7 @@ QGroupBox::title {
     subcontrol-position: top left;
     left: 12px;
     top: 7px;
-    padding: 0 6px;
+    padding: 0 0;
     background-color: transparent;
     color: #9AA0AE;
     font-size: 8pt;
@@ -90,8 +90,8 @@ QComboBox::drop-down {
 }
 QComboBox::down-arrow {
     image: none;
-    width: 0px;
-    height: 0px;
+    width: 0;
+    height: 0;
     border-left: 4px solid transparent;
     border-right: 4px solid transparent;
     border-top: 5px solid #9AA0AE;
@@ -156,7 +156,7 @@ QCheckBox::indicator {
     width: 14px;
     height: 14px;
     border: 1px solid #34363D;
-    border-radius: 3px;
+    border-radius: 2px;
     background-color: #0E0F13;
 }
 QCheckBox::indicator:hover {
@@ -180,7 +180,7 @@ QMenu {
     background-color: #1C1E24;
     color: #EAECF0;
     border: 1px solid #34363D;
-    padding: 4px 0px;
+    padding: 4px 0;
 }
 QMenu::item {
     background: transparent;
@@ -210,16 +210,16 @@ QStatusBar {
     background: transparent;
     min-height: 24px;
     /* Vertical padding controls bar reflow; horizontal handled on label. */
-    padding: 2px 0px;
+    padding: 0;
 }
 QStatusBar::item {
     border: none;
-    margin: 0px;
-    padding: 0px;
+    margin: 0;
+    padding: 0;
 }
 QStatusBar QLabel {
     background: transparent;
-    padding: 0 8px;
+    padding: -6px 8px 0;
 }
 
 /* ---------- vertical meters ---------- */
