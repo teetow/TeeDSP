@@ -21,6 +21,8 @@ namespace {
 
 constexpr double kBandHitRadius = 14.0;
 constexpr double kBandDrawRadius = 8.0;
+constexpr double kAnalyzerSlopeDbPerOct = 4.5;
+constexpr double kAnalyzerSlopePivotHz = 1000.0;
 
 // FL-Studio-style per-band palette. Distinct hues, easy to track at a glance.
 const QColor kBandColors[] = {
@@ -35,6 +37,12 @@ QColor bandColor(int i)
 {
     const int n = sizeof(kBandColors) / sizeof(kBandColors[0]);
     return kBandColors[std::clamp(i, 0, n - 1)];
+}
+
+inline double applyAnalyzerSlope(double db, double freqHz)
+{
+    const double f = std::max(1.0, freqHz);
+    return db + kAnalyzerSlopeDbPerOct * std::log2(f / kAnalyzerSlopePivotHz);
 }
 
 // Inferno-flavoured perceptual colormap. Hand-picked nine stops covering the
@@ -324,7 +332,7 @@ void EqCurve::renderHeatmapImage(const QVector<float> &mag, double specSr,
         const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
         const int b1 = std::min(b0 + 1, bins - 1);
         const double frac = bin - b0;
-        const double db = mag[b0] * (1.0 - frac) + mag[b1] * frac;
+        const double db = applyAnalyzerSlope(mag[b0] * (1.0 - frac) + mag[b1] * frac, f);
 
         // Vertical extent of the column: from the spectrum height (top) down.
         const double n = std::clamp(
@@ -367,7 +375,7 @@ void EqCurve::drawSpectrumOutline(QPainter &p, const QVector<float> &mag,
         const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
         const int b1 = std::min(b0 + 1, bins - 1);
         const double t = bin - b0;
-        double db = mag[b0] * (1.0 - t) + mag[b1] * t;
+        double db = applyAnalyzerSlope(mag[b0] * (1.0 - t) + mag[b1] * t, f);
         if (db < kSpecDbMin) db = kSpecDbMin;
         if (db > kSpecDbMax) db = kSpecDbMax;
         const double n = (db - kSpecDbMin) / dbSpan;
@@ -427,7 +435,7 @@ void EqCurve::drawSpectrumHeatmap(QPainter &p, const QVector<float> &mag,
         const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
         const int b1 = std::min(b0 + 1, bins - 1);
         const double t = bin - b0;
-        double db = mag[b0] * (1.0 - t) + mag[b1] * t;
+        double db = applyAnalyzerSlope(mag[b0] * (1.0 - t) + mag[b1] * t, f);
         if (db < kSpecDbMin) db = kSpecDbMin;
         if (db > kSpecDbMax) db = kSpecDbMax;
         const double n = (db - kSpecDbMin) / dbSpan;

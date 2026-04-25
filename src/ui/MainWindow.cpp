@@ -254,8 +254,10 @@ void MainWindow::buildUi()
 
     auto *fxCol = new QVBoxLayout();
     fxCol->setSpacing(UiMetrics::kRootSpacing);
-    fxCol->addWidget(buildExciterSection(), 1);
-    fxCol->addWidget(buildCompSection(), 1);
+    fxCol->addWidget(buildExciterSection(), 0);
+    fxCol->addWidget(buildCompSection(), 0);
+    fxCol->addWidget(buildChannelMixerSection(), 0);
+    fxCol->addStretch(1);
     centerRow->addLayout(fxCol, 2);
 
     mainRow->addLayout(centerRow, 1);
@@ -496,6 +498,25 @@ QWidget *MainWindow::buildExciterSection()
     return section;
 }
 
+QWidget *MainWindow::buildChannelMixerSection()
+{
+    auto *section = createSection(QStringLiteral("Channel Mixer"));
+    auto *col = new QVBoxLayout(section);
+    col->setContentsMargins(UiMetrics::kPanelPadLr, UiMetrics::kPanelPadTop,
+                            UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
+    col->setSpacing(8);
+
+    auto *row = new QHBoxLayout();
+    row->setSpacing(UiMetrics::kCompactSpacing);
+
+    m_stereoWidth = makeKnob(QStringLiteral("Width"), 0.0, 100.0, 100.0, 0, QStringLiteral("%"));
+    row->addWidget(m_stereoWidth, 0, Qt::AlignHCenter);
+    col->addLayout(row);
+
+    col->addStretch();
+    return section;
+}
+
 QWidget *MainWindow::buildInputPane()
 {
     auto *section = createSection(QStringLiteral("Input"));
@@ -627,6 +648,9 @@ void MainWindow::connectSignals()
     });
     connect(m_outputTrim, &ui::Knob::valueChanged, this, [this](double v) {
         if (!m_syncingUi) m_dspController->setOutputTrimDb(static_cast<float>(v));
+    });
+    connect(m_stereoWidth, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setStereoWidth(static_cast<float>(v / 100.0));
     });
 
     connect(m_compEnabled, &QCheckBox::toggled, this, [this](bool c) {
@@ -880,11 +904,38 @@ void MainWindow::connectSignals()
             this, [this](int, int) { refreshEngineStatus(); });
 
     if (m_tray) {
+        connect(m_tray, &ui::TrayController::startStopRequested,
+                this, &MainWindow::onStartStopClicked);
         connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
             m_dspController->setBypass(b);
         });
         connect(m_tray, &ui::TrayController::startWithWindowsToggled,
                 this, [](bool on) { ui::startup::setEnabled(on); });
+        connect(m_tray, &ui::TrayController::inputDeviceSelected,
+                this, [this](const QString &id) {
+            if (id.isEmpty() || !m_captureDevice) return;
+            const int idx = m_captureDevice->findData(id);
+            if (idx < 0) return;
+            const bool wasSyncing = m_syncingUi;
+            m_syncingUi = true;
+            m_captureDevice->setCurrentIndex(idx);
+            m_syncingUi = wasSyncing;
+            saveSelectedDevices();
+        });
+        connect(m_tray, &ui::TrayController::outputDeviceSelected,
+                this, [this](const QString &id) {
+            if (id.isEmpty() || !m_renderDevice) return;
+            const int idx = m_renderDevice->findData(id);
+            if (idx < 0) return;
+            const bool wasSyncing = m_syncingUi;
+            m_syncingUi = true;
+            m_renderDevice->setCurrentIndex(idx);
+            m_syncingUi = wasSyncing;
+            saveSelectedDevices();
+            if (m_engine)
+                m_engine->setPreferredRender(selectedRenderDeviceId());
+            refreshEngineStatus();
+        });
         connect(m_tray, &ui::TrayController::quitRequested, this, [this]() {
             m_quitting = true;
             close();
@@ -904,6 +955,7 @@ void MainWindow::pullStateFromController()
     m_globalBypass->setChecked(m_dspController->bypass());
     m_inputTrim->setValue(m_dspController->inputTrimDb());
     m_outputTrim->setValue(m_dspController->outputTrimDb());
+    m_stereoWidth->setValue(m_dspController->stereoWidth() * 100.0f);
 
     m_compEnabled->setChecked(m_dspController->compressorEnabled());
     m_compThreshold->setValue(m_dspController->compThresholdDb());
@@ -1028,6 +1080,16 @@ void MainWindow::refreshDevices()
         if (m_renderDevice->currentIndex() < 0) m_renderDevice->setCurrentIndex(0);
     }
     m_syncingUi = wasSyncing;
+
+    if (m_tray) {
+        QList<ui::TrayController::DeviceChoice> choices;
+        choices.reserve(m_devices.size());
+        for (const auto &d : m_devices) {
+            choices.push_back(ui::TrayController::DeviceChoice{d.id, d.name});
+        }
+        m_tray->setRoutingOptions(choices, selectedCaptureDeviceId(),
+                                  choices, selectedRenderDeviceId());
+    }
 }
 
 QString MainWindow::selectedCaptureDeviceId() const

@@ -45,6 +45,7 @@ private:
     QWidget *buildIoSection();
     QWidget *buildEqSection();
     QWidget *buildCompSection();
+    QWidget *buildChannelMixerSection();
     QWidget *buildExciterSection();
     QWidget *buildInputPane();
     QWidget *buildOutputPane();
@@ -98,6 +99,7 @@ private:
     ui::LevelMeter *m_compMeter = nullptr;
     QLabel *m_compMeterValue = nullptr;
     QLabel *m_outputHotIndicator = nullptr;
+    ui::Knob *m_stereoWidth = nullptr;
 
     QCheckBox *m_exciterEnabled = nullptr;
     ui::Knob *m_exciterDrive = nullptr;

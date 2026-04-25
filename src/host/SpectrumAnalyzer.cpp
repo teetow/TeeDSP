@@ -9,7 +9,7 @@ namespace host {
 
 namespace {
 constexpr int kTickIntervalMs = 16;          // ~60 Hz spectrum updates
-constexpr float kSmoothingAlpha = 0.55f;     // EMA on the dB output
+constexpr float kFalloffTauMs = 60.0f;       // Analyzer release time constant
 
 constexpr int kBins = SpectrumAnalyzer::kFftSize / 2 + 1;
 } // namespace
@@ -104,6 +104,9 @@ void SpectrumAnalyzer::tick()
 {
     if (!m_running.load()) return;
 
+    // 1-pole release coefficient: y += a * (target - y), tuned for 60 ms falloff.
+    const float releaseAlpha = 1.0f - std::exp(-static_cast<float>(kTickIntervalMs) / kFalloffTauMs);
+
     std::vector<float> preFrame;
     bool havePre = false;
     {
@@ -118,7 +121,7 @@ void SpectrumAnalyzer::tick()
     }
     if (!havePre && !havePost) return;
 
-    auto runFft = [](std::vector<float> &frame, QVector<float> &outDb) {
+    auto runFft = [releaseAlpha](std::vector<float> &frame, QVector<float> &outDb) {
         Fft::hannWindow(frame.data(), static_cast<int>(frame.size()));
         std::vector<std::complex<float>> spec;
         Fft::realToComplex(frame.data(), static_cast<int>(frame.size()), spec);
@@ -133,9 +136,10 @@ void SpectrumAnalyzer::tick()
             const float db  = (mag > 1e-7f)
                 ? 20.0f * std::log10(mag)
                 : -120.0f;
-            // Smooth in the dB domain so transients don't strobe.
             const float prev = outDb[i];
-            outDb[i] = prev + kSmoothingAlpha * (db - prev);
+            // Fast attack with controlled release: keeps peaks responsive while
+            // preventing the background spectrum from collapsing too quickly.
+            outDb[i] = (db > prev) ? db : (prev + releaseAlpha * (db - prev));
         }
     };
 

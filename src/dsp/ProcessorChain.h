@@ -24,6 +24,8 @@ public:
     void setOutputTrimDb(float db) { m_outputTrimDb.store(db, std::memory_order_relaxed); }
     float inputTrimDb() const { return m_inputTrimDb.load(std::memory_order_relaxed); }
     float outputTrimDb() const { return m_outputTrimDb.load(std::memory_order_relaxed); }
+    void setStereoWidth(float width) { m_stereoWidth.store(width, std::memory_order_relaxed); }
+    float stereoWidth() const { return m_stereoWidth.load(std::memory_order_relaxed); }
 
     ParametricEQ &eq() { return m_eq; }
     Compressor &compressor() { return m_compressor; }
@@ -36,6 +38,7 @@ private:
     std::atomic<bool> m_bypass{false};
     std::atomic<float> m_inputTrimDb{0.0f};
     std::atomic<float> m_outputTrimDb{0.0f};
+    std::atomic<float> m_stereoWidth{1.0f};
     double m_sampleRate = 48000.0;
     std::size_t m_channels = 2;
 };

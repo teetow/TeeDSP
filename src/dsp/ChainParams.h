@@ -22,7 +22,7 @@ struct EqBandParams {
 };
 
 struct ChainParams {
-    uint32_t    version = 1;
+    uint32_t    version = 2;
     bool        bypassed = false;
 
     float       inputTrimDb = 0.0f;
@@ -44,6 +44,7 @@ struct ChainParams {
     float compAttackMs   = 10.0f;
     float compReleaseMs  = 120.0f;
     float compMakeupDb   = 0.0f;
+    float stereoWidth    = 1.0f;
 
     bool  exciterEnabled = true;
     float exciterDrive   = 2.0f;

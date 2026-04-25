@@ -1,6 +1,7 @@
 #include "TrayController.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QDateTime>
 #include <QFileInfo>
@@ -15,25 +16,41 @@
 namespace ui {
 
 namespace {
-QIcon trayIconForState(bool running)
+QIcon resolveBaseTrayIcon(QMainWindow *window)
 {
-    // Generate a tiny circle so we don't need a packaged asset.
-    QPixmap pm(32, 32);
-    pm.fill(Qt::transparent);
-    {
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(running ? QColor(0x2E, 0xCC, 0x71) : QColor(0x9A, 0xA0, 0xAE));
-        p.drawEllipse(QRectF(4, 4, 24, 24));
-        QFont f = p.font();
-        f.setPointSize(14);
-        f.setBold(true);
-        p.setFont(f);
-        p.setPen(QColor(0x16, 0x17, 0x1B));
-        p.drawText(QRectF(4, 4, 24, 24), Qt::AlignCenter, QStringLiteral("T"));
+    if (window && !window->windowIcon().isNull()) return window->windowIcon();
+    if (!QApplication::windowIcon().isNull()) return QApplication::windowIcon();
+    return QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
+}
+
+QPixmap toGrayscale(const QPixmap &src)
+{
+    if (src.isNull()) return src;
+    QImage img = src.toImage().convertToFormat(QImage::Format_ARGB32);
+    for (int y = 0; y < img.height(); ++y) {
+        QRgb *row = reinterpret_cast<QRgb *>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
+            const int a = qAlpha(row[x]);
+            const int gray = qGray(row[x]);
+            row[x] = qRgba(gray, gray, gray, a);
+        }
     }
-    return QIcon(pm);
+    return QPixmap::fromImage(img);
+}
+
+QIcon trayIconForState(const QIcon &baseIcon, bool running)
+{
+    QIcon out;
+    for (const int size : {16, 24, 32}) {
+        QPixmap pm = baseIcon.pixmap(size, size);
+        if (pm.isNull()) {
+            pm = QPixmap(size, size);
+            pm.fill(Qt::transparent);
+        }
+
+        out.addPixmap(running ? pm : toGrayscale(pm));
+    }
+    return out;
 }
 } // namespace
 
@@ -47,13 +64,23 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
     }
 
     m_tray = new QSystemTrayIcon(this);
-    m_tray->setIcon(trayIconForState(false));
+    m_tray->setIcon(trayIconForState(resolveBaseTrayIcon(m_window), false));
     m_tray->setToolTip(QStringLiteral("TeeDSP"));
 
     m_menu = new QMenu();
 
     m_showAction = m_menu->addAction(QStringLiteral("&Show TeeDSP"));
     connect(m_showAction, &QAction::triggered, this, &TrayController::onShowToggle);
+
+    m_startStopAction = m_menu->addAction(QStringLiteral("&Start"));
+    connect(m_startStopAction, &QAction::triggered, this, [this]() {
+        emit startStopRequested();
+    });
+
+    m_menu->addSeparator();
+
+    m_inputMenu = m_menu->addMenu(QStringLiteral("&Input"));
+    m_outputMenu = m_menu->addMenu(QStringLiteral("&Output"));
 
     m_menu->addSeparator();
 
@@ -93,7 +120,10 @@ void TrayController::setStatusText(const QString &text)
 
 void TrayController::setRunning(bool running)
 {
-    if (m_tray) m_tray->setIcon(trayIconForState(running));
+    if (m_startStopAction) {
+        m_startStopAction->setText(running ? QStringLiteral("Sto&p") : QStringLiteral("&Start"));
+    }
+    if (m_tray) m_tray->setIcon(trayIconForState(resolveBaseTrayIcon(m_window), running));
 }
 
 void TrayController::setBypass(bool bypass)
@@ -110,6 +140,45 @@ void TrayController::setStartWithWindows(bool on)
         QSignalBlocker block(m_startWithWindowsAction);
         m_startWithWindowsAction->setChecked(on);
     }
+}
+
+void TrayController::setRoutingOptions(const QList<DeviceChoice> &inputs,
+                                       const QString &selectedInputId,
+                                       const QList<DeviceChoice> &outputs,
+                                       const QString &selectedOutputId)
+{
+    const auto populate = [this](QMenu *menu,
+                                 const QList<DeviceChoice> &items,
+                                 const QString &selectedId,
+                                 bool isInput) {
+        if (!menu) return;
+        menu->clear();
+
+        if (items.isEmpty()) {
+            QAction *none = menu->addAction(QStringLiteral("No devices"));
+            none->setEnabled(false);
+            return;
+        }
+
+        auto *group = new QActionGroup(menu);
+        group->setExclusive(true);
+        for (const auto &item : items) {
+            QAction *a = menu->addAction(item.name);
+            a->setCheckable(true);
+            a->setData(item.id);
+            a->setChecked(item.id == selectedId);
+            group->addAction(a);
+            connect(a, &QAction::triggered, this, [this, a, isInput](bool checked) {
+                if (!checked) return;
+                const QString id = a->data().toString();
+                if (isInput) emit inputDeviceSelected(id);
+                else emit outputDeviceSelected(id);
+            });
+        }
+    };
+
+    populate(m_inputMenu, inputs, selectedInputId, true);
+    populate(m_outputMenu, outputs, selectedOutputId, false);
 }
 
 void TrayController::onActivated(int reason)

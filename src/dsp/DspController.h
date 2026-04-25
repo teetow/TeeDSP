@@ -38,6 +38,7 @@ class DspController : public QObject
     Q_PROPERTY(bool bypass READ bypass WRITE setBypass NOTIFY bypassChanged FINAL)
     Q_PROPERTY(float inputTrimDb READ inputTrimDb WRITE setInputTrimDb NOTIFY bypassChanged FINAL)
     Q_PROPERTY(float outputTrimDb READ outputTrimDb WRITE setOutputTrimDb NOTIFY bypassChanged FINAL)
+    Q_PROPERTY(float stereoWidth READ stereoWidth WRITE setStereoWidth NOTIFY bypassChanged FINAL)
 
     Q_PROPERTY(bool compressorEnabled READ compressorEnabled WRITE setCompressorEnabled NOTIFY compressorChanged FINAL)
     Q_PROPERTY(float compThresholdDb READ compThresholdDb WRITE setCompThresholdDb NOTIFY compressorChanged FINAL)
@@ -68,6 +69,8 @@ public:
     void setInputTrimDb(float v);
     float outputTrimDb() const { return m_outputTrimDb; }
     void setOutputTrimDb(float v);
+    float stereoWidth() const { return m_stereoWidth; }
+    void setStereoWidth(float v);
 
     bool compressorEnabled() const;
     void setCompressorEnabled(bool b);
@@ -137,6 +140,7 @@ private:
     bool m_bypass = false;
     float m_inputTrimDb = 0.0f;
     float m_outputTrimDb = 0.0f;
+    float m_stereoWidth = 1.0f;
 
     bool m_compressorEnabled = true;
     float m_compThresholdDb = -18.0f;
