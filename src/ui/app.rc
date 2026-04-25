@@ -1,0 +1,5 @@
+// TeeDSP application resources
+// IDI_APPICON must be 1 so Windows picks it up as the EXE icon.
+#include <winresrc.h>
+
+IDI_APPICON ICON "..\\..\\image\\teedsp.ico"

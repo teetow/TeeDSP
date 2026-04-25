@@ -46,6 +46,7 @@ add_executable(TeeDsp WIN32
 	${UI_SOURCES}
 	${DSP_SOURCES}
 	${HOST_SOURCES}
+	src/ui/app.rc
 )
 
 target_include_directories(TeeDsp PRIVATE
