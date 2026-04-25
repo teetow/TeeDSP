@@ -97,6 +97,7 @@ private:
     QCheckBox *m_eqEnabled = nullptr;
     QCheckBox *m_showInputSpectrum = nullptr;
     QCheckBox *m_showOutputSpectrum = nullptr;
+    QCheckBox *m_showHeatmap = nullptr;
     ui::EqCurve *m_eqCurve = nullptr;
     QVector<EqBandWidgets> m_eqBands;
 

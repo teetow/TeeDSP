@@ -32,6 +32,41 @@ QColor bandColor(int i)
     return kBandColors[std::clamp(i, 0, n - 1)];
 }
 
+// Inferno-flavoured perceptual colormap. Hand-picked nine stops covering the
+// full magnitude range from silence (deep blue/black) through magenta and
+// orange to a near-white peak. Linear RGB interpolation between stops; close
+// enough to the real thing for our spectrogram.
+struct ColorStop { float t; uint8_t r, g, b; };
+constexpr ColorStop kInferno[] = {
+    {0.000f,   0,   0,   4},
+    {0.125f,  28,  16,  68},
+    {0.250f,  66,  10, 104},
+    {0.375f, 106,  23, 110},
+    {0.500f, 147,  38, 103},
+    {0.625f, 188,  55,  84},
+    {0.750f, 221,  81,  58},
+    {0.875f, 243, 120,  25},
+    {1.000f, 252, 255, 164},
+};
+
+QRgb infernoRgb(float t)
+{
+    t = std::max(0.0f, std::min(1.0f, t));
+    const int n = static_cast<int>(sizeof(kInferno) / sizeof(kInferno[0]));
+    for (int i = 1; i < n; ++i) {
+        if (t <= kInferno[i].t) {
+            const auto &a = kInferno[i - 1];
+            const auto &b = kInferno[i];
+            const float u = (t - a.t) / (b.t - a.t);
+            const int r = static_cast<int>(a.r + u * (b.r - a.r));
+            const int g = static_cast<int>(a.g + u * (b.g - a.g));
+            const int bl = static_cast<int>(a.b + u * (b.b - a.b));
+            return qRgb(r, g, bl);
+        }
+    }
+    return qRgb(kInferno[n - 1].r, kInferno[n - 1].g, kInferno[n - 1].b);
+}
+
 struct BiquadCoefs { double b0, b1, b2, a1, a2; };
 
 BiquadCoefs coefsFor(int type, double freqHz, double q, double gainDb, double sr)
@@ -135,6 +170,29 @@ void EqCurve::clearSpectra()
 
 void EqCurve::setShowInputSpectrum(bool show)  { m_showInputSpectrum = show;  update(); }
 void EqCurve::setShowOutputSpectrum(bool show) { m_showOutputSpectrum = show; update(); }
+
+void EqCurve::setShowHeatmap(bool show)
+{
+    if (m_showHeatmap == show) return;
+    m_showHeatmap = show;
+    update();
+}
+
+void EqCurve::pushHeatmapFrame(const QVector<float> &magDb, double sr)
+{
+    if (magDb.isEmpty()) return;
+    m_heatmapSr = sr;
+    m_heatmapFrames.push_back(magDb);
+    while (static_cast<int>(m_heatmapFrames.size()) > kHeatmapHistory)
+        m_heatmapFrames.pop_front();
+    if (m_showHeatmap) update();
+}
+
+void EqCurve::clearHeatmap()
+{
+    m_heatmapFrames.clear();
+    update();
+}
 
 QRectF EqCurve::plotRect() const
 {
@@ -248,6 +306,46 @@ void EqCurve::drawSpectrum(QPainter &p, const QVector<float> &mag,
     p.drawPath(path);
 }
 
+void EqCurve::drawSpectrumHeatmap(QPainter &p, const QVector<float> &mag,
+                                   double specSr) const
+{
+    if (mag.isEmpty()) return;
+    const QRectF r = plotRect();
+    const int bins = mag.size();
+    if (bins < 2) return;
+    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
+    const float invRange = 1.0f / static_cast<float>(kSpecDbMax - kSpecDbMin);
+
+    const int steps = static_cast<int>(r.width());
+
+    // Build outline path while drawing per-column inferno bars in one pass.
+    QPainterPath outline;
+    p.setRenderHint(QPainter::Antialiasing, false);
+    for (int s = 0; s <= steps; ++s) {
+        const double x = r.left() + s;
+        const double f = std::clamp(xToFreq(x), kFreqMin, kFreqMax);
+        const double bin = f / binHz;
+        const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
+        const int b1 = std::min(b0 + 1, bins - 1);
+        const double frac = bin - b0;
+        const double db = mag[b0] * (1.0 - frac) + mag[b1] * frac;
+        const double y  = specDbToY(db);
+
+        const float u = (static_cast<float>(db) - static_cast<float>(kSpecDbMin)) * invRange;
+        p.setPen(QPen(QColor(infernoRgb(u)), 1.0, Qt::SolidLine, Qt::FlatCap));
+        p.drawLine(QPointF(x, y), QPointF(x, r.bottom() + 1.0));
+
+        if (s == 0) outline.moveTo(x, y);
+        else        outline.lineTo(x, y);
+    }
+
+    // Spectrum outline on top — warm off-white so it reads over all inferno tones.
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(QColor(255, 230, 160, 200), 1.2));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(outline);
+}
+
 void EqCurve::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
@@ -265,16 +363,27 @@ void EqCurve::paintEvent(QPaintEvent *)
     p.save();
     p.setClipRect(r);
 
-    // --- Spectra (drawn first, behind everything else) ---
+    // --- Spectra ---
+    // When heatmap mode is on, each spectrum column is filled with an
+    // inferno-gradient bar whose color encodes its magnitude — peaks pop out
+    // immediately. When off, the conventional flat-fill + stroke is used.
     if (m_showInputSpectrum && !m_inSpec.isEmpty()) {
-        QColor fill(0x4F, 0xC1, 0xE9);  fill.setAlphaF(0.18);   // teal (in)
-        QColor stroke(0x4F, 0xC1, 0xE9); stroke.setAlphaF(0.55);
-        drawSpectrum(p, m_inSpec, m_inSpecSr, fill, stroke);
+        if (m_showHeatmap) {
+            drawSpectrumHeatmap(p, m_inSpec, m_inSpecSr);
+        } else {
+            QColor fill(0x4F, 0xC1, 0xE9);  fill.setAlphaF(0.18);
+            QColor stroke(0x4F, 0xC1, 0xE9); stroke.setAlphaF(0.55);
+            drawSpectrum(p, m_inSpec, m_inSpecSr, fill, stroke);
+        }
     }
     if (m_showOutputSpectrum && !m_outSpec.isEmpty()) {
-        QColor fill(0xE6, 0x7E, 0x22); fill.setAlphaF(0.20);    // orange (out)
-        QColor stroke(0xE6, 0x7E, 0x22); stroke.setAlphaF(0.60);
-        drawSpectrum(p, m_outSpec, m_outSpecSr, fill, stroke);
+        if (m_showHeatmap) {
+            drawSpectrumHeatmap(p, m_outSpec, m_outSpecSr);
+        } else {
+            QColor fill(0xE6, 0x7E, 0x22); fill.setAlphaF(0.20);
+            QColor stroke(0xE6, 0x7E, 0x22); stroke.setAlphaF(0.60);
+            drawSpectrum(p, m_outSpec, m_outSpecSr, fill, stroke);
+        }
     }
 
     p.restore();
@@ -352,8 +461,10 @@ void EqCurve::paintEvent(QPaintEvent *)
         fill.lineTo(r.right(), gainToY(0));
         fill.lineTo(r.left(),  gainToY(0));
         fill.closeSubpath();
+        // Keep the EQ curve fill very faint so the spectrum shapes underneath
+        // remain readable. The curve outline does the heavy lifting.
         QColor fillCol = theme::kAccent;
-        fillCol.setAlphaF(0.10);
+        fillCol.setAlphaF(0.04);
         p.setPen(Qt::NoPen);
         p.setBrush(fillCol);
         p.drawPath(fill);

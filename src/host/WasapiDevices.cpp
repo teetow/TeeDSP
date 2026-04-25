@@ -15,6 +15,35 @@ namespace host {
 
 namespace {
 
+// ---------------------------------------------------------------------------
+// IPolicyConfig — private COM interface stable across Windows Vista–11.
+// Used by many audio utilities (EarTrumpet, SoundSwitch, NirCmd, …) for
+// changing the default audio endpoint. Not in any public SDK header; the
+// vtable layout below matches the documented community reverse-engineering.
+// ---------------------------------------------------------------------------
+struct DeviceShareMode { int a; };   // opaque placeholder — unused here
+
+MIDL_INTERFACE("f8679f50-850a-41cf-9c72-430f290290c8")
+IPolicyConfig : public IUnknown
+{
+    virtual HRESULT STDMETHODCALLTYPE GetMixFormat(PCWSTR, WAVEFORMATEX **) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDeviceFormat(PCWSTR, BOOL, WAVEFORMATEX **) = 0;
+    virtual HRESULT STDMETHODCALLTYPE ResetDeviceFormat(PCWSTR) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetDeviceFormat(PCWSTR, WAVEFORMATEX *, WAVEFORMATEX *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetProcessingPeriod(PCWSTR, BOOL, PINT64, PINT64) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetProcessingPeriod(PCWSTR, PINT64) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetShareMode(PCWSTR, DeviceShareMode *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetShareMode(PCWSTR, DeviceShareMode *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetPropertyValue(PCWSTR, const PROPERTYKEY &, PROPVARIANT *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetPropertyValue(PCWSTR, const PROPERTYKEY &, PROPVARIANT *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetDefaultEndpoint(PCWSTR, ERole) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetEndpointVisibility(PCWSTR, BOOL) = 0;
+};
+
+static const CLSID CLSID_PolicyConfigClient =
+    {0x870af99c, 0x171d, 0x4f9e, {0xaf, 0x0d, 0xe6, 0x3d, 0xf4, 0x0c, 0x2b, 0xc9}};
+// ---------------------------------------------------------------------------
+
 struct CoInitScope {
     HRESULT hr;
     CoInitScope() { hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED); }
@@ -180,6 +209,23 @@ bool WasapiDevices::queryMixFormat(const QString &deviceId, StreamFormat &out)
     const bool ok = waveFormatToStreamFormat(mix, out);
     CoTaskMemFree(mix);
     return ok;
+}
+
+bool WasapiDevices::setDefaultRender(const QString &deviceId)
+{
+    if (deviceId.isEmpty()) return false;
+    CoInitScope co;
+
+    ComPtr<IPolicyConfig> policy;
+    if (FAILED(CoCreateInstance(CLSID_PolicyConfigClient, nullptr,
+                                CLSCTX_ALL, IID_PPV_ARGS(&policy))) || !policy)
+        return false;
+
+    const std::wstring wId = deviceId.toStdWString();
+    const HRESULT hr = policy->SetDefaultEndpoint(wId.c_str(), eConsole);
+    policy->SetDefaultEndpoint(wId.c_str(), eMultimedia);
+    policy->SetDefaultEndpoint(wId.c_str(), eCommunications);
+    return SUCCEEDED(hr);
 }
 
 } // namespace host

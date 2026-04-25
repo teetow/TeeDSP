@@ -15,6 +15,8 @@ AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
 {
     connect(m_notifier, &WasapiDeviceNotifier::devicesChanged,
             this, &AudioEngine::onDevicesChanged);
+    connect(m_notifier, &WasapiDeviceNotifier::devicesChanged,
+            this, &AudioEngine::devicesChanged);
 }
 
 AudioEngine::~AudioEngine()
@@ -66,6 +68,17 @@ QString AudioEngine::start(const QString &captureDeviceId,
         m_lastError = QStringLiteral("Capture: ") + captureErr;
         emit errorOccurred(m_lastError);
         return m_lastError;
+    }
+
+    // Pre-fill the capture format from the mix format so that the status
+    // bar shows real values (Hz / ch) as soon as the engine signals running,
+    // rather than waiting for the first audio packet to arrive.
+    {
+        StreamFormat fmt{};
+        if (WasapiDevices::queryMixFormat(m_captureDeviceId, fmt) && fmt.sampleRate > 0) {
+            m_captureSampleRate = fmt.sampleRate;
+            m_captureChannels   = fmt.channels;
+        }
     }
 
     m_lastError.clear();
@@ -150,6 +163,12 @@ bool AudioEngine::switchRenderTo(const QString &deviceId)
     if (deviceId == m_currentRenderId && m_render.isRunning()) return false;
 
     m_render.stop();
+    // Force the resampler to re-prepare against the new render rate on the
+    // next packet. Without this we'd happily linear-interp 48 → 44.1 into a
+    // device that's now running at 96k.
+    m_resamplerSrcSr = 0;
+    m_resamplerDstSr = 0;
+    m_resamplerChannels = 0;
     const QString err = m_render.start(deviceId);
     if (!err.isEmpty()) {
         m_lastError = QStringLiteral("Render switch failed: ") + err;
@@ -185,6 +204,9 @@ void AudioEngine::onCapturePacket(const float *interleaved,
         m_captureChannels = numChannels;
         m_chainPrepared = true;
         if (m_analyzer) m_analyzer->start(sampleRate, numChannels);
+        // The capture thread hits this on the very first packet — let the UI
+        // know the real format so the status line stops showing 0 Hz / 0 ch.
+        emit captureFormatChanged(sampleRate, numChannels);
     }
 
     if (m_analyzer) m_analyzer->pushPre(interleaved, numFrames, numChannels);
@@ -194,7 +216,32 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 
     if (m_analyzer) m_analyzer->pushPost(interleaved, numFrames, numChannels);
 
-    m_render.write(interleaved, numFrames, numChannels);
+    // Resample if capture and render disagree on sample rate (e.g., capturing
+    // VB-CABLE @ 48 kHz while rendering to a Focusrite negotiated at 44.1 kHz).
+    // Without this step the render side plays the buffer at its own clock,
+    // which sounds pitch-shifted. The render side may not know its rate yet
+    // immediately after start(), so guard on a positive value.
+    const int renderSr = m_render.sampleRate();
+    if (renderSr > 0 && renderSr != sampleRate) {
+        if (m_resamplerSrcSr != sampleRate
+            || m_resamplerDstSr != renderSr
+            || m_resamplerChannels != numChannels) {
+            m_resampler.prepare(static_cast<double>(sampleRate),
+                                static_cast<double>(renderSr),
+                                numChannels);
+            m_resamplerSrcSr = sampleRate;
+            m_resamplerDstSr = renderSr;
+            m_resamplerChannels = numChannels;
+        }
+        m_resampleScratch.clear();
+        m_resampler.process(interleaved, numFrames, m_resampleScratch);
+        const int outFrames = static_cast<int>(m_resampleScratch.size() / numChannels);
+        if (outFrames > 0) {
+            m_render.write(m_resampleScratch.data(), outFrames, numChannels);
+        }
+    } else {
+        m_render.write(interleaved, numFrames, numChannels);
+    }
 }
 
 } // namespace host

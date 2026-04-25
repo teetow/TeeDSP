@@ -1,10 +1,13 @@
 #pragma once
 
+#include "Resampler.h"
 #include "WasapiLoopbackCapture.h"
 #include "WasapiRender.h"
 
 #include <QObject>
 #include <QString>
+
+#include <vector>
 
 namespace dsp { class ProcessorChain; }
 
@@ -55,6 +58,9 @@ signals:
     void runningChanged();
     void errorOccurred(QString message);
     void currentRenderChanged(QString deviceId);
+    void captureFormatChanged(int sampleRate, int channels);
+    // Re-emitted from WasapiDeviceNotifier; subscribers should re-enumerate.
+    void devicesChanged();
 
 private slots:
     void onDevicesChanged();
@@ -79,6 +85,12 @@ private:
     int m_captureChannels = 0;
     bool m_chainPrepared = false;
     QString m_lastError;
+
+    Resampler m_resampler;
+    int m_resamplerSrcSr = 0;
+    int m_resamplerDstSr = 0;
+    int m_resamplerChannels = 0;
+    std::vector<float> m_resampleScratch;
 };
 
 } // namespace host

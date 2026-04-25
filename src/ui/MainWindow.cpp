@@ -146,6 +146,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
     saveSelectedDevices();
 
     if (m_quitting || !m_tray) {
+        // Heal the gap: restore Windows default output to TeeDSP's render
+        // target so audio flows directly there once we stop processing.
+        if (m_engine && m_engine->isRunning()) {
+            const QString renderId = m_engine->currentRender();
+            if (!renderId.isEmpty())
+                host::WasapiDevices::setDefaultRender(renderId);
+        }
         if (m_engine) m_engine->stop();
         QMainWindow::closeEvent(event);
         return;
@@ -241,9 +248,9 @@ QWidget *MainWindow::buildEqSection()
         QStringLiteral("QCheckBox::indicator:checked { background-color: #E67E22; border-color: #E67E22; }"));
     headerRow->addWidget(m_showOutputSpectrum);
 
-    auto *hint = new QLabel(QStringLiteral("Drag · dbl-click resets"));
-    hint->setProperty("role", "caption");
-    headerRow->addWidget(hint);
+    m_showHeatmap = new QCheckBox(QStringLiteral("Heatmap"));
+    headerRow->addWidget(m_showHeatmap);
+
     col->addLayout(headerRow);
 
     m_eqCurve = new ui::EqCurve();
@@ -398,6 +405,7 @@ void MainWindow::connectSignals()
 
     connect(m_engine, &host::AudioEngine::runningChanged, this, &MainWindow::refreshEngineStatus);
     connect(m_engine, &host::AudioEngine::errorOccurred, this, &MainWindow::onEngineError);
+    connect(m_engine, &host::AudioEngine::devicesChanged, this, &MainWindow::refreshDevices);
 
     connect(m_globalBypass, &QCheckBox::toggled, this, [this](bool c) {
         if (!m_syncingUi) m_dspController->setBypass(c);
@@ -483,6 +491,11 @@ void MainWindow::connectSignals()
         m_eqCurve->setShowOutputSpectrum(on);
     });
 
+    connect(m_showHeatmap, &QCheckBox::toggled, this, [this](bool on) {
+        m_eqCurve->setShowHeatmap(on);
+        if (!on) m_eqCurve->clearHeatmap();
+    });
+
     if (auto *analyzer = m_engine->analyzer()) {
         connect(analyzer, &host::SpectrumAnalyzer::spectraUpdated,
                 this, [this](QVector<float> inDb, QVector<float> outDb,
@@ -522,6 +535,8 @@ void MainWindow::connectSignals()
 
     connect(m_engine, &host::AudioEngine::currentRenderChanged,
             this, [this](const QString &) { refreshEngineStatus(); });
+    connect(m_engine, &host::AudioEngine::captureFormatChanged,
+            this, [this](int, int) { refreshEngineStatus(); });
 
     if (m_tray) {
         connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
@@ -748,6 +763,7 @@ void MainWindow::refreshEngineStatus()
     } else {
         m_statusLabel->setText(QStringLiteral("Idle."));
         m_statusLabel->setProperty("role", "status");
+        m_eqCurve->clearSpectra();
     }
     m_statusLabel->style()->unpolish(m_statusLabel);
     m_statusLabel->style()->polish(m_statusLabel);

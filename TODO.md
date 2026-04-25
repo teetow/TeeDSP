@@ -1,6 +1,8 @@
-- [ ] middle-click knob to reset
-- [ ] make curve fill semi-transparent so it doesn't fully occlude the spectrogram
+- [x] middle-click knob to reset
+- [x] make curve fill semi-transparent so it doesn't fully occlude the spectrogram
 - [ ] Deep-dive in how the FL Studio "heat map" style spectrogram works, it's incredibly useful.
-- [ ] remove "drag - db-click resets" label from EQ, it's ugly and redundant
-- [ ] srate and channel count is always 0 Hz - 0 ch
-- [ ] When picking Focusrite as output, pitch is incorrect
+- [x] remove "drag - db-click resets" label from EQ, it's ugly and redundant
+- [x] srate and channel count is always 0 Hz - 0 ch
+- [x] When picking Focusrite as output, pitch is incorrect
+- [x] output device dropbox doesn't update when device enumeration occurs
+- [x] When quitting TeeDSP cleanly, set Windows output to TeeDSP:s output (healing the gap, as it were)

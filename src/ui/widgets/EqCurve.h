@@ -1,7 +1,10 @@
 #pragma once
 
+#include <QImage>
 #include <QVector>
 #include <QWidget>
+
+#include <deque>
 
 namespace ui {
 
@@ -37,6 +40,13 @@ public:
     void setShowInputSpectrum(bool show);
     void setShowOutputSpectrum(bool show);
 
+    // Scrolling output spectrogram (FL-style heat map). Caller pushes the
+    // most recent post-DSP magDb every analyzer tick; the widget keeps a
+    // rolling history and renders it behind the curve.
+    void setShowHeatmap(bool show);
+    void pushHeatmapFrame(const QVector<float> &magDb, double sampleRate);
+    void clearHeatmap();
+
     QSize sizeHint() const override { return {560, 240}; }
     QSize minimumSizeHint() const override { return {360, 160}; }
 
@@ -67,6 +77,11 @@ private:
     void drawSpectrum(class QPainter &p, const QVector<float> &mag,
                       double specSampleRate, const QColor &fill,
                       const QColor &stroke) const;
+    // Inferno-gradient per-column fill: each x column is coloured by the
+    // magnitude at that frequency and drawn from the spectrum curve down to
+    // the bottom of the plot. Outline is drawn on top.
+    void drawSpectrumHeatmap(class QPainter &p, const QVector<float> &mag,
+                             double specSampleRate) const;
 
     QVector<EqBandData> m_bands;
     double m_sampleRate = 48000.0;
@@ -78,6 +93,13 @@ private:
     double m_outSpecSr = 48000.0;
     bool m_showInputSpectrum = true;
     bool m_showOutputSpectrum = true;
+
+    // Heat-map history. Each entry is a full magDb frame (kept whole so we can
+    // re-rasterize the image when the plot resizes).
+    bool m_showHeatmap = false;
+    static constexpr int kHeatmapHistory = 256;
+    std::deque<QVector<float>> m_heatmapFrames;
+    double m_heatmapSr = 48000.0;
 
     int m_draggingBand = -1;
     int m_hoverBand = -1;

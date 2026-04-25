@@ -27,6 +27,7 @@ set(HOST_SOURCES
 	src/host/WasapiDeviceNotifier.cpp
 	src/host/AudioEngine.cpp
 	src/host/Fft.cpp
+	src/host/Resampler.cpp
 	src/host/SpectrumAnalyzer.cpp
 )
 

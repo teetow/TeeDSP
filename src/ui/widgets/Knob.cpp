@@ -226,6 +226,9 @@ void Knob::mousePressEvent(QMouseEvent *e)
         m_shiftHeld = e->modifiers().testFlag(Qt::ShiftModifier);
         setCursor(Qt::BlankCursor);
         e->accept();
+    } else if (e->button() == Qt::MiddleButton) {
+        setValue(m_default);
+        e->accept();
     }
 }
 
