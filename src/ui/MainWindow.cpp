@@ -125,9 +125,33 @@ MainWindow::MainWindow(QWidget *parent)
         if (selectedCaptureDeviceId().isEmpty() || selectedRenderDeviceId().isEmpty())
             return;
         if (m_engine->isRunning()) return;
-        const QString err = m_engine->start(selectedCaptureDeviceId(),
-                                            selectedRenderDeviceId());
+
+        const QString captureId = selectedCaptureDeviceId();
+        const QString previousDefaultRender = host::WasapiDevices::defaultRenderId();
+
+        // On launch, inject TeeDSP into the Windows output chain:
+        // 1) TeeDSP renders to whatever Windows was previously sending to.
+        // 2) Windows default output is switched to TeeDSP's loopback source.
+        if (!previousDefaultRender.isEmpty() && previousDefaultRender != captureId) {
+            const int idx = m_renderDevice->findData(previousDefaultRender);
+            if (idx >= 0) {
+                const bool wasSyncing = m_syncingUi;
+                m_syncingUi = true;
+                m_renderDevice->setCurrentIndex(idx);
+                m_syncingUi = wasSyncing;
+                saveSelectedDevices();
+            }
+        }
+
+        const QString err = m_engine->start(captureId, selectedRenderDeviceId());
         if (!err.isEmpty()) m_statusLabel->setText(err);
+
+        if (err.isEmpty() && !captureId.isEmpty() && previousDefaultRender != captureId) {
+            if (!host::WasapiDevices::setDefaultRender(captureId)) {
+                m_statusLabel->setText(QStringLiteral("Running (warning: failed to set Windows default output to capture device)."));
+            }
+        }
+
         refreshEngineStatus();
     });
 }
@@ -366,6 +390,10 @@ QWidget *MainWindow::buildCompSection()
     meterRow->addWidget(m_compMeterValue, 0);
     col->addLayout(meterRow);
 
+    m_outputHotIndicator = new QLabel(QStringLiteral("Output headroom: OK"));
+    m_outputHotIndicator->setProperty("role", "status");
+    col->addWidget(m_outputHotIndicator);
+
     col->addStretch();
     return section;
 }
@@ -547,6 +575,18 @@ void MainWindow::connectSignals()
         const double db = m_dspController->compGainReductionDb();
         m_compMeter->setReductionDb(std::abs(db));
         m_compMeterValue->setText(QString::number(db, 'f', 1) + QStringLiteral(" dB"));
+
+        const float hotDbfs = m_engine ? m_engine->consumeOutputHotDbfs() : -120.0f;
+        if (hotDbfs > -0.2f) {
+            m_outputHotIndicator->setText(QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
+            m_outputHotIndicator->setStyleSheet(QStringLiteral("color:#ff6b6b;"));
+        } else if (hotDbfs > -1.0f) {
+            m_outputHotIndicator->setText(QStringLiteral("Output near limit: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
+            m_outputHotIndicator->setStyleSheet(QStringLiteral("color:#f7c948;"));
+        } else {
+            m_outputHotIndicator->setText(QStringLiteral("Output headroom: OK"));
+            m_outputHotIndicator->setStyleSheet(QString());
+        }
 
         const QVariantList eq = m_dspController->eqBands();
         if (m_selectedEqBand >= 0 && m_selectedEqBand < eq.size()) {

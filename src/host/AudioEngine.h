@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QString>
 
+#include <atomic>
 #include <vector>
 
 namespace dsp { class ProcessorChain; }
@@ -54,6 +55,11 @@ public:
     QString preferredRender() const { return m_preferredRenderId; }
     QString currentRender() const { return m_currentRenderId; }
 
+    // Returns max observed post-DSP peak level in dBFS since last call,
+    // then resets the accumulator. Values near 0 dBFS indicate likely
+    // hard limiting or imminent clipping in downstream paths.
+    float consumeOutputHotDbfs() { return m_recentHotDbfs.exchange(-120.0f, std::memory_order_relaxed); }
+
 signals:
     void runningChanged();
     void errorOccurred(QString message);
@@ -91,6 +97,8 @@ private:
     int m_resamplerDstSr = 0;
     int m_resamplerChannels = 0;
     std::vector<float> m_resampleScratch;
+
+    std::atomic<float> m_recentHotDbfs{-120.0f};
 };
 
 } // namespace host

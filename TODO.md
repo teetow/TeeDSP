@@ -1,6 +1,9 @@
 
-- [ ] On launch, TeeDSP should "inject" itself in the Windows output chain -- set Windows output to whatever TeeDSP is set to listen to (normally the loopback) and set its output to whatever Windows was sending to
-- [ ] I can hear what seems to be a limiter "pumping" when the signal goes to hot (it's not the compressor). can we get an indicator for this somewhere? 
+- [x] On launch, TeeDSP should "inject" itself in the Windows output chain -- set Windows output to whatever TeeDSP is set to listen to (normally the loopback) and set its output to whatever Windows was sending to
+- [x] I can hear what seems to be a limiter "pumping" when the signal goes to hot (it's not the compressor). can we get an indicator for this somewhere? 
+- [ ] Missing an app icon.
+- [ ] Double check the fills on ALL EQ curves, still seeing some strange black fill
+- [ ] Add build timestamp to the context menu
 
 - [x] Deep-dive in how the FL Studio "heat map" style spectrogram works, it's incredibly useful.
 - [x] middle-click knob to reset

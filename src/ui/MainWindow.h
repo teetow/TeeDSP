@@ -84,6 +84,7 @@ private:
     ui::Knob *m_compMakeup = nullptr;
     ui::LevelMeter *m_compMeter = nullptr;
     QLabel *m_compMeterValue = nullptr;
+    QLabel *m_outputHotIndicator = nullptr;
 
     QCheckBox *m_exciterEnabled = nullptr;
     ui::Knob *m_exciterDrive = nullptr;

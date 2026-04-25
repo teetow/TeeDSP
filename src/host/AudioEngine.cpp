@@ -5,6 +5,8 @@
 #include "WasapiDeviceNotifier.h"
 #include "WasapiDevices.h"
 
+#include <cmath>
+
 namespace host {
 
 AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
@@ -213,6 +215,22 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 
     m_chain->process(const_cast<float *>(interleaved),
                      static_cast<std::size_t>(numFrames));
+
+    // Track near-full-scale output as a practical indicator that a hidden
+    // limiter/safety clamp may be pumping somewhere downstream.
+    float peak = 0.0f;
+    const int sampleCount = numFrames * numChannels;
+    for (int i = 0; i < sampleCount; ++i) {
+        const float a = std::fabs(interleaved[i]);
+        if (a > peak)
+            peak = a;
+    }
+    if (peak > 0.0f) {
+        const float dbfs = 20.0f * std::log10(peak);
+        float cur = m_recentHotDbfs.load(std::memory_order_relaxed);
+        while (dbfs > cur
+               && !m_recentHotDbfs.compare_exchange_weak(cur, dbfs, std::memory_order_relaxed)) {}
+    }
 
     if (m_analyzer) m_analyzer->pushPost(interleaved, numFrames, numChannels);
 
