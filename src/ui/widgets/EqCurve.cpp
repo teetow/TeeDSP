@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <vector>
 
 namespace ui {
 
@@ -200,7 +199,7 @@ void EqCurve::clearHeatmap()
 
 QRectF EqCurve::plotRect() const
 {
-    return QRectF(36, 10, width() - 46, height() - 26);
+    return QRectF(36, 10, width() - 70, height() - 26);
 }
 
 double EqCurve::freqToX(double hz) const
@@ -452,38 +451,6 @@ void EqCurve::paintEvent(QPaintEvent *)
         }
     }
 
-    // --- Dynamic threshold line (detector dB scale) ---
-    // Nova-style visual reference: connect each enabled band's threshold over frequency.
-    std::vector<std::pair<double, double>> thresholdPoints;
-    thresholdPoints.reserve(static_cast<std::size_t>(m_bands.size()));
-    for (const auto &b : m_bands) {
-        if (!b.enabled) continue;
-        thresholdPoints.emplace_back(static_cast<double>(b.freqHz), static_cast<double>(b.dynThresholdDb));
-    }
-    if (!thresholdPoints.empty()) {
-        std::sort(thresholdPoints.begin(), thresholdPoints.end(),
-                  [](const auto &a, const auto &b) { return a.first < b.first; });
-
-        QPainterPath thresholdPath;
-        for (std::size_t i = 0; i < thresholdPoints.size(); ++i) {
-            const double x = freqToX(thresholdPoints[i].first);
-            const double y = specDbToY(thresholdPoints[i].second);
-            if (i == 0) thresholdPath.moveTo(x, y);
-            else thresholdPath.lineTo(x, y);
-        }
-
-        QColor thresholdColor(0x5D, 0xA9, 0xFF, 220);
-        p.setPen(QPen(thresholdColor, 1.5, Qt::DashLine));
-        p.setBrush(Qt::NoBrush);
-        p.drawPath(thresholdPath);
-
-        p.setBrush(thresholdColor);
-        p.setPen(QPen(theme::kBgDeep, 1.2));
-        for (const auto &point : thresholdPoints) {
-            p.drawEllipse(QPointF(freqToX(point.first), specDbToY(point.second)), 3.0, 3.0);
-        }
-    }
-
     // --- Combined static response (no dynamic GR) ---
     {
         QPainterPath staticPath;
@@ -522,13 +489,13 @@ void EqCurve::paintEvent(QPaintEvent *)
         p.drawPath(path);
     }
 
-    // --- Right-side detector scale labels for threshold markers ---
+    // --- Right-side detector dB scale labels (spectrum reference) ---
     p.setPen(theme::kTextDim);
     const double scTicks[] = {-60.0, -48.0, -36.0, -24.0, -12.0, 0.0};
     for (double db : scTicks) {
         const double y = specDbToY(db);
         p.drawText(QRectF(r.right() + 2, y - 8, 30, 16),
-                   Qt::AlignLeft | Qt::AlignVCenter,
+                   Qt::AlignRight | Qt::AlignVCenter,
                    QString::number(db, 'f', 0));
     }
 

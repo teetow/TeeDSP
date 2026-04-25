@@ -53,8 +53,10 @@ Write-Host "Running windeployqt..."
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
 
 # ---- Stage to install dir -----------------------------------------------------
+$wasRunning = $false
 $running = Get-Process -Name TeeDsp -ErrorAction SilentlyContinue
 if ($running) {
+    $wasRunning = $true
     Write-Host "Stopping running TeeDsp instance(s)..."
     $running | Stop-Process -Force
     Start-Sleep -Milliseconds 500
@@ -89,3 +91,8 @@ Write-Host "Published."
 Write-Host "  Install dir:    $InstallDir"
 Write-Host "  Executable:     $installedExe"
 Write-Host "  Desktop link:   $shortcutPath"
+
+if ($wasRunning) {
+    Write-Host "Relaunching TeeDsp..."
+    Start-Process -FilePath $installedExe -WorkingDirectory $InstallDir | Out-Null
+}
