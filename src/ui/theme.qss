@@ -1,10 +1,3 @@
-#include "Theme.h"
-
-namespace ui::theme {
-
-QString globalStylesheet()
-{
-    return QStringLiteral(R"(
 /* ---------- base ---------- */
 QWidget {
     background-color: #16171B;
@@ -199,7 +192,7 @@ QStatusBar {
     background: transparent;
     min-height: 24px;
     /* Vertical padding controls bar reflow; horizontal handled on label. */
-    padding: 4px 0px;
+    padding: 2px 0px;
 }
 QStatusBar::item {
     border: none;
@@ -208,7 +201,7 @@ QStatusBar::item {
 }
 QStatusBar QLabel {
     background: transparent;
-    padding: 0px 12px;
+    padding: 0 8px;
 }
 
 /* ---------- scroll / misc ---------- */
@@ -241,7 +234,3 @@ QPushButton[role="bandTab"]:checked {
     color: #EAECF0;
     font-weight: 600;
 }
-)");
-}
-
-} // namespace ui::theme

@@ -58,6 +58,7 @@ target_compile_definitions(TeeDsp PRIVATE
 	_UNICODE
 	NOMINMAX
 	WIN32_LEAN_AND_MEAN
+	TEEDSP_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_link_libraries(TeeDsp PRIVATE

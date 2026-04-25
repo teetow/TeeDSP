@@ -3,6 +3,9 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFile>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFont>
 #include <QIcon>
 #include <QPainter>
@@ -10,6 +13,8 @@
 #include <QPalette>
 #include <QPixmap>
 #include <QSurfaceFormat>
+
+#include <memory>
 
 namespace {
 
@@ -45,6 +50,35 @@ QIcon buildAppIcon()
         icon.addPixmap(renderAppIcon(s));
     }
     return icon;
+}
+
+QString readTextFile(const QString &path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+    return QString::fromUtf8(f.readAll());
+}
+
+QString resolveStylesheetPath()
+{
+    const QByteArray envPath = qgetenv("TEEDSP_QSS_PATH");
+    if (!envPath.isEmpty()) {
+        const QString p = QString::fromLocal8Bit(envPath);
+        if (QFileInfo::exists(p)) return p;
+    }
+
+#ifdef TEEDSP_SOURCE_DIR
+    const QString sourcePath =
+        QString::fromUtf8(TEEDSP_SOURCE_DIR) + QStringLiteral("/src/ui/theme.qss");
+    if (QFileInfo::exists(sourcePath)) return sourcePath;
+#endif
+
+    const QString appLocalPath =
+        QCoreApplication::applicationDirPath() + QStringLiteral("/theme.qss");
+    if (QFileInfo::exists(appLocalPath)) return appLocalPath;
+
+    return {};
 }
 
 } // namespace
@@ -85,7 +119,32 @@ int main(int argc, char *argv[])
     pal.setColor(QPalette::HighlightedText,ui::theme::kBgDeep);
     app.setPalette(pal);
 
-    app.setStyleSheet(ui::theme::globalStylesheet());
+    const QString stylesheetPath = resolveStylesheetPath();
+    const auto applyStylesheet = [&app, &stylesheetPath]() {
+        QString css;
+        if (!stylesheetPath.isEmpty())
+            css = readTextFile(stylesheetPath);
+        if (css.isEmpty())
+            css = ui::theme::globalStylesheet();
+        app.setStyleSheet(css);
+    };
+
+    applyStylesheet();
+
+    std::unique_ptr<QFileSystemWatcher> styleWatcher;
+    if (!stylesheetPath.isEmpty()) {
+        styleWatcher = std::make_unique<QFileSystemWatcher>();
+        styleWatcher->addPath(stylesheetPath);
+        QFileSystemWatcher *watcher = styleWatcher.get();
+        QObject::connect(watcher, &QFileSystemWatcher::fileChanged,
+                         &app, [watcher, &applyStylesheet, stylesheetPath](const QString &) {
+            applyStylesheet();
+            // Some editors replace the file atomically, which drops the watch.
+            if (QFileInfo::exists(stylesheetPath) && !watcher->files().contains(stylesheetPath)) {
+                watcher->addPath(stylesheetPath);
+            }
+        });
+    }
 
     const QIcon appIcon = buildAppIcon();
     app.setWindowIcon(appIcon);

@@ -108,8 +108,13 @@ void LevelMeter::paintEvent(QPaintEvent *)
 
     // Peak tick
     if (peakFrac > 0.0 && m_barColor != BarColor::GainReduction) {
-        const double x = full.left() + 1.5 + (full.width() - 2.0) * peakFrac;
-        p.setPen(QPen(theme::kTextPrimary, 1.4));
+        const double xRaw = full.left() + 1.5 + (full.width() - 2.0) * peakFrac;
+        // Snap to pixel center with a cosmetic 1px pen to keep visual width
+        // consistent as the peak moves.
+        const double x = std::floor(xRaw) + 0.5;
+        QPen tickPen(theme::kTextPrimary, 1.0);
+        tickPen.setCosmetic(true);
+        p.setPen(tickPen);
         p.drawLine(QPointF(x, full.top() + 1.5),
                    QPointF(x, full.bottom() - 1.5));
     }

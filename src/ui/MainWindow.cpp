@@ -212,7 +212,7 @@ void MainWindow::buildUi()
 {
     m_central = new QWidget(this);
     auto *root = new QVBoxLayout(m_central);
-    root->setContentsMargins(14, 14, 14, 14);
+    root->setContentsMargins(14, 14, 14, 4);
     root->setSpacing(10);
 
     root->addWidget(buildIoSection());
@@ -234,8 +234,6 @@ void MainWindow::buildUi()
     mainRow->addLayout(centerRow, 1);
     mainRow->addWidget(buildOutputPane(), 0);
     root->addLayout(mainRow);
-
-    root->addWidget(buildFooter());
 
     setCentralWidget(m_central);
 }
@@ -282,7 +280,7 @@ QWidget *MainWindow::buildEqSection()
     auto *section = createSection(QStringLiteral("Dynamic EQ"));
     auto *col = new QVBoxLayout(section);
     col->setContentsMargins(12, 18, 12, 12);
-    col->setSpacing(8);
+    col->setSpacing(6);
 
     auto *headerRow = new QHBoxLayout();
     m_eqEnabled = new QCheckBox(QStringLiteral("Enable EQ"));
@@ -329,10 +327,10 @@ QWidget *MainWindow::buildEqSection()
 
     col->addLayout(tabBar);
 
-    auto *dynBox = new QGroupBox();
+    auto *dynBox = new QWidget();
     auto *dynCol = new QVBoxLayout(dynBox);
-    dynCol->setContentsMargins(8, 10, 8, 8);
-    dynCol->setSpacing(6);
+    dynCol->setContentsMargins(0, 0, 0, 0);
+    dynCol->setSpacing(4);
 
     auto *metaRow = new QHBoxLayout();
     m_eqBandEnabled = new QCheckBox(QStringLiteral("Enable band"));
@@ -359,8 +357,8 @@ QWidget *MainWindow::buildEqSection()
 
     // Mini signal / GR meters
     auto *meterGrid = new QGridLayout();
-    meterGrid->setHorizontalSpacing(6);
-    meterGrid->setVerticalSpacing(3);
+    meterGrid->setHorizontalSpacing(4);
+    meterGrid->setVerticalSpacing(2);
 
     auto *inCaption = createCaption(QStringLiteral("In"));
     auto *outCaption = createCaption(QStringLiteral("Out"));
@@ -980,9 +978,7 @@ void MainWindow::refreshDevices()
     m_captureDevice->clear();
     m_renderDevice->clear();
     for (const auto &d : m_devices) {
-        const QString label = d.isDefault
-            ? QStringLiteral("%1  ★").arg(d.name)
-            : d.name;
+        const QString label = d.name;
         m_captureDevice->addItem(label, d.id);
         m_renderDevice->addItem(label, d.id);
     }
