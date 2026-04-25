@@ -26,6 +26,25 @@ QString wideToQString(const wchar_t *w)
     return QString::fromWCharArray(w);
 }
 
+bool looksVirtual(const QString &friendlyName, const QString &interfaceName)
+{
+    // Match against known virtual-cable vendors. These are the products people
+    // route system audio through; none are physical outputs you'd want in an
+    // auto-route fallback chain.
+    static const char *kPatterns[] = {
+        "VB-Audio", "VB-Cable", "CABLE Input", "CABLE Output",
+        "VoiceMeeter", "Voicemeeter",
+        "Hi-Fi Cable", "HiFi Cable",
+        "Virtual Cable", "Virtual Audio Cable",
+        nullptr,
+    };
+    for (const char **p = kPatterns; *p; ++p) {
+        if (friendlyName.contains(QString::fromUtf8(*p), Qt::CaseInsensitive))  return true;
+        if (interfaceName.contains(QString::fromUtf8(*p), Qt::CaseInsensitive)) return true;
+    }
+    return false;
+}
+
 bool waveFormatToStreamFormat(const WAVEFORMATEX *wf, StreamFormat &out)
 {
     if (!wf) return false;
@@ -99,8 +118,21 @@ QList<DeviceInfo> WasapiDevices::enumerateRender()
                 info.name = wideToQString(pv.pwszVal);
             }
             PropVariantClear(&pv);
+
+            PROPVARIANT pv2;
+            PropVariantInit(&pv2);
+            if (SUCCEEDED(props->GetValue(PKEY_DeviceInterface_FriendlyName, &pv2)) && pv2.vt == VT_LPWSTR) {
+                info.interfaceName = wideToQString(pv2.pwszVal);
+            }
+            PropVariantClear(&pv2);
         }
 
+        DWORD state = 0;
+        if (SUCCEEDED(dev->GetState(&state))) {
+            info.isActive = (state & DEVICE_STATE_ACTIVE) != 0;
+        }
+
+        info.isVirtual = looksVirtual(info.name, info.interfaceName);
         info.isDefault = (info.id == defaultId);
         out.append(std::move(info));
     }

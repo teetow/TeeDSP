@@ -6,9 +6,14 @@
 namespace host {
 
 struct DeviceInfo {
-    QString id;       // IMMDevice GetId() — e.g. "{0.0.0.00000000}.{...guid...}"
-    QString name;     // Friendly name — "Speakers (Realtek(R) Audio)"
+    QString id;            // IMMDevice GetId() — e.g. "{0.0.0.00000000}.{...guid...}"
+    QString name;          // Friendly name — "Speakers (Realtek(R) Audio)"
+    QString interfaceName; // PKEY_DeviceInterface_FriendlyName — vendor/driver string
     bool    isDefault = false;
+    bool    isActive = true;
+    // Heuristic: appears to be a virtual loopback cable (VB-Audio, VoiceMeeter,
+    // Hi-Fi Cable, etc.) and should be excluded from auto-route fallback.
+    bool    isVirtual = false;
 };
 
 struct StreamFormat {

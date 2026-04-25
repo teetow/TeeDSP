@@ -1,6 +1,8 @@
 #include "MainWindow.h"
 
 #include "Theme.h"
+#include "StartupRegistration.h"
+#include "TrayController.h"
 #include "widgets/EqCurve.h"
 #include "widgets/Knob.h"
 #include "widgets/LevelMeter.h"
@@ -10,6 +12,8 @@
 #include "../host/AudioEngine.h"
 #include "../host/SpectrumAnalyzer.h"
 #include "../host/WasapiDevices.h"
+
+#include <QApplication>
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -33,6 +37,8 @@ namespace {
 
 constexpr const char *kCaptureDeviceKey = "io/captureDeviceId";
 constexpr const char *kRenderDeviceKey  = "io/renderDeviceId";
+constexpr const char *kAutoRouteKey     = "io/autoRoute";
+constexpr const char *kFirstRunKey      = "ui/initialized";
 
 QGroupBox *createSection(const QString &title)
 {
@@ -76,19 +82,43 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_engine = new host::AudioEngine(m_chain, this);
 
+    // First-run defaults: register Start-with-Windows + auto-route ON.
+    {
+        QSettings s;
+        if (!s.value(QString::fromLatin1(kFirstRunKey), false).toBool()) {
+            ui::startup::setEnabled(true);
+            s.setValue(QString::fromLatin1(kAutoRouteKey), true);
+            s.setValue(QString::fromLatin1(kFirstRunKey), true);
+        }
+    }
+
     setWindowTitle(QStringLiteral("TeeDSP"));
-    resize(1100, 640);
+    resize(1100, 660);
 
     buildUi();
+
+    QSettings s;
+    const bool autoRoute = s.value(QString::fromLatin1(kAutoRouteKey), true).toBool();
+    {
+        const bool was = m_syncingUi;
+        m_syncingUi = true;
+        m_autoRoute->setChecked(autoRoute);
+        m_syncingUi = was;
+    }
+    m_engine->setAutoRoute(autoRoute);
+
+    m_tray = new ui::TrayController(this, this);
+    m_tray->setAutoRoute(autoRoute);
+    m_tray->setStartWithWindows(ui::startup::isEnabled());
+
     connectSignals();
     refreshDevices();
     restoreSelectedDevices();
     pullStateFromController();
     refreshEngineStatus();
 
-    // Auto-start on launch if both endpoints are remembered. Deferred to the
-    // event loop so the engine's QObject signals fire on the UI thread once
-    // it's up, and the window is already visible if anything fails.
+    // Auto-start on launch if both endpoints are remembered. Deferred so the
+    // window is up first; failure messages still surface clearly.
     QTimer::singleShot(0, this, [this]() {
         if (selectedCaptureDeviceId().isEmpty() || selectedRenderDeviceId().isEmpty())
             return;
@@ -110,10 +140,20 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (m_engine) m_engine->stop();
+    // Save state on every close — whether we're hiding to tray or fully
+    // quitting — so the user never loses settings on either path.
     if (m_dspController) m_dspController->saveToSettings();
     saveSelectedDevices();
-    QMainWindow::closeEvent(event);
+
+    if (m_quitting || !m_tray) {
+        if (m_engine) m_engine->stop();
+        QMainWindow::closeEvent(event);
+        return;
+    }
+
+    // Hide to tray. Engine keeps running so audio flows uninterrupted.
+    event->ignore();
+    hide();
 }
 
 void MainWindow::buildUi()
@@ -166,10 +206,13 @@ QWidget *MainWindow::buildIoSection()
     grid->setColumnStretch(1, 2);
     grid->setColumnStretch(3, 2);
 
+    m_autoRoute = new QCheckBox(QStringLiteral("Auto-route to physical output (fall back when preferred is unavailable)"));
+    grid->addWidget(m_autoRoute, 1, 0, 1, 6);
+
     m_statusLabel = new QLabel(QStringLiteral("Idle."));
     m_statusLabel->setProperty("role", "status");
     m_statusLabel->setWordWrap(true);
-    grid->addWidget(m_statusLabel, 1, 0, 1, 6);
+    grid->addWidget(m_statusLabel, 2, 0, 1, 6);
 
     return section;
 }
@@ -462,7 +505,46 @@ void MainWindow::connectSignals()
     connect(m_captureDevice, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int){ if (!m_syncingUi) saveSelectedDevices(); });
     connect(m_renderDevice, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int){ if (!m_syncingUi) saveSelectedDevices(); });
+            this, [this](int){
+        if (m_syncingUi) return;
+        saveSelectedDevices();
+        // Push the new preference into the engine; if running, this triggers
+        // a hot render-side switch without dropping the capture stream.
+        m_engine->setPreferredRender(selectedRenderDeviceId());
+    });
+
+    connect(m_autoRoute, &QCheckBox::toggled, this, [this](bool on){
+        if (m_syncingUi) return;
+        QSettings().setValue(QString::fromLatin1(kAutoRouteKey), on);
+        m_engine->setAutoRoute(on);
+        if (m_tray) m_tray->setAutoRoute(on);
+    });
+
+    connect(m_engine, &host::AudioEngine::currentRenderChanged,
+            this, [this](const QString &) { refreshEngineStatus(); });
+
+    if (m_tray) {
+        connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
+            m_dspController->setBypass(b);
+        });
+        connect(m_tray, &ui::TrayController::autoRouteToggled, this, [this](bool on) {
+            const bool was = m_syncingUi;
+            m_syncingUi = true;
+            m_autoRoute->setChecked(on);
+            m_syncingUi = was;
+            QSettings().setValue(QString::fromLatin1(kAutoRouteKey), on);
+            m_engine->setAutoRoute(on);
+        });
+        connect(m_tray, &ui::TrayController::startWithWindowsToggled,
+                this, [](bool on) { ui::startup::setEnabled(on); });
+        connect(m_tray, &ui::TrayController::quitRequested, this, [this]() {
+            m_quitting = true;
+            close();
+            QApplication::quit();
+        });
+        connect(m_dspController, &dsp::DspController::bypassChanged,
+                this, [this]() { m_tray->setBypass(m_dspController->bypass()); });
+    }
 }
 
 void MainWindow::pullStateFromController()
@@ -646,10 +728,20 @@ void MainWindow::refreshEngineStatus()
     m_startStopButton->style()->unpolish(m_startStopButton);
     m_startStopButton->style()->polish(m_startStopButton);
 
+    QString currentName;
     if (running) {
-        m_statusLabel->setText(QStringLiteral("Running · %1 Hz · %2 ch")
+        const QString currentId = m_engine->currentRender();
+        for (const auto &d : m_devices) {
+            if (d.id == currentId) { currentName = d.name; break; }
+        }
+        const QString src = QStringLiteral("%1 Hz · %2 ch")
             .arg(m_engine->captureSampleRate())
-            .arg(m_engine->captureChannels()));
+            .arg(m_engine->captureChannels());
+        if (currentName.isEmpty()) {
+            m_statusLabel->setText(QStringLiteral("Running · %1").arg(src));
+        } else {
+            m_statusLabel->setText(QStringLiteral("Running · %1 → %2").arg(src, currentName));
+        }
         m_statusLabel->setProperty("role", "statusRunning");
         if (m_engine->captureSampleRate() > 0)
             m_eqCurve->setSampleRate(m_engine->captureSampleRate());
@@ -659,4 +751,13 @@ void MainWindow::refreshEngineStatus()
     }
     m_statusLabel->style()->unpolish(m_statusLabel);
     m_statusLabel->style()->polish(m_statusLabel);
+
+    if (m_tray) {
+        m_tray->setRunning(running);
+        m_tray->setStatusText(running
+            ? (currentName.isEmpty()
+                 ? QStringLiteral("TeeDSP — running")
+                 : QStringLiteral("TeeDSP — %1").arg(currentName))
+            : QStringLiteral("TeeDSP — idle"));
+    }
 }

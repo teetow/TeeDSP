@@ -1,0 +1,6 @@
+- [ ] middle-click knob to reset
+- [ ] make curve fill semi-transparent so it doesn't fully occlude the spectrogram
+- [ ] Deep-dive in how the FL Studio "heat map" style spectrogram works, it's incredibly useful.
+- [ ] remove "drag - db-click resets" label from EQ, it's ugly and redundant
+- [ ] srate and channel count is always 0 Hz - 0 ch
+- [ ] When picking Focusrite as output, pitch is incorrect

@@ -11,12 +11,15 @@ namespace dsp { class ProcessorChain; }
 namespace host {
 
 class SpectrumAnalyzer;
+class WasapiDeviceNotifier;
 
 // Orchestrates capture -> DSP -> render.
-// Owns a loopback capture on the chosen source render endpoint, feeds every
-// incoming packet through the given ProcessorChain, and writes the result to
-// the chosen render endpoint. Also taps the audio pre- and post-DSP into a
-// SpectrumAnalyzer so the UI can show input/output magnitude spectra.
+//
+// Capture is loopback from a chosen render endpoint (typically a virtual
+// cable, e.g. VB-CABLE). Render is to a chosen physical endpoint. When
+// auto-route is enabled, the render side dynamically follows device events:
+// the preferred render endpoint is used when active, with the first available
+// non-virtual endpoint as fallback.
 class AudioEngine : public QObject
 {
     Q_OBJECT
@@ -25,7 +28,12 @@ public:
     explicit AudioEngine(dsp::ProcessorChain *chain, QObject *parent = nullptr);
     ~AudioEngine() override;
 
-    QString start(const QString &captureDeviceId, const QString &renderDeviceId);
+    // captureDeviceId is the loopback source — typically VB-CABLE.
+    // preferredRenderId is the user's preferred physical output. When
+    // autoRoute is true, routing falls back to the best available non-virtual
+    // endpoint if the preferred is unavailable.
+    QString start(const QString &captureDeviceId,
+                  const QString &preferredRenderId);
     void stop();
 
     bool isRunning() const;
@@ -36,17 +44,36 @@ public:
 
     SpectrumAnalyzer *analyzer() const { return m_analyzer; }
 
+    void setAutoRoute(bool enabled);
+    bool autoRoute() const { return m_autoRoute; }
+
+    void setPreferredRender(const QString &id);
+    QString preferredRender() const { return m_preferredRenderId; }
+    QString currentRender() const { return m_currentRenderId; }
+
 signals:
     void runningChanged();
     void errorOccurred(QString message);
+    void currentRenderChanged(QString deviceId);
+
+private slots:
+    void onDevicesChanged();
 
 private:
     void onCapturePacket(const float *interleaved, int numFrames, int numChannels, int sampleRate);
+    QString pickRenderId() const;
+    bool switchRenderTo(const QString &deviceId);
 
     dsp::ProcessorChain *m_chain;
     WasapiLoopbackCapture m_capture;
     WasapiRender m_render;
     SpectrumAnalyzer *m_analyzer;
+    WasapiDeviceNotifier *m_notifier;
+
+    QString m_captureDeviceId;
+    QString m_preferredRenderId;
+    QString m_currentRenderId;
+    bool m_autoRoute = true;
 
     int m_captureSampleRate = 0;
     int m_captureChannels = 0;

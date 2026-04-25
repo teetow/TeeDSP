@@ -24,6 +24,7 @@ set(HOST_SOURCES
 	src/host/WasapiDevices.cpp
 	src/host/WasapiLoopbackCapture.cpp
 	src/host/WasapiRender.cpp
+	src/host/WasapiDeviceNotifier.cpp
 	src/host/AudioEngine.cpp
 	src/host/Fft.cpp
 	src/host/SpectrumAnalyzer.cpp
@@ -33,6 +34,8 @@ set(UI_SOURCES
 	src/ui/main.cpp
 	src/ui/MainWindow.cpp
 	src/ui/Theme.cpp
+	src/ui/StartupRegistration.cpp
+	src/ui/TrayController.cpp
 	src/ui/widgets/Knob.cpp
 	src/ui/widgets/LevelMeter.cpp
 	src/ui/widgets/EqCurve.cpp

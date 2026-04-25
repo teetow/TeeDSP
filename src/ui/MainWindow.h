@@ -23,6 +23,7 @@ namespace ui {
 class Knob;
 class LevelMeter;
 class EqCurve;
+class TrayController;
 }
 
 class MainWindow : public QMainWindow
@@ -71,6 +72,7 @@ private:
 
     QComboBox *m_captureDevice = nullptr;
     QComboBox *m_renderDevice = nullptr;
+    QCheckBox *m_autoRoute = nullptr;
     QPushButton *m_refreshDevicesButton = nullptr;
     QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
@@ -103,7 +105,9 @@ private:
     dsp::ProcessorChain *m_chain = nullptr;
     dsp::DspController *m_dspController = nullptr;
     host::AudioEngine *m_engine = nullptr;
+    ui::TrayController *m_tray = nullptr;
 
     QList<host::DeviceInfo> m_devices;
     bool m_syncingUi = false;
+    bool m_quitting = false;
 };
