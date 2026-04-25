@@ -3,7 +3,6 @@
 
 #include <QApplication>
 #include <QCoreApplication>
-#include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFont>
@@ -59,28 +58,6 @@ QString readTextFile(const QString &path)
         return {};
     return QString::fromUtf8(f.readAll());
 }
-
-QString resolveStylesheetPath()
-{
-    const QByteArray envPath = qgetenv("TEEDSP_QSS_PATH");
-    if (!envPath.isEmpty()) {
-        const QString p = QString::fromLocal8Bit(envPath);
-        if (QFileInfo::exists(p)) return p;
-    }
-
-#ifdef TEEDSP_SOURCE_DIR
-    const QString sourcePath =
-        QString::fromUtf8(TEEDSP_SOURCE_DIR) + QStringLiteral("/src/ui/theme.qss");
-    if (QFileInfo::exists(sourcePath)) return sourcePath;
-#endif
-
-    const QString appLocalPath =
-        QCoreApplication::applicationDirPath() + QStringLiteral("/theme.qss");
-    if (QFileInfo::exists(appLocalPath)) return appLocalPath;
-
-    return {};
-}
-
 } // namespace
 
 int main(int argc, char *argv[])
@@ -119,14 +96,9 @@ int main(int argc, char *argv[])
     pal.setColor(QPalette::HighlightedText,ui::theme::kBgDeep);
     app.setPalette(pal);
 
-    const QString stylesheetPath = resolveStylesheetPath();
-    const auto applyStylesheet = [&app, &stylesheetPath]() {
-        QString css;
-        if (!stylesheetPath.isEmpty())
-            css = readTextFile(stylesheetPath);
-        if (css.isEmpty())
-            css = ui::theme::globalStylesheet();
-        app.setStyleSheet(css);
+    const QString stylesheetPath = ui::theme::stylesheetPath();
+    const auto applyStylesheet = [&app]() {
+        app.setStyleSheet(ui::theme::globalStylesheet());
     };
 
     applyStylesheet();

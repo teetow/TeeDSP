@@ -27,7 +27,10 @@ inline const QColor kAccentDim  { 0x2E, 0x7A, 0x96 };
 inline const QColor kWarn       { 0xE6, 0x7E, 0x22 };  // orange — gain reduction
 inline const QColor kOk         { 0x2E, 0xCC, 0x71 };  // green — engine running
 
-// Applied to QApplication once at startup.
+// Resolved path of the external stylesheet, if present.
+QString stylesheetPath();
+
+// Loaded stylesheet text from `stylesheetPath()`. Empty when not found.
 QString globalStylesheet();
 
 } // namespace theme

@@ -61,6 +61,16 @@ QLabel[role="statusError"] {
     color: #E67E22;
 }
 
+QLabel[role="hotIndicator"][hotState="ok"] {
+    color: #9AA0AE;
+}
+QLabel[role="hotIndicator"][hotState="warn"] {
+    color: #f7c948;
+}
+QLabel[role="hotIndicator"][hotState="hot"] {
+    color: #ff6b6b;
+}
+
 /* ---------- combo box ---------- */
 QComboBox {
     background-color: #0E0F13;
@@ -156,6 +166,14 @@ QCheckBox::indicator:checked {
     background-color: #4FC1E9;
     border-color: #4FC1E9;
 }
+QCheckBox[spectrumRole="input"]::indicator:checked {
+    background-color: #4FC1E9;
+    border-color: #4FC1E9;
+}
+QCheckBox[spectrumRole="output"]::indicator:checked {
+    background-color: #E67E22;
+    border-color: #E67E22;
+}
 
 /* ---------- menus ---------- */
 QMenu {
@@ -202,6 +220,38 @@ QStatusBar::item {
 QStatusBar QLabel {
     background: transparent;
     padding: 0 8px;
+}
+
+/* ---------- vertical meters ---------- */
+QProgressBar[role="vMeter"] {
+    border: 1px solid #2A2C33;
+    background: #121418;
+}
+QProgressBar[role="vMeter"][meterFramed="false"] {
+    border: none;
+}
+QProgressBar[role="vMeter"][meterWidthRole="thin"] {
+    width: 4px;
+}
+QProgressBar[role="vMeter"][meterWidthRole="outputWide"] {
+    width: 11px;
+}
+QProgressBar[role="vMeter"][meterWidthRole="inputWide"] {
+    width: 14px;
+}
+QProgressBar[role="vMeter"][meterKind="input"]::chunk {
+    background: #4FC1E9;
+}
+QProgressBar[role="vMeter"][meterKind="output"]::chunk {
+    background: #2ECC71;
+}
+QProgressBar[role="vMeter"][meterKind="lufs"]::chunk {
+    background: #F1C40F;
+}
+QFrame[role="stereoMeterFrame"] {
+    border: 1px solid #2A2C33;
+    border-radius: 3px;
+    background: #121418;
 }
 
 /* ---------- scroll / misc ---------- */

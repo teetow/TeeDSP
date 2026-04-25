@@ -1,4 +1,5 @@
 #include "Knob.h"
+#include "WidgetMetrics.h"
 
 #include "../Theme.h"
 
@@ -131,32 +132,35 @@ void Knob::paintEvent(QPaintEvent *)
 
     const int w = width();
     const int h = height();
-    const int labelH = 14;
-    const int valueH = 14;
-    const int knobArea = h - labelH - valueH - 4;
-    const int knobSize = std::min(knobArea, w) - 8;
-    if (knobSize <= 8) return;
+    const int labelH = widget_metrics::knob::kLabelHeightPx;
+    const int valueH = widget_metrics::knob::kValueHeightPx;
+    const int knobArea = h - labelH - valueH - widget_metrics::knob::kVerticalGapPx;
+    const int knobSize = std::min(knobArea, w) - widget_metrics::knob::kOuterInsetPx;
+    if (knobSize <= widget_metrics::knob::kOuterInsetPx) return;
 
     const QRectF knobRect(
         (w - knobSize) / 2.0,
-        labelH + 2,
+        labelH + widget_metrics::knob::kKnobTopOffsetPx,
         knobSize,
         knobSize);
 
     // --- Label on top ---
     p.setPen(theme::kTextSecondary);
     QFont f = p.font();
-    f.setPointSizeF(7.5);
+    f.setPointSizeF(widget_metrics::knob::kLabelFontPt);
     f.setCapitalization(QFont::AllUppercase);
     f.setLetterSpacing(QFont::PercentageSpacing, 105);
     p.setFont(f);
     p.drawText(QRectF(0, 0, w, labelH), Qt::AlignCenter, m_label);
 
     // --- Background arc (full sweep, unfilled track) ---
-    QPen bgPen(theme::kBorderSoft, 3.0, Qt::SolidLine, Qt::FlatCap);
+    QPen bgPen(theme::kBorderSoft, widget_metrics::knob::kArcThicknessPx, Qt::SolidLine, Qt::FlatCap);
     p.setPen(bgPen);
     p.setBrush(Qt::NoBrush);
-    const QRectF arcRect = knobRect.adjusted(4, 4, -4, -4);
+    const QRectF arcRect = knobRect.adjusted(widget_metrics::knob::kArcInsetPx,
+                                             widget_metrics::knob::kArcInsetPx,
+                                             -widget_metrics::knob::kArcInsetPx,
+                                             -widget_metrics::knob::kArcInsetPx);
     p.drawArc(arcRect,
               static_cast<int>(kArcStartDeg * 16.0),
               static_cast<int>(kArcSweepDeg * 16.0));
@@ -166,7 +170,7 @@ void Knob::paintEvent(QPaintEvent *)
     const double originAngle = (m_polarity == Polarity::Unipolar) ? kArcStartDeg : kArcMidDeg;
     const double fillSpanDeg = valueAngle - originAngle;
     if (std::abs(fillSpanDeg) > 0.05) {
-        QPen fgPen(theme::kAccent, 3.0, Qt::SolidLine, Qt::FlatCap);
+        QPen fgPen(theme::kAccent, widget_metrics::knob::kArcThicknessPx, Qt::SolidLine, Qt::FlatCap);
         p.setPen(fgPen);
         p.drawArc(arcRect,
                   static_cast<int>(originAngle * 16.0),
@@ -179,17 +183,17 @@ void Knob::paintEvent(QPaintEvent *)
         const double rad = kArcMidDeg * M_PI / 180.0;
         const QPointF center = arcRect.center();
         const double r = arcRect.width() / 2.0;
-        const QPointF outer(center.x() + std::cos(rad) * (r + 1.5),
-                            center.y() - std::sin(rad) * (r + 1.5));
-        const QPointF inner(center.x() + std::cos(rad) * (r - 4.5),
-                            center.y() - std::sin(rad) * (r - 4.5));
-        p.setPen(QPen(theme::kTextDim, 1.4, Qt::SolidLine, Qt::FlatCap));
+        const QPointF outer(center.x() + std::cos(rad) * (r + widget_metrics::knob::kBipolarTickOuterOffsetPx),
+                            center.y() - std::sin(rad) * (r + widget_metrics::knob::kBipolarTickOuterOffsetPx));
+        const QPointF inner(center.x() + std::cos(rad) * (r - widget_metrics::knob::kBipolarTickInnerOffsetPx),
+                            center.y() - std::sin(rad) * (r - widget_metrics::knob::kBipolarTickInnerOffsetPx));
+        p.setPen(QPen(theme::kTextDim, widget_metrics::knob::kBipolarTickThicknessPx, Qt::SolidLine, Qt::FlatCap));
         p.drawLine(inner, outer);
     }
 
     // --- Inner dial + centre pointer ---
     const QPointF center = knobRect.center();
-    const double radius = knobRect.width() / 2.0 - 8.0;
+    const double radius = knobRect.width() / 2.0 - widget_metrics::knob::kDialInsetPx;
 
     QRadialGradient grad(center, radius);
     grad.setColorAt(0.0, QColor(0x2A, 0x2C, 0x33));
@@ -200,11 +204,11 @@ void Knob::paintEvent(QPaintEvent *)
 
     // Pointer
     const double rad = valueAngle * M_PI / 180.0;
-    const QPointF tip(center.x() + std::cos(rad) * (radius - 3.0),
-                      center.y() - std::sin(rad) * (radius - 3.0));
-    const QPointF inner(center.x() + std::cos(rad) * (radius * 0.45),
-                        center.y() - std::sin(rad) * (radius * 0.45));
-    QPen pointerPen(theme::kAccent, 2.5, Qt::SolidLine, Qt::RoundCap);
+    const QPointF tip(center.x() + std::cos(rad) * (radius - widget_metrics::knob::kPointerTipInsetPx),
+                      center.y() - std::sin(rad) * (radius - widget_metrics::knob::kPointerTipInsetPx));
+    const QPointF inner(center.x() + std::cos(rad) * (radius * widget_metrics::knob::kPointerInnerFrac),
+                        center.y() - std::sin(rad) * (radius * widget_metrics::knob::kPointerInnerFrac));
+    QPen pointerPen(theme::kAccent, widget_metrics::knob::kPointerThicknessPx, Qt::SolidLine, Qt::RoundCap);
     p.setPen(pointerPen);
     p.drawLine(inner, tip);
 
@@ -212,7 +216,7 @@ void Knob::paintEvent(QPaintEvent *)
     p.setPen(theme::kTextPrimary);
     QFont vf = p.font();
     vf.setCapitalization(QFont::MixedCase);
-    vf.setPointSizeF(8.5);
+    vf.setPointSizeF(widget_metrics::knob::kValueFontPt);
     vf.setLetterSpacing(QFont::PercentageSpacing, 100);
     p.setFont(vf);
     p.drawText(QRectF(0, h - valueH, w, valueH), Qt::AlignCenter, formatValue());

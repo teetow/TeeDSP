@@ -6,6 +6,7 @@
 #include "widgets/EqCurve.h"
 #include "widgets/Knob.h"
 #include "widgets/LevelMeter.h"
+#include "widgets/WidgetMetrics.h"
 
 #include "../dsp/DspController.h"
 #include "../dsp/ProcessorChain.h"
@@ -49,6 +50,31 @@ constexpr const char *kGeometryKey      = "ui/geometry";
 constexpr const char *kShowInputSpecKey  = "ui/showInputSpectrum";
 constexpr const char *kShowOutputSpecKey = "ui/showOutputSpectrum";
 constexpr const char *kShowHeatmapKey    = "ui/showHeatmap";
+
+namespace UiMetrics {
+constexpr int kRootMarginTop = 14;
+constexpr int kRootMarginSide = 14;
+constexpr int kRootMarginBottom = 4;
+constexpr int kRootSpacing = 10;
+constexpr int kPanelPadLr = 12;
+constexpr int kPanelPadTop = 18;
+constexpr int kPanelPadBottom = 12;
+constexpr int kPanePadLr = 10;
+constexpr int kPanePadTop = 18;
+constexpr int kPanePadBottom = 10;
+constexpr int kDeviceMinWidth = 220;
+constexpr int kMeterTallHeight = 260;
+constexpr int kMeterHeight = 220;
+constexpr int kCompactSpacing = 2;
+} // namespace UiMetrics
+
+void repolish(QWidget *w)
+{
+    if (!w) return;
+    w->style()->unpolish(w);
+    w->style()->polish(w);
+    w->update();
+}
 
 QGroupBox *createSection(const QString &title)
 {
@@ -212,21 +238,22 @@ void MainWindow::buildUi()
 {
     m_central = new QWidget(this);
     auto *root = new QVBoxLayout(m_central);
-    root->setContentsMargins(14, 14, 14, 4);
-    root->setSpacing(10);
+    root->setContentsMargins(UiMetrics::kRootMarginSide, UiMetrics::kRootMarginTop,
+                             UiMetrics::kRootMarginSide, UiMetrics::kRootMarginBottom);
+    root->setSpacing(UiMetrics::kRootSpacing);
 
     root->addWidget(buildIoSection());
 
     auto *mainRow = new QHBoxLayout();
-    mainRow->setSpacing(10);
+    mainRow->setSpacing(UiMetrics::kRootSpacing);
     mainRow->addWidget(buildInputPane(), 0);
 
     auto *centerRow = new QHBoxLayout();
-    centerRow->setSpacing(10);
+    centerRow->setSpacing(UiMetrics::kRootSpacing);
     centerRow->addWidget(buildEqSection(), 5);
 
     auto *fxCol = new QVBoxLayout();
-    fxCol->setSpacing(10);
+    fxCol->setSpacing(UiMetrics::kRootSpacing);
     fxCol->addWidget(buildExciterSection(), 1);
     fxCol->addWidget(buildCompSection(), 1);
     centerRow->addLayout(fxCol, 2);
@@ -242,18 +269,18 @@ QWidget *MainWindow::buildIoSection()
 {
     auto *section = new QWidget();
     auto *grid = new QGridLayout(section);
-    grid->setContentsMargins(0, 4, 0, 4);
+    grid->setContentsMargins(0, UiMetrics::kRootMarginBottom, 0, UiMetrics::kRootMarginBottom);
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(8);
 
     grid->addWidget(createCaption(QStringLiteral("Input")), 0, 0);
     m_captureDevice = new QComboBox();
-    m_captureDevice->setMinimumWidth(220);
+    m_captureDevice->setMinimumWidth(UiMetrics::kDeviceMinWidth);
     grid->addWidget(m_captureDevice, 0, 1);
 
     grid->addWidget(createCaption(QStringLiteral("Output")), 0, 2);
     m_renderDevice = new QComboBox();
-    m_renderDevice->setMinimumWidth(220);
+    m_renderDevice->setMinimumWidth(UiMetrics::kDeviceMinWidth);
     grid->addWidget(m_renderDevice, 0, 3);
 
     m_refreshDevicesButton = new QPushButton(QStringLiteral("Refresh"));
@@ -279,7 +306,8 @@ QWidget *MainWindow::buildEqSection()
 {
     auto *section = createSection(QStringLiteral("Dynamic EQ"));
     auto *col = new QVBoxLayout(section);
-    col->setContentsMargins(12, 18, 12, 12);
+    col->setContentsMargins(UiMetrics::kPanelPadLr, UiMetrics::kPanelPadTop,
+                            UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
     col->setSpacing(6);
 
     auto *headerRow = new QHBoxLayout();
@@ -289,14 +317,12 @@ QWidget *MainWindow::buildEqSection()
 
     m_showInputSpectrum = new QCheckBox(QStringLiteral("Input"));
     m_showInputSpectrum->setChecked(true);
-    m_showInputSpectrum->setStyleSheet(
-        QStringLiteral("QCheckBox::indicator:checked { background-color: #4FC1E9; border-color: #4FC1E9; }"));
+    m_showInputSpectrum->setProperty("spectrumRole", "input");
     headerRow->addWidget(m_showInputSpectrum);
 
     m_showOutputSpectrum = new QCheckBox(QStringLiteral("Output"));
     m_showOutputSpectrum->setChecked(true);
-    m_showOutputSpectrum->setStyleSheet(
-        QStringLiteral("QCheckBox::indicator:checked { background-color: #E67E22; border-color: #E67E22; }"));
+    m_showOutputSpectrum->setProperty("spectrumRole", "output");
     headerRow->addWidget(m_showOutputSpectrum);
 
     m_showHeatmap = new QCheckBox(QStringLiteral("Heatmap"));
@@ -306,11 +332,11 @@ QWidget *MainWindow::buildEqSection()
 
     m_eqCurve = new ui::EqCurve();
     m_eqCurve->setSampleRate(48000.0);
-    m_eqCurve->setMinimumHeight(220);
+    m_eqCurve->setMinimumHeight(UiMetrics::kMeterHeight);
     col->addWidget(m_eqCurve, 1);
 
     auto *tabBar = new QHBoxLayout();
-    tabBar->setSpacing(2);
+    tabBar->setSpacing(UiMetrics::kCompactSpacing);
 
     m_eqBands.reserve(5);
     m_eqBandTabs.reserve(5);
@@ -342,7 +368,7 @@ QWidget *MainWindow::buildEqSection()
     dynCol->addLayout(metaRow);
 
     auto *dynRow = new QHBoxLayout();
-    dynRow->setSpacing(2);
+    dynRow->setSpacing(UiMetrics::kCompactSpacing);
     m_eqDynThreshold = makeKnob(QStringLiteral("Thresh"), -60.0, 0.0, -18.0, 1, QStringLiteral("dB"));
     m_eqDynRatio = makeKnob(QStringLiteral("Ratio"), 1.0, 20.0, 2.0, 2);
     m_eqDynAttack = makeKnob(QStringLiteral("Attack"), 0.1, 200.0, 10.0, 1, QStringLiteral("ms"), ui::Knob::Scale::Log);
@@ -392,7 +418,8 @@ QWidget *MainWindow::buildCompSection()
 {
     auto *section = createSection(QStringLiteral("Compressor"));
     auto *col = new QVBoxLayout(section);
-    col->setContentsMargins(12, 18, 12, 12);
+    col->setContentsMargins(UiMetrics::kPanelPadLr, UiMetrics::kPanelPadTop,
+                            UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
     col->setSpacing(8);
 
     m_compEnabled = new QCheckBox(QStringLiteral("Enable"));
@@ -433,7 +460,8 @@ QWidget *MainWindow::buildCompSection()
     col->addLayout(meterRow);
 
     m_outputHotIndicator = new QLabel(QStringLiteral("Output headroom: OK"));
-    m_outputHotIndicator->setProperty("role", "status");
+    m_outputHotIndicator->setProperty("role", "hotIndicator");
+    m_outputHotIndicator->setProperty("hotState", "ok");
     col->addWidget(m_outputHotIndicator);
 
     col->addStretch();
@@ -444,14 +472,15 @@ QWidget *MainWindow::buildExciterSection()
 {
     auto *section = createSection(QStringLiteral("Exciter"));
     auto *col = new QVBoxLayout(section);
-    col->setContentsMargins(12, 18, 12, 12);
+    col->setContentsMargins(UiMetrics::kPanelPadLr, UiMetrics::kPanelPadTop,
+                            UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
     col->setSpacing(8);
 
     m_exciterEnabled = new QCheckBox(QStringLiteral("Enable"));
     col->addWidget(m_exciterEnabled);
 
     auto *row = new QHBoxLayout();
-    row->setSpacing(2);
+    row->setSpacing(UiMetrics::kCompactSpacing);
 
     m_exciterDrive = makeKnob(QStringLiteral("Drive"),    0.0,    20.0,    2.0, 1);
     m_exciterMix   = makeKnob(QStringLiteral("Mix"),      0.0,     1.0,    0.25, 2);
@@ -474,27 +503,27 @@ QWidget *MainWindow::buildInputPane()
     section->setMinimumWidth(96);
 
     auto *col = new QVBoxLayout(section);
-    col->setContentsMargins(10, 18, 10, 10);
+    col->setContentsMargins(UiMetrics::kPanePadLr, UiMetrics::kPanePadTop,
+                            UiMetrics::kPanePadLr, UiMetrics::kPanePadBottom);
     col->setSpacing(8);
 
-    const auto makeVBar = [](const QString &chunkColor, bool narrow = false) {
+    const auto makeVBar = [](const char *kind, const char *widthRole) {
         auto *b = new QProgressBar();
         b->setOrientation(Qt::Vertical);
         b->setRange(0, 100);
         b->setValue(0);
         b->setTextVisible(false);
-        b->setMinimumHeight(200);
-        const int w = narrow ? 7 : 14;
-        b->setStyleSheet(QStringLiteral(
-            "QProgressBar { border: 1px solid #2A2C33; background: #121418; width: %1px; }"
-            "QProgressBar::chunk { background: %2; }").arg(w).arg(chunkColor));
+        b->setProperty("role", "vMeter");
+        b->setProperty("meterKind", kind);
+        b->setProperty("meterWidthRole", widthRole);
+        b->setProperty("meterFramed", true);
         return b;
     };
 
-    m_inputMeterBarL = makeVBar(QStringLiteral("#4FC1E9"));
-    m_inputMeterBarR = makeVBar(QStringLiteral("#4FC1E9"));
-    m_inputMeterBarL->setMinimumHeight(260);
-    m_inputMeterBarR->setMinimumHeight(260);
+    m_inputMeterBarL = makeVBar("input", "inputWide");
+    m_inputMeterBarR = makeVBar("input", "inputWide");
+    m_inputMeterBarL->setMinimumHeight(UiMetrics::kMeterTallHeight);
+    m_inputMeterBarR->setMinimumHeight(UiMetrics::kMeterTallHeight);
 
     auto *meterWrap = new QHBoxLayout();
     meterWrap->setSpacing(3);
@@ -519,46 +548,42 @@ QWidget *MainWindow::buildOutputPane()
     section->setMinimumWidth(120);
 
     auto *col = new QVBoxLayout(section);
-    col->setContentsMargins(10, 18, 10, 10);
+    col->setContentsMargins(UiMetrics::kPanePadLr, UiMetrics::kPanePadTop,
+                            UiMetrics::kPanePadLr, UiMetrics::kPanePadBottom);
     col->setSpacing(8);
 
-    const auto makeVBarOut = [](const QString &chunkColor, bool narrow, bool framed = true) {
+    const auto makeVBarOut = [](const char *kind, const char *widthRole, bool framed = true) {
         auto *b = new QProgressBar();
         b->setOrientation(Qt::Vertical);
         b->setRange(0, 100);
         b->setValue(0);
         b->setTextVisible(false);
-        b->setMinimumHeight(200);
-        const int w = narrow ? 4 : 11;
-        const QString border = framed
-            ? QStringLiteral("border: 1px solid #2A2C33;")
-            : QStringLiteral("border: none;");
-        b->setStyleSheet(QStringLiteral(
-            "QProgressBar { %1 background: #121418; width: %2px; }"
-            "QProgressBar::chunk { background: %3; }").arg(border).arg(w).arg(chunkColor));
+        b->setProperty("role", "vMeter");
+        b->setProperty("meterKind", kind);
+        b->setProperty("meterWidthRole", widthRole);
+        b->setProperty("meterFramed", framed);
         return b;
     };
 
-    m_outputLufsBarL  = makeVBarOut(QStringLiteral("#F1C40F"), true);   // LUFS-L (thin)
-    m_outputMeterBarL = makeVBarOut(QStringLiteral("#2ECC71"), false, false); // VU-L (center frame)
-    m_outputMeterBarR = makeVBarOut(QStringLiteral("#2ECC71"), false, false); // VU-R (center frame)
-    m_outputLufsBarR  = makeVBarOut(QStringLiteral("#F1C40F"), true);   // LUFS-R (thin)
-    m_outputLufsBarL->setMinimumHeight(220);
-    m_outputMeterBarL->setMinimumHeight(220);
-    m_outputMeterBarR->setMinimumHeight(220);
-    m_outputLufsBarR->setMinimumHeight(220);
+    m_outputLufsBarL  = makeVBarOut("lufs", "thin");         // LUFS-L (thin)
+    m_outputMeterBarL = makeVBarOut("output", "outputWide", false); // VU-L (center frame)
+    m_outputMeterBarR = makeVBarOut("output", "outputWide", false); // VU-R (center frame)
+    m_outputLufsBarR  = makeVBarOut("lufs", "thin");         // LUFS-R (thin)
+    m_outputLufsBarL->setMinimumHeight(UiMetrics::kMeterHeight);
+    m_outputMeterBarL->setMinimumHeight(UiMetrics::kMeterHeight);
+    m_outputMeterBarR->setMinimumHeight(UiMetrics::kMeterHeight);
+    m_outputLufsBarR->setMinimumHeight(UiMetrics::kMeterHeight);
 
     auto *stereoFrame = new QFrame();
-    stereoFrame->setStyleSheet(QStringLiteral(
-        "QFrame { border: 1px solid #2A2C33; border-radius: 3px; background: #121418; }"));
+    stereoFrame->setProperty("role", "stereoMeterFrame");
     auto *stereoRow = new QHBoxLayout(stereoFrame);
     stereoRow->setContentsMargins(3, 3, 3, 3);
-    stereoRow->setSpacing(2);
+    stereoRow->setSpacing(UiMetrics::kCompactSpacing);
     stereoRow->addWidget(m_outputMeterBarL);
     stereoRow->addWidget(m_outputMeterBarR);
 
     auto *meterWrap = new QHBoxLayout();
-    meterWrap->setSpacing(2);
+    meterWrap->setSpacing(UiMetrics::kCompactSpacing);
     meterWrap->addStretch();
     meterWrap->addWidget(m_outputLufsBarL);
     meterWrap->addSpacing(3);
@@ -582,15 +607,6 @@ QWidget *MainWindow::buildOutputPane()
     col->addWidget(m_outputTrim, 0, Qt::AlignHCenter);
 
     return section;
-}
-
-QWidget *MainWindow::buildFooter()
-{
-    auto *footer = new QFrame();
-    auto *row = new QHBoxLayout(footer);
-    row->setContentsMargins(0, 0, 0, 0);
-    row->addStretch();
-    return footer;
 }
 
 void MainWindow::connectSignals()
@@ -746,24 +762,26 @@ void MainWindow::connectSignals()
         m_compMeterValue->setText(QString::number(db, 'f', 1) + QStringLiteral(" dB"));
 
         const auto dbToMeterPct = [](float dbfs) {
-            if (dbfs <= -60.0f) return 0;
-            if (dbfs >= 0.0f) return 100;
-            return static_cast<int>((dbfs + 60.0f) * (100.0f / 60.0f));
+            using namespace ui::widget_metrics::meter_runtime;
+            if (dbfs <= kDbMeterMin) return 0;
+            if (dbfs >= kDbMeterMax) return 100;
+            return static_cast<int>((dbfs - kDbMeterMin) * (100.0f / (kDbMeterMax - kDbMeterMin)));
         };
         const auto lufsToMeterPct = [](float lufs) {
-            if (lufs <= -70.0f) return 0;
-            if (lufs >= 0.0f) return 100;
-            return static_cast<int>((lufs + 70.0f) * (100.0f / 70.0f));
+            using namespace ui::widget_metrics::meter_runtime;
+            if (lufs <= kLufsMeterMin) return 0;
+            if (lufs >= kLufsMeterMax) return 100;
+            return static_cast<int>((lufs - kLufsMeterMin) * (100.0f / (kLufsMeterMax - kLufsMeterMin)));
         };
 
         // Tick delta drives the smoothing alpha. Skew a missing first sample
         // toward the nominal 8 ms timer interval so initial transitions don't
         // snap.
-        constexpr float kMeterReleaseTauMs = 60.0f;
+        constexpr float kMeterReleaseTauMs = ui::widget_metrics::meter_runtime::kReleaseTauMs;
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         float dtMs = (m_lastMeterTickMs > 0)
             ? static_cast<float>(nowMs - m_lastMeterTickMs)
-            : 8.0f;
+            : ui::widget_metrics::meter_runtime::kInitialDtMs;
         if (dtMs <= 0.0f) dtMs = 1.0f;
         m_lastMeterTickMs = nowMs;
         const float alpha = 1.0f - std::exp(-dtMs / kMeterReleaseTauMs);
@@ -806,14 +824,14 @@ void MainWindow::connectSignals()
 
         // Treat anything below -100 dBFS as silence — exponential decay would
         // otherwise asymptote toward -120 forever and never display "-inf".
-        if (m_dispOutRmsDbfs > -100.0f) {
+        if (m_dispOutRmsDbfs > ui::widget_metrics::meter_runtime::kSilenceDisplayDbfs) {
             const float vu = m_dispOutRmsDbfs + 18.0f;       // 0 VU ~= -18 dBFS reference
             m_outputVuLabel->setText(QStringLiteral("VU: %1").arg(vu, 0, 'f', 1));
         } else {
             m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
         }
         const float lufsM = m_engine ? m_engine->currentOutputLufsM() : -70.0f;
-        if (lufsM > -69.0f)
+        if (lufsM > ui::widget_metrics::meter_runtime::kLufsDisplayFloor)
             m_outputLufsLabel->setText(QStringLiteral("LUFS-M: %1").arg(lufsM, 0, 'f', 1));
         else
             m_outputLufsLabel->setText(QStringLiteral("LUFS-M: -inf"));
@@ -821,14 +839,15 @@ void MainWindow::connectSignals()
         const float hotDbfs = m_dispOutHotDbfs;
         if (hotDbfs > -0.2f) {
             m_outputHotIndicator->setText(QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
-            m_outputHotIndicator->setStyleSheet(QStringLiteral("color:#ff6b6b;"));
+            m_outputHotIndicator->setProperty("hotState", "hot");
         } else if (hotDbfs > -1.0f) {
             m_outputHotIndicator->setText(QStringLiteral("Output near limit: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
-            m_outputHotIndicator->setStyleSheet(QStringLiteral("color:#f7c948;"));
+            m_outputHotIndicator->setProperty("hotState", "warn");
         } else {
             m_outputHotIndicator->setText(QStringLiteral("Output headroom: OK"));
-            m_outputHotIndicator->setStyleSheet(QString());
+            m_outputHotIndicator->setProperty("hotState", "ok");
         }
+        repolish(m_outputHotIndicator);
 
         if (m_selectedEqBand >= 0 && m_selectedEqBand < dsp::kEqBandCount) {
             const dsp::EqBandView v = m_dspController->eqBandView(m_selectedEqBand);
@@ -1063,10 +1082,8 @@ void MainWindow::onStartStopClicked()
 void MainWindow::onEngineError(const QString &message)
 {
     m_statusLabel->setProperty("role", "statusError");
-    m_statusLabel->setStyleSheet(QString());  // re-evaluate role property
     m_statusLabel->setText(message);
-    m_statusLabel->style()->unpolish(m_statusLabel);
-    m_statusLabel->style()->polish(m_statusLabel);
+    repolish(m_statusLabel);
 }
 
 void MainWindow::refreshEngineStatus()

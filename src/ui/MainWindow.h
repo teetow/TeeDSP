@@ -48,7 +48,6 @@ private:
     QWidget *buildExciterSection();
     QWidget *buildInputPane();
     QWidget *buildOutputPane();
-    QWidget *buildFooter();
 
     void connectSignals();
     void pullStateFromController();

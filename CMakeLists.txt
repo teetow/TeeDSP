@@ -78,3 +78,8 @@ target_link_libraries(TeeDsp PRIVATE
 install(TARGETS TeeDsp
 	RUNTIME DESTINATION .
 )
+
+install(FILES
+	src/ui/theme.qss
+	DESTINATION .
+)

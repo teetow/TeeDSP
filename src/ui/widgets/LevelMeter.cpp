@@ -1,4 +1,5 @@
 #include "LevelMeter.h"
+#include "WidgetMetrics.h"
 
 #include "../Theme.h"
 
@@ -40,14 +41,13 @@ void LevelMeter::setReductionDb(double db)
     const double prevValue = m_valueDb;
     const double prevPeak = m_peakDb;
 
-    // Global meter feel: instant attack, ~60 ms exponential release.
-    constexpr double kReleaseTauMs = 60.0;
+    // Global meter feel: instant attack, exponential release.
     double dtMs = (m_lastUpdateMs > 0)
         ? static_cast<double>(now - m_lastUpdateMs)
         : 8.0;
     if (dtMs <= 0.0) dtMs = 1.0;
     m_lastUpdateMs = now;
-    const double alpha = 1.0 - std::exp(-dtMs / kReleaseTauMs);
+    const double alpha = 1.0 - std::exp(-dtMs / widget_metrics::level_meter::kReleaseTauMs);
     if (db > m_valueDb) m_valueDb = db;
     else                m_valueDb += alpha * (db - m_valueDb);
 
@@ -77,12 +77,15 @@ void LevelMeter::paintEvent(QPaintEvent *)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, false);
 
-    const QRectF full(0.5, 0.5, width() - 1.0, height() - 1.0);
+    const double stroke = widget_metrics::level_meter::kOuterStrokePx;
+    const QRectF full(stroke * 0.5, stroke * 0.5, width() - stroke, height() - stroke);
 
     // Sunken well
-    p.setPen(QPen(theme::kBorderSoft, 1.0));
+    p.setPen(QPen(theme::kBorderSoft, stroke));
     p.setBrush(theme::kBgSunken);
-    p.drawRoundedRect(full, 3, 3);
+    p.drawRoundedRect(full,
+                      widget_metrics::level_meter::kCornerRadiusPx,
+                      widget_metrics::level_meter::kCornerRadiusPx);
 
     if (m_valueDb <= 0.0 && m_peakDb <= 0.0) return;
 
@@ -100,23 +103,30 @@ void LevelMeter::paintEvent(QPaintEvent *)
         fillBrush = QColor(0xF1, 0xC4, 0x0F);
     }
 
-    QRectF fillRect = full.adjusted(1.5, 1.5, 0, -1.5);
+    QRectF fillRect = full.adjusted(widget_metrics::level_meter::kFillInsetLeftPx,
+                                    widget_metrics::level_meter::kFillInsetTopPx,
+                                    0,
+                                    -widget_metrics::level_meter::kFillInsetBottomPx);
     fillRect.setWidth((full.width() - 2.0) * frac);
     p.setPen(Qt::NoPen);
     p.setBrush(fillBrush);
-    p.drawRoundedRect(fillRect, 2, 2);
+    p.drawRoundedRect(fillRect,
+                      widget_metrics::level_meter::kFillRadiusPx,
+                      widget_metrics::level_meter::kFillRadiusPx);
 
     // Peak tick
     if (peakFrac > 0.0 && m_barColor != BarColor::GainReduction) {
-        const double xRaw = full.left() + 1.5 + (full.width() - 2.0) * peakFrac;
+        const double xRaw = full.left()
+            + widget_metrics::level_meter::kPeakTickInsetPx
+            + (full.width() - 2.0) * peakFrac;
         // Snap to pixel center with a cosmetic 1px pen to keep visual width
         // consistent as the peak moves.
         const double x = std::floor(xRaw) + 0.5;
-        QPen tickPen(theme::kTextPrimary, 1.0);
+        QPen tickPen(theme::kTextPrimary, widget_metrics::level_meter::kPeakTickThicknessPx);
         tickPen.setCosmetic(true);
         p.setPen(tickPen);
-        p.drawLine(QPointF(x, full.top() + 1.5),
-                   QPointF(x, full.bottom() - 1.5));
+        p.drawLine(QPointF(x, full.top() + widget_metrics::level_meter::kPeakTickInsetPx),
+                   QPointF(x, full.bottom() - widget_metrics::level_meter::kPeakTickInsetPx));
     }
 }
 
