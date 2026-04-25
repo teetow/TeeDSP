@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QProgressBar>
 #include <QSettings>
 #include <QSizePolicy>
 #include <QSpacerItem>
@@ -200,9 +201,20 @@ void MainWindow::buildUi()
 
     auto *mainRow = new QHBoxLayout();
     mainRow->setSpacing(10);
-    mainRow->addWidget(buildEqSection(), 5);
-    mainRow->addWidget(buildCompSection(), 2);
-    mainRow->addWidget(buildExciterSection(), 2);
+    mainRow->addWidget(buildInputPane(), 0);
+
+    auto *centerRow = new QHBoxLayout();
+    centerRow->setSpacing(10);
+    centerRow->addWidget(buildEqSection(), 5);
+
+    auto *fxCol = new QVBoxLayout();
+    fxCol->setSpacing(10);
+    fxCol->addWidget(buildExciterSection(), 1);
+    fxCol->addWidget(buildCompSection(), 1);
+    centerRow->addLayout(fxCol, 2);
+
+    mainRow->addLayout(centerRow, 1);
+    mainRow->addWidget(buildOutputPane(), 0);
     root->addLayout(mainRow);
 
     root->addWidget(buildFooter());
@@ -425,6 +437,82 @@ QWidget *MainWindow::buildExciterSection()
     return section;
 }
 
+QWidget *MainWindow::buildInputPane()
+{
+    auto *section = createSection(QStringLiteral("Input"));
+    section->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    section->setMinimumWidth(96);
+
+    auto *col = new QVBoxLayout(section);
+    col->setContentsMargins(10, 18, 10, 10);
+    col->setSpacing(8);
+
+    m_inputMeterBar = new QProgressBar();
+    m_inputMeterBar->setOrientation(Qt::Vertical);
+    m_inputMeterBar->setRange(0, 100);
+    m_inputMeterBar->setValue(0);
+    m_inputMeterBar->setTextVisible(false);
+    m_inputMeterBar->setMinimumHeight(260);
+    m_inputMeterBar->setStyleSheet(QStringLiteral(
+        "QProgressBar { border: 1px solid #2A2C33; background: #121418; width: 18px; }"
+        "QProgressBar::chunk { background: #4FC1E9; }"));
+
+    auto *meterWrap = new QHBoxLayout();
+    meterWrap->addStretch();
+    meterWrap->addWidget(m_inputMeterBar);
+    meterWrap->addStretch();
+    col->addLayout(meterWrap, 1);
+
+    m_inputTrim = makeKnob(QStringLiteral("In Trim"), -18.0, 18.0, 0.0, 1, QStringLiteral("dB"));
+    m_inputTrim->setPolarity(ui::Knob::Polarity::Bipolar);
+    m_inputTrim->setBipolarOrigin(0.0);
+    col->addWidget(m_inputTrim, 0, Qt::AlignHCenter);
+
+    return section;
+}
+
+QWidget *MainWindow::buildOutputPane()
+{
+    auto *section = createSection(QStringLiteral("Output"));
+    section->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    section->setMinimumWidth(120);
+
+    auto *col = new QVBoxLayout(section);
+    col->setContentsMargins(10, 18, 10, 10);
+    col->setSpacing(8);
+
+    m_outputMeterBar = new QProgressBar();
+    m_outputMeterBar->setOrientation(Qt::Vertical);
+    m_outputMeterBar->setRange(0, 100);
+    m_outputMeterBar->setValue(0);
+    m_outputMeterBar->setTextVisible(false);
+    m_outputMeterBar->setMinimumHeight(220);
+    m_outputMeterBar->setStyleSheet(QStringLiteral(
+        "QProgressBar { border: 1px solid #2A2C33; background: #121418; width: 18px; }"
+        "QProgressBar::chunk { background: #2ECC71; }"));
+
+    auto *meterWrap = new QHBoxLayout();
+    meterWrap->addStretch();
+    meterWrap->addWidget(m_outputMeterBar);
+    meterWrap->addStretch();
+    col->addLayout(meterWrap, 1);
+
+    m_outputVuLabel = new QLabel(QStringLiteral("VU: -inf"));
+    m_outputVuLabel->setProperty("role", "status");
+    col->addWidget(m_outputVuLabel, 0, Qt::AlignHCenter);
+
+    m_outputLufsLabel = new QLabel(QStringLiteral("LUFS: -inf"));
+    m_outputLufsLabel->setProperty("role", "status");
+    col->addWidget(m_outputLufsLabel, 0, Qt::AlignHCenter);
+
+    m_outputTrim = makeKnob(QStringLiteral("Out Trim"), -18.0, 18.0, 0.0, 1, QStringLiteral("dB"));
+    m_outputTrim->setPolarity(ui::Knob::Polarity::Bipolar);
+    m_outputTrim->setBipolarOrigin(0.0);
+    col->addWidget(m_outputTrim, 0, Qt::AlignHCenter);
+
+    return section;
+}
+
 QWidget *MainWindow::buildFooter()
 {
     auto *footer = new QFrame();
@@ -452,6 +540,13 @@ void MainWindow::connectSignals()
 
     connect(m_globalBypass, &QCheckBox::toggled, this, [this](bool c) {
         if (!m_syncingUi) m_dspController->setBypass(c);
+    });
+
+    connect(m_inputTrim, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setInputTrimDb(static_cast<float>(v));
+    });
+    connect(m_outputTrim, &ui::Knob::valueChanged, this, [this](double v) {
+        if (!m_syncingUi) m_dspController->setOutputTrimDb(static_cast<float>(v));
     });
 
     connect(m_compEnabled, &QCheckBox::toggled, this, [this](bool c) {
@@ -576,6 +671,29 @@ void MainWindow::connectSignals()
         m_compMeter->setReductionDb(std::abs(db));
         m_compMeterValue->setText(QString::number(db, 'f', 1) + QStringLiteral(" dB"));
 
+        const auto dbToMeterPct = [](float dbfs) {
+            if (dbfs <= -60.0f) return 0;
+            if (dbfs >= 0.0f) return 100;
+            return static_cast<int>((dbfs + 60.0f) * (100.0f / 60.0f));
+        };
+
+        const float inPeakDbfs = m_engine ? m_engine->consumeInputPeakDbfs() : -120.0f;
+        const float outPeakDbfs = m_engine ? m_engine->consumeOutputPeakDbfs() : -120.0f;
+        const float outRmsDbfs = m_engine ? m_engine->consumeOutputRmsDbfs() : -120.0f;
+
+        m_inputMeterBar->setValue(dbToMeterPct(inPeakDbfs));
+        m_outputMeterBar->setValue(dbToMeterPct(outPeakDbfs));
+
+        if (outRmsDbfs > -120.0f) {
+            const float vu = outRmsDbfs + 18.0f;      // 0 VU ~= -18 dBFS reference
+            const float lufsApprox = outRmsDbfs - 0.7f; // rough unweighted estimate
+            m_outputVuLabel->setText(QStringLiteral("VU: %1").arg(vu, 0, 'f', 1));
+            m_outputLufsLabel->setText(QStringLiteral("LUFS: %1").arg(lufsApprox, 0, 'f', 1));
+        } else {
+            m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
+            m_outputLufsLabel->setText(QStringLiteral("LUFS: -inf"));
+        }
+
         const float hotDbfs = m_engine ? m_engine->consumeOutputHotDbfs() : -120.0f;
         if (hotDbfs > -0.2f) {
             m_outputHotIndicator->setText(QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
@@ -654,6 +772,8 @@ void MainWindow::pullStateFromController()
     m_syncingUi = true;
 
     m_globalBypass->setChecked(m_dspController->bypass());
+    m_inputTrim->setValue(m_dspController->inputTrimDb());
+    m_outputTrim->setValue(m_dspController->outputTrimDb());
 
     m_compEnabled->setChecked(m_dspController->compressorEnabled());
     m_compThreshold->setValue(m_dspController->compThresholdDb());
@@ -861,6 +981,10 @@ void MainWindow::refreshEngineStatus()
         m_statusLabel->setText(QStringLiteral("Idle."));
         m_statusLabel->setProperty("role", "status");
         m_eqCurve->clearSpectra();
+        m_inputMeterBar->setValue(0);
+        m_outputMeterBar->setValue(0);
+        m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
+        m_outputLufsLabel->setText(QStringLiteral("LUFS: -inf"));
     }
     m_statusLabel->style()->unpolish(m_statusLabel);
     m_statusLabel->style()->polish(m_statusLabel);

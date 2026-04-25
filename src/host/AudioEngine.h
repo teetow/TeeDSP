@@ -59,6 +59,9 @@ public:
     // then resets the accumulator. Values near 0 dBFS indicate likely
     // hard limiting or imminent clipping in downstream paths.
     float consumeOutputHotDbfs() { return m_recentHotDbfs.exchange(-120.0f, std::memory_order_relaxed); }
+    float consumeInputPeakDbfs() { return m_recentInputPeakDbfs.exchange(-120.0f, std::memory_order_relaxed); }
+    float consumeOutputPeakDbfs() { return m_recentOutputPeakDbfs.exchange(-120.0f, std::memory_order_relaxed); }
+    float consumeOutputRmsDbfs() { return m_recentOutputRmsDbfs.exchange(-120.0f, std::memory_order_relaxed); }
 
 signals:
     void runningChanged();
@@ -99,6 +102,9 @@ private:
     std::vector<float> m_resampleScratch;
 
     std::atomic<float> m_recentHotDbfs{-120.0f};
+    std::atomic<float> m_recentInputPeakDbfs{-120.0f};
+    std::atomic<float> m_recentOutputPeakDbfs{-120.0f};
+    std::atomic<float> m_recentOutputRmsDbfs{-120.0f};
 };
 
 } // namespace host

@@ -25,6 +25,9 @@ struct ChainParams {
     uint32_t    version = 1;
     bool        bypassed = false;
 
+    float       inputTrimDb = 0.0f;
+    float       outputTrimDb = 0.0f;
+
     bool        eqEnabled = true;
     EqBandParams eqBands[5] = {
         { true, 1, 80.0f,   0.7f, 0.0f, 0.0f, 2.0f, 10.0f, 120.0f, 12.0f },

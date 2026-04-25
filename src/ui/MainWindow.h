@@ -9,6 +9,7 @@ class QLabel;
 class QPushButton;
 class QCheckBox;
 class QComboBox;
+class QProgressBar;
 
 namespace dsp {
 class DspController;
@@ -47,6 +48,8 @@ private:
     QWidget *buildEqSection();
     QWidget *buildCompSection();
     QWidget *buildExciterSection();
+    QWidget *buildInputPane();
+    QWidget *buildOutputPane();
     QWidget *buildFooter();
 
     void connectSignals();
@@ -72,6 +75,14 @@ private:
     QPushButton *m_refreshDevicesButton = nullptr;
     QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
+
+    QProgressBar *m_inputMeterBar = nullptr;
+    ui::Knob *m_inputTrim = nullptr;
+
+    QProgressBar *m_outputMeterBar = nullptr;
+    QLabel *m_outputVuLabel = nullptr;
+    QLabel *m_outputLufsLabel = nullptr;
+    ui::Knob *m_outputTrim = nullptr;
 
     QCheckBox *m_globalBypass = nullptr;
 

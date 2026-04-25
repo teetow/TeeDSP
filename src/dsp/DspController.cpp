@@ -26,6 +26,8 @@ DspController::DspController(ProcessorChain *chain, QObject *parent)
     m_chain->compressor().setBypass(!m_compressorEnabled);
     m_chain->exciter().setBypass(!m_exciterEnabled);
     m_chain->eq().setBypass(!m_eqEnabled);
+    m_chain->setInputTrimDb(m_inputTrimDb);
+    m_chain->setOutputTrimDb(m_outputTrimDb);
     m_chain->setBypass(m_bypass);
 
     m_meterTimer.setInterval(kMeterIntervalMs);
@@ -41,6 +43,22 @@ void DspController::setBypass(bool b)
     if (m_bypass == b) return;
     m_bypass = b;
     m_chain->setBypass(b);
+    emit bypassChanged();
+}
+
+void DspController::setInputTrimDb(float v)
+{
+    if (m_inputTrimDb == v) return;
+    m_inputTrimDb = v;
+    m_chain->setInputTrimDb(v);
+    emit bypassChanged();
+}
+
+void DspController::setOutputTrimDb(float v)
+{
+    if (m_outputTrimDb == v) return;
+    m_outputTrimDb = v;
+    m_chain->setOutputTrimDb(v);
     emit bypassChanged();
 }
 
@@ -274,6 +292,8 @@ ChainParams DspController::buildSnapshot() const
 {
     ChainParams p;
     p.bypassed        = m_bypass;
+    p.inputTrimDb     = m_inputTrimDb;
+    p.outputTrimDb    = m_outputTrimDb;
     p.eqEnabled       = m_eqEnabled;
     p.compEnabled     = m_compressorEnabled;
     p.compThreshDb    = m_compThresholdDb;
@@ -307,6 +327,8 @@ ChainParams DspController::buildSnapshot() const
 void DspController::applySnapshot(const ChainParams &params)
 {
     m_bypass = params.bypassed;
+    m_inputTrimDb = params.inputTrimDb;
+    m_outputTrimDb = params.outputTrimDb;
     m_compressorEnabled = params.compEnabled;
     m_compThresholdDb = params.compThreshDb;
     m_compRatio = params.compRatio;
@@ -342,6 +364,8 @@ void DspController::applySnapshot(const ChainParams &params)
     m_chain->compressor().setBypass(!m_compressorEnabled);
     m_chain->exciter().setBypass(!m_exciterEnabled);
     m_chain->eq().setBypass(!m_eqEnabled);
+    m_chain->setInputTrimDb(m_inputTrimDb);
+    m_chain->setOutputTrimDb(m_outputTrimDb);
     m_chain->setBypass(m_bypass);
 
     emit bypassChanged();
@@ -358,6 +382,8 @@ void DspController::loadFromSettings()
     settings.beginGroup(kSettingsGroup);
 
     params.bypassed = settings.value(QStringLiteral("bypass"), params.bypassed).toBool();
+    params.inputTrimDb = settings.value(QStringLiteral("inputTrimDb"), params.inputTrimDb).toFloat();
+    params.outputTrimDb = settings.value(QStringLiteral("outputTrimDb"), params.outputTrimDb).toFloat();
     params.compEnabled = settings.value(QStringLiteral("comp/enabled"), params.compEnabled).toBool();
     params.compThreshDb = settings.value(QStringLiteral("comp/threshold"), params.compThreshDb).toFloat();
     params.compRatio = settings.value(QStringLiteral("comp/ratio"), params.compRatio).toFloat();
@@ -426,6 +452,8 @@ void DspController::saveToSettings() const
     settings.beginGroup(kSettingsGroup);
 
     settings.setValue(QStringLiteral("bypass"), m_bypass);
+    settings.setValue(QStringLiteral("inputTrimDb"), m_inputTrimDb);
+    settings.setValue(QStringLiteral("outputTrimDb"), m_outputTrimDb);
     settings.setValue(QStringLiteral("comp/enabled"), m_compressorEnabled);
     settings.setValue(QStringLiteral("comp/threshold"), m_compThresholdDb);
     settings.setValue(QStringLiteral("comp/ratio"), m_compRatio);

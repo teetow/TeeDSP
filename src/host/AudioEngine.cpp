@@ -196,6 +196,23 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 {
     if (!m_chain || numFrames <= 0 || numChannels <= 0) return;
 
+    // Pre-DSP peak telemetry for input edge meter.
+    float prePeak = 0.0f;
+    {
+        const int sampleCount = numFrames * numChannels;
+        for (int i = 0; i < sampleCount; ++i) {
+            const float a = std::fabs(interleaved[i]);
+            if (a > prePeak)
+                prePeak = a;
+        }
+        if (prePeak > 0.0f) {
+            const float dbfs = 20.0f * std::log10(prePeak);
+            float cur = m_recentInputPeakDbfs.load(std::memory_order_relaxed);
+            while (dbfs > cur
+                   && !m_recentInputPeakDbfs.compare_exchange_weak(cur, dbfs, std::memory_order_relaxed)) {}
+        }
+    }
+
     if (!m_chainPrepared
         || sampleRate != m_captureSampleRate
         || numChannels != m_captureChannels) {
@@ -219,17 +236,31 @@ void AudioEngine::onCapturePacket(const float *interleaved,
     // Track near-full-scale output as a practical indicator that a hidden
     // limiter/safety clamp may be pumping somewhere downstream.
     float peak = 0.0f;
+    double sumSq = 0.0;
     const int sampleCount = numFrames * numChannels;
     for (int i = 0; i < sampleCount; ++i) {
-        const float a = std::fabs(interleaved[i]);
+        const float s = interleaved[i];
+        const float a = std::fabs(s);
         if (a > peak)
             peak = a;
+        sumSq += static_cast<double>(s) * static_cast<double>(s);
     }
     if (peak > 0.0f) {
         const float dbfs = 20.0f * std::log10(peak);
         float cur = m_recentHotDbfs.load(std::memory_order_relaxed);
         while (dbfs > cur
                && !m_recentHotDbfs.compare_exchange_weak(cur, dbfs, std::memory_order_relaxed)) {}
+
+        cur = m_recentOutputPeakDbfs.load(std::memory_order_relaxed);
+        while (dbfs > cur
+               && !m_recentOutputPeakDbfs.compare_exchange_weak(cur, dbfs, std::memory_order_relaxed)) {}
+    }
+    if (sampleCount > 0 && sumSq > 0.0) {
+        const double rms = std::sqrt(sumSq / static_cast<double>(sampleCount));
+        const float rmsDbfs = static_cast<float>(20.0 * std::log10(rms));
+        float cur = m_recentOutputRmsDbfs.load(std::memory_order_relaxed);
+        while (rmsDbfs > cur
+               && !m_recentOutputRmsDbfs.compare_exchange_weak(cur, rmsDbfs, std::memory_order_relaxed)) {}
     }
 
     if (m_analyzer) m_analyzer->pushPost(interleaved, numFrames, numChannels);

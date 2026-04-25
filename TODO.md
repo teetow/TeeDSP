@@ -4,6 +4,7 @@
 - [ ] Missing an app icon.
 - [ ] Double check the fills on ALL EQ curves, still seeing some strange black fill
 - [ ] Add build timestamp to the context menu
+- [ ] Context menu doesn't look native. no mouseovers on menu items, no accelerator keys (underscored characters indicating what key to hit)
 
 - [x] Deep-dive in how the FL Studio "heat map" style spectrogram works, it's incredibly useful.
 - [x] middle-click knob to reset
