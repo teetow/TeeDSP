@@ -305,7 +305,8 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 {
     if (!m_chain || numFrames <= 0 || numChannels <= 0) return;
 
-    // Pre-DSP peak — per-channel and mono-mixed.
+    // Post-input-trim peak — per-channel and mono-mixed.
+    // Measured before the rest of DSP so it reflects what hits the EQ/compressor.
     {
         float prePeakL = 0.0f, prePeakR = 0.0f;
         const int sampleCount = numFrames * numChannels;
@@ -318,7 +319,8 @@ void AudioEngine::onCapturePacket(const float *interleaved,
         const auto toDbfs = [](float a) {
             return (a > 1e-6f) ? 20.0f * std::log10(a) : -120.0f;
         };
-        const float dbL = toDbfs(prePeakL), dbR = toDbfs(prePeakR);
+        const float trimDb = m_chain->inputTrimDb();
+        const float dbL = toDbfs(prePeakL) + trimDb, dbR = toDbfs(prePeakR) + trimDb;
         m_recentInputPeakChL.store(dbL, std::memory_order_relaxed);
         m_recentInputPeakChR.store(dbR, std::memory_order_relaxed);
         m_recentInputPeakDbfs.store(std::max(dbL, dbR), std::memory_order_relaxed);
