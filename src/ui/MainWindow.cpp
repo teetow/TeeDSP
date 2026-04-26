@@ -225,14 +225,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     if (m_quitting || !m_tray) {
-        // Heal the gap: restore Windows default output to TeeDSP's render
-        // target so audio flows directly there once we stop processing.
-        if (m_engine && m_engine->isRunning()) {
-            const QString renderId = m_engine->currentRender();
-            if (!renderId.isEmpty())
-                host::WasapiDevices::setDefaultRender(renderId);
-        }
-        if (m_engine) m_engine->stop();
+        stopEngineAndHealRouting();
         QMainWindow::closeEvent(event);
         return;
     }
@@ -754,6 +747,11 @@ void MainWindow::connectSignals()
         m_dspController->resetBandToDefaults(band);
     });
 
+    connect(m_eqCurve, &ui::EqCurve::bandEqReset, this, [this](int band) {
+        if (band < 0 || band >= m_eqBands.size()) return;
+        m_dspController->resetBandEqToDefaults(band);
+    });
+
     connect(m_eqCurve, &ui::EqCurve::bandSelected, this, [this](int band) {
         if (band < 0 || band >= m_eqBands.size()) return;
         m_selectedEqBand = band;
@@ -1175,13 +1173,27 @@ void MainWindow::onStartStopClicked()
 {
     if (!m_engine) return;
     if (m_engine->isRunning()) {
-        m_engine->stop();
+        stopEngineAndHealRouting();
         refreshEngineStatus();
         return;
     }
     const QString err = m_engine->start(selectedCaptureDeviceId(), selectedRenderDeviceId());
     if (!err.isEmpty()) m_statusLabel->setText(err);
     refreshEngineStatus();
+}
+
+void MainWindow::stopEngineAndHealRouting()
+{
+    // Heal the gap: before stopping, point Windows default output at TeeDSP's
+    // render target so audio keeps flowing where the user expected — without
+    // this, the system would be left routed to TeeDSP's loopback source with
+    // no one consuming it.
+    if (m_engine && m_engine->isRunning()) {
+        const QString renderId = m_engine->currentRender();
+        if (!renderId.isEmpty())
+            host::WasapiDevices::setDefaultRender(renderId);
+    }
+    if (m_engine) m_engine->stop();
 }
 
 void MainWindow::onEngineError(const QString &message)

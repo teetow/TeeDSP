@@ -15,6 +15,7 @@
 - [x] output device dropbox doesn't update when device enumeration occurs
 - [x] When quitting TeeDSP cleanly, set Windows output to TeeDSP:s output (healing the gap, as it were)
 
-- [ ] enable QSS styling for knobs, the gap between the knob and its value is HUGE
-- [ ] stop button should restore native routing (just like when exiting). in other words, the routing should only be active when 
-- [ ] linear interpolation on the analyzer looks tacky, not sure what FL Studio uses but it looks amazing (ask for screenshot if you can't find info online)
+- [x] enable QSS styling for knobs, the gap between the knob and its value is HUGE
+- [x] stop button should restore native routing (just like when exiting). in other words, the routing should only be active when 
+- [x] linear interpolation on the analyzer looks tacky, not sure what FL Studio uses but it looks amazing (ask for screenshot if you can't find info online)
+- [x] double-clicking an EQ node should reset only its EQ params, not its dynamics params

@@ -65,6 +65,11 @@ private:
     void onStartStopClicked();
     void onEngineError(const QString &message);
 
+    // Stops the audio engine and restores Windows default output to the
+    // engine's render target — same "heal the gap" routing fix-up the clean
+    // quit path performs.
+    void stopEngineAndHealRouting();
+
     QString selectedCaptureDeviceId() const;
     QString selectedRenderDeviceId() const;
     void saveSelectedDevices() const;

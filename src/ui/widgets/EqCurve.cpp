@@ -45,6 +45,35 @@ inline double applyAnalyzerSlope(double db, double freqHz)
     return db + kAnalyzerSlopeDbPerOct * std::log2(f / kAnalyzerSlopePivotHz);
 }
 
+// Catmull-Rom interpolation across four neighbouring FFT bins.
+// Linear bin-lerp produces visible polygonal kinks on tonal peaks because each
+// bin is sampled by many output pixels — straight lines between bin values
+// become straight ramps in the rendered curve. A cubic smoothes those into
+// natural-looking arcs (the look FL Studio's analyzer is known for).
+//
+// `bin` is the (fractional) bin index; `mag` is the bin array, `n` its size.
+inline double sampleSpectrumSmooth(const float *mag, int n, double bin)
+{
+    if (n <= 0) return 0.0;
+    if (n == 1) return mag[0];
+    const int i1 = std::clamp(static_cast<int>(std::floor(bin)), 0, n - 1);
+    const int i0 = std::max(i1 - 1, 0);
+    const int i2 = std::min(i1 + 1, n - 1);
+    const int i3 = std::min(i1 + 2, n - 1);
+    const double t  = std::clamp(bin - i1, 0.0, 1.0);
+    const double p0 = mag[i0];
+    const double p1 = mag[i1];
+    const double p2 = mag[i2];
+    const double p3 = mag[i3];
+    const double t2 = t * t;
+    const double t3 = t2 * t;
+    return 0.5 * (
+        (2.0 * p1) +
+        (-p0 + p2) * t +
+        (2.0*p0 - 5.0*p1 + 4.0*p2 - p3) * t2 +
+        (-p0 + 3.0*p1 - 3.0*p2 + p3) * t3);
+}
+
 // Inferno-flavoured perceptual colormap. Hand-picked nine stops covering the
 // full magnitude range from silence (deep blue/black) through magenta and
 // orange to a near-white peak. Linear RGB interpolation between stops; close
@@ -329,10 +358,7 @@ void EqCurve::renderHeatmapImage(const QVector<float> &mag, double specSr,
     for (int s = 0; s < w; ++s) {
         const double f = std::clamp(m_colFreq[s], kFreqMin, kFreqMax);
         const double bin = f / binHz;
-        const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
-        const int b1 = std::min(b0 + 1, bins - 1);
-        const double frac = bin - b0;
-        const double db = applyAnalyzerSlope(mag[b0] * (1.0 - frac) + mag[b1] * frac, f);
+        const double db = applyAnalyzerSlope(sampleSpectrumSmooth(mag.constData(), bins, bin), f);
 
         // Vertical extent of the column: from the spectrum height (top) down.
         const double n = std::clamp(
@@ -372,10 +398,7 @@ void EqCurve::drawSpectrumOutline(QPainter &p, const QVector<float> &mag,
     for (int s = 0; s < w; ++s) {
         const double f = std::clamp(m_colFreq[s], kFreqMin, kFreqMax);
         const double bin = f / binHz;
-        const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
-        const int b1 = std::min(b0 + 1, bins - 1);
-        const double t = bin - b0;
-        double db = applyAnalyzerSlope(mag[b0] * (1.0 - t) + mag[b1] * t, f);
+        double db = applyAnalyzerSlope(sampleSpectrumSmooth(mag.constData(), bins, bin), f);
         if (db < kSpecDbMin) db = kSpecDbMin;
         if (db > kSpecDbMax) db = kSpecDbMax;
         const double n = (db - kSpecDbMin) / dbSpan;
@@ -432,10 +455,7 @@ void EqCurve::drawSpectrumHeatmap(QPainter &p, const QVector<float> &mag,
     for (int s = 0; s < w; ++s) {
         const double f = std::clamp(m_colFreq[s], kFreqMin, kFreqMax);
         const double bin = f / binHz;
-        const int b0 = std::clamp(static_cast<int>(std::floor(bin)), 0, bins - 1);
-        const int b1 = std::min(b0 + 1, bins - 1);
-        const double t = bin - b0;
-        double db = applyAnalyzerSlope(mag[b0] * (1.0 - t) + mag[b1] * t, f);
+        double db = applyAnalyzerSlope(sampleSpectrumSmooth(mag.constData(), bins, bin), f);
         if (db < kSpecDbMin) db = kSpecDbMin;
         if (db > kSpecDbMax) db = kSpecDbMax;
         const double n = (db - kSpecDbMin) / dbSpan;
@@ -708,7 +728,7 @@ void EqCurve::mouseDoubleClickEvent(QMouseEvent *e)
     if (hit >= 0) {
         // Cancel any in-progress drag started by the press half of the double-click.
         m_draggingBand = -1;
-        emit bandReset(hit);
+        emit bandEqReset(hit);
         update();
     }
 }

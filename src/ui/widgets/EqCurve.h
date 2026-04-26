@@ -52,7 +52,8 @@ public:
 signals:
     void bandDragged(int band, float freqHz, float gainDb);
     void bandSelected(int band);
-    void bandReset(int band);   // double-click — caller decides what to reset
+    void bandReset(int band);   // full reset (e.g. context-menu "Reset Band")
+    void bandEqReset(int band); // EQ-only reset — preserves dynamics params
     void bandQAdjusted(int band, float q);
     void bandTypeChanged(int band, int type);
 

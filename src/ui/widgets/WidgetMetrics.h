@@ -5,7 +5,7 @@ namespace ui::widget_metrics {
 namespace knob {
 constexpr int kLabelHeightPx = 14;
 constexpr int kValueHeightPx = 14;
-constexpr int kVerticalGapPx = 0;
+constexpr int kVerticalGapPx = 2;
 constexpr int kOuterInsetPx = 8;
 constexpr int kKnobTopOffsetPx = 2;
 constexpr int kArcInsetPx = 4;

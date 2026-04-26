@@ -134,7 +134,8 @@ void Knob::paintEvent(QPaintEvent *)
     const int h = height();
     const int labelH = widget_metrics::knob::kLabelHeightPx;
     const int valueH = widget_metrics::knob::kValueHeightPx;
-    const int knobArea = h - labelH - valueH - widget_metrics::knob::kVerticalGapPx;
+    const int gap    = widget_metrics::knob::kVerticalGapPx;
+    const int knobArea = h - labelH - valueH - gap;
     const int knobSize = std::min(knobArea, w) - widget_metrics::knob::kOuterInsetPx;
     if (knobSize <= widget_metrics::knob::kOuterInsetPx) return;
 
@@ -213,13 +214,17 @@ void Knob::paintEvent(QPaintEvent *)
     p.drawLine(inner, tip);
 
     // --- Value label below ---
+    // Anchor the value label directly under the knob (with a small gap)
+    // rather than at the widget bottom — keeps the visual stack tight even
+    // when the layout gives this widget extra vertical space.
     p.setPen(theme::kTextPrimary);
     QFont vf = p.font();
     vf.setCapitalization(QFont::MixedCase);
     vf.setPointSizeF(widget_metrics::knob::kValueFontPt);
     vf.setLetterSpacing(QFont::PercentageSpacing, 100);
     p.setFont(vf);
-    p.drawText(QRectF(0, h - valueH, w, valueH), Qt::AlignCenter, formatValue());
+    const double valueY = knobRect.bottom() + gap;
+    p.drawText(QRectF(0, valueY, w, valueH), Qt::AlignCenter, formatValue());
 }
 
 void Knob::mousePressEvent(QMouseEvent *e)

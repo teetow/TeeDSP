@@ -122,6 +122,11 @@ public:
     Q_INVOKABLE void setEqBandDynamicReleaseMs(int band, float releaseMs);
     Q_INVOKABLE void setEqBandDynamicRangeDb(int band, float rangeDb);
     Q_INVOKABLE void resetBandToDefaults(int band);
+    // Resets only the EQ-shape params (enabled / type / freq / Q / gain).
+    // Leaves the per-band dynamics state untouched — the user often spends
+    // real time dialing in dynamics and shouldn't lose it from a stray
+    // double-click on the EQ node.
+    Q_INVOKABLE void resetBandEqToDefaults(int band);
     Q_INVOKABLE void resetToDefaults();
 
     void loadFromSettings();
