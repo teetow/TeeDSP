@@ -127,6 +127,11 @@ public:
     void loadFromSettings();
     void saveToSettings() const;
 
+private slots:
+    // Coalesces rapid changes (knob drags, etc.) into a single write a short
+    // moment after the user stops twiddling. Suppressed during loadFromSettings.
+    void scheduleSave();
+
 signals:
     void bypassChanged();
     void compressorChanged();
@@ -142,6 +147,8 @@ private:
 
     ProcessorChain   *m_chain;
     QTimer m_meterTimer;
+    QTimer m_saveDebounceTimer;
+    bool m_loadingSettings = false;
 
     bool m_bypass = false;
     float m_inputTrimDb = 0.0f;

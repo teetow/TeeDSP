@@ -19,6 +19,8 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QMoveEvent>
+#include <QResizeEvent>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -138,6 +140,12 @@ MainWindow::MainWindow(QWidget *parent)
             restoreGeometry(geo);
     }
 
+    m_geometrySaveTimer.setInterval(500);
+    m_geometrySaveTimer.setSingleShot(true);
+    connect(&m_geometrySaveTimer, &QTimer::timeout, this, [this]() {
+        QSettings().setValue(QString::fromLatin1(kGeometryKey), saveGeometry());
+    });
+
     buildUi();
 
     m_tray = new ui::TrayController(this, this);
@@ -234,6 +242,18 @@ void MainWindow::closeEvent(QCloseEvent *event)
     hide();
 }
 
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QMainWindow::resizeEvent(event);
+    m_geometrySaveTimer.start();
+}
+
+void MainWindow::moveEvent(QMoveEvent *event)
+{
+    QMainWindow::moveEvent(event);
+    m_geometrySaveTimer.start();
+}
+
 void MainWindow::buildUi()
 {
     m_central = new QWidget(this);
@@ -258,7 +278,7 @@ void MainWindow::buildUi()
     fxCol->addWidget(buildCompSection(), 0);
     fxCol->addWidget(buildChannelMixerSection(), 0);
     fxCol->addStretch(1);
-    centerRow->addLayout(fxCol, 2);
+    centerRow->addLayout(fxCol, 0);
 
     mainRow->addLayout(centerRow, 1);
     mainRow->addWidget(buildOutputPane(), 0);

@@ -5,7 +5,7 @@ namespace ui::widget_metrics {
 namespace knob {
 constexpr int kLabelHeightPx = 14;
 constexpr int kValueHeightPx = 14;
-constexpr int kVerticalGapPx = 4;
+constexpr int kVerticalGapPx = 0;
 constexpr int kOuterInsetPx = 8;
 constexpr int kKnobTopOffsetPx = 2;
 constexpr int kArcInsetPx = 4;
@@ -37,13 +37,15 @@ namespace meter_runtime {
 constexpr float kReleaseTauMs = 60.0f;
 constexpr float kInitialDtMs = 8.0f;
 
-constexpr float kDbMeterMin = -60.0f;
+constexpr float kDbMeterMin = -90.0f;
 constexpr float kDbMeterMax = 0.0f;
 constexpr float kLufsMeterMin = -70.0f;
 constexpr float kLufsMeterMax = 0.0f;
 
 constexpr float kSilenceDisplayDbfs = -100.0f;
 constexpr float kLufsDisplayFloor = -69.0f;
+
+constexpr float kSpectrumFalloffTauMs = 300.0f;
 } // namespace meter_runtime
 
 } // namespace ui::widget_metrics

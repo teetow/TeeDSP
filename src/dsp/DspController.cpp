@@ -39,6 +39,26 @@ DspController::DspController(ProcessorChain *chain, QObject *parent)
     m_meterTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_meterTimer, &QTimer::timeout, this, &DspController::meterChanged);
     m_meterTimer.start();
+
+    // Save-on-change: every parameter mutation emits a *Changed signal, which
+    // kicks the debounce timer. The timer's timeout writes settings, so a
+    // crash, force-quit, or OS shutdown can never lose a change the user made
+    // more than ~500 ms ago. Backstop saves in MainWindow's destructor and
+    // closeEvent remain.
+    m_saveDebounceTimer.setInterval(500);
+    m_saveDebounceTimer.setSingleShot(true);
+    connect(&m_saveDebounceTimer, &QTimer::timeout, this, &DspController::saveToSettings);
+    connect(this, &DspController::bypassChanged,     this, &DspController::scheduleSave);
+    connect(this, &DspController::compressorChanged, this, &DspController::scheduleSave);
+    connect(this, &DspController::exciterChanged,    this, &DspController::scheduleSave);
+    connect(this, &DspController::eqChanged,         this, &DspController::scheduleSave);
+    connect(this, &DspController::levelerChanged,    this, &DspController::scheduleSave);
+}
+
+void DspController::scheduleSave()
+{
+    if (m_loadingSettings) return;
+    m_saveDebounceTimer.start();
 }
 
 bool DspController::bypass() const { return m_bypass; }
@@ -449,6 +469,7 @@ void DspController::applySnapshot(const ChainParams &params)
 
 void DspController::loadFromSettings()
 {
+    m_loadingSettings = true;
     ChainParams params = defaultParams();
 
     QSettings settings;
@@ -495,6 +516,7 @@ void DspController::loadFromSettings()
     settings.endGroup();
 
     applySnapshot(params);
+    m_loadingSettings = false;
 }
 
 void DspController::resetBandToDefaults(int band)

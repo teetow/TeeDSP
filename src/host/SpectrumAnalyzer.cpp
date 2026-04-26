@@ -1,6 +1,7 @@
 #include "SpectrumAnalyzer.h"
 
 #include "Fft.h"
+#include "../ui/widgets/WidgetMetrics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +10,6 @@ namespace host {
 
 namespace {
 constexpr int kTickIntervalMs = 16;          // ~60 Hz spectrum updates
-constexpr float kFalloffTauMs = 60.0f;       // Analyzer release time constant
 
 constexpr int kBins = SpectrumAnalyzer::kFftSize / 2 + 1;
 } // namespace
@@ -104,7 +104,8 @@ void SpectrumAnalyzer::tick()
 {
     if (!m_running.load()) return;
 
-    // 1-pole release coefficient: y += a * (target - y), tuned for 60 ms falloff.
+    // 1-pole release coefficient: y += a * (target - y).
+    constexpr float kFalloffTauMs = ui::widget_metrics::meter_runtime::kSpectrumFalloffTauMs;
     const float releaseAlpha = 1.0f - std::exp(-static_cast<float>(kTickIntervalMs) / kFalloffTauMs);
 
     std::vector<float> preFrame;

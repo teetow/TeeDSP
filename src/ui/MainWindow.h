@@ -3,6 +3,7 @@
 #include "../host/WasapiDevices.h"
 
 #include <QMainWindow>
+#include <QTimer>
 #include <QVector>
 
 class QLabel;
@@ -37,6 +38,8 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
 
 private:
     struct EqBandWidgets {};
@@ -136,6 +139,11 @@ private:
     QList<host::DeviceInfo> m_devices;
     bool m_syncingUi = false;
     bool m_quitting = false;
+
+    // Coalesces resize/move events into a single QSettings write a moment
+    // after the user stops dragging. Without this, geometry would only persist
+    // on a clean close — a crash or force-quit would lose layout changes.
+    QTimer m_geometrySaveTimer;
 
     // Smoothed meter state. Each tick: instant attack, exponential release
     // with kMeterReleaseTauMs time-constant. Avoids alternating -inf frames
