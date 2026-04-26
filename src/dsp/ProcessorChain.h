@@ -2,14 +2,16 @@
 
 #include "Compressor.h"
 #include "Exciter.h"
+#include "Leveler.h"
 #include "ParametricEQ.h"
 
 #include <atomic>
 
 namespace dsp {
 
-// Ordered chain: EQ -> Exciter -> Compressor.
-// Tone-shape first, then harmonic enhancement, and finally dynamic control.
+// Ordered chain: Leveler -> [input trim] -> EQ -> Exciter -> Compressor.
+// Auto-leveling normalizes the source before tone-shape, harmonic
+// enhancement, and dynamic control see it.
 class ProcessorChain
 {
 public:
@@ -30,8 +32,10 @@ public:
     ParametricEQ &eq() { return m_eq; }
     Compressor &compressor() { return m_compressor; }
     Exciter &exciter() { return m_exciter; }
+    Leveler &leveler() { return m_leveler; }
 
 private:
+    Leveler m_leveler;
     ParametricEQ m_eq;
     Compressor m_compressor;
     Exciter m_exciter;

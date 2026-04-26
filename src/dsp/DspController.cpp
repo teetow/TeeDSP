@@ -32,6 +32,7 @@ DspController::DspController(ProcessorChain *chain, QObject *parent)
     m_chain->setInputTrimDb(m_inputTrimDb);
     m_chain->setOutputTrimDb(m_outputTrimDb);
     m_chain->setStereoWidth(m_stereoWidth);
+    m_chain->leveler().setBypass(!m_levelerEnabled);
     m_chain->setBypass(m_bypass);
 
     m_meterTimer.setInterval(kMeterIntervalMs);
@@ -74,6 +75,19 @@ void DspController::setStereoWidth(float v)
     m_stereoWidth = v;
     m_chain->setStereoWidth(v);
     emit bypassChanged();
+}
+
+void DspController::setLevelerEnabled(bool b)
+{
+    if (m_levelerEnabled == b) return;
+    m_levelerEnabled = b;
+    m_chain->leveler().setBypass(!b);
+    emit levelerChanged();
+}
+
+float DspController::levelerGainDb() const
+{
+    return m_chain->leveler().currentGainDb();
 }
 
 bool DspController::compressorEnabled() const { return m_compressorEnabled; }
@@ -347,6 +361,7 @@ ChainParams DspController::buildSnapshot() const
     p.inputTrimDb     = m_inputTrimDb;
     p.outputTrimDb    = m_outputTrimDb;
     p.stereoWidth     = m_stereoWidth;
+    p.levelerEnabled  = m_levelerEnabled;
     p.eqEnabled       = m_eqEnabled;
     p.compEnabled     = m_compressorEnabled;
     p.compThreshDb    = m_compThresholdDb;
@@ -383,6 +398,7 @@ void DspController::applySnapshot(const ChainParams &params)
     m_inputTrimDb = params.inputTrimDb;
     m_outputTrimDb = params.outputTrimDb;
     m_stereoWidth = params.stereoWidth;
+    m_levelerEnabled = params.levelerEnabled;
     m_compressorEnabled = params.compEnabled;
     m_compThresholdDb = params.compThreshDb;
     m_compRatio = params.compRatio;
@@ -421,12 +437,14 @@ void DspController::applySnapshot(const ChainParams &params)
     m_chain->setInputTrimDb(m_inputTrimDb);
     m_chain->setOutputTrimDb(m_outputTrimDb);
     m_chain->setStereoWidth(m_stereoWidth);
+    m_chain->leveler().setBypass(!m_levelerEnabled);
     m_chain->setBypass(m_bypass);
 
     emit bypassChanged();
     emit compressorChanged();
     emit exciterChanged();
     emit eqChanged();
+    emit levelerChanged();
 }
 
 void DspController::loadFromSettings()
@@ -440,6 +458,7 @@ void DspController::loadFromSettings()
     params.inputTrimDb = settings.value(QStringLiteral("inputTrimDb"), params.inputTrimDb).toFloat();
     params.outputTrimDb = settings.value(QStringLiteral("outputTrimDb"), params.outputTrimDb).toFloat();
     params.stereoWidth = settings.value(QStringLiteral("channelMixer/width"), params.stereoWidth).toFloat();
+    params.levelerEnabled = settings.value(QStringLiteral("leveler/enabled"), params.levelerEnabled).toBool();
     params.compEnabled = settings.value(QStringLiteral("comp/enabled"), params.compEnabled).toBool();
     params.compThreshDb = settings.value(QStringLiteral("comp/threshold"), params.compThreshDb).toFloat();
     params.compRatio = settings.value(QStringLiteral("comp/ratio"), params.compRatio).toFloat();
@@ -511,6 +530,7 @@ void DspController::saveToSettings() const
     settings.setValue(QStringLiteral("inputTrimDb"), m_inputTrimDb);
     settings.setValue(QStringLiteral("outputTrimDb"), m_outputTrimDb);
     settings.setValue(QStringLiteral("channelMixer/width"), m_stereoWidth);
+    settings.setValue(QStringLiteral("leveler/enabled"), m_levelerEnabled);
     settings.setValue(QStringLiteral("comp/enabled"), m_compressorEnabled);
     settings.setValue(QStringLiteral("comp/threshold"), m_compThresholdDb);
     settings.setValue(QStringLiteral("comp/ratio"), m_compRatio);

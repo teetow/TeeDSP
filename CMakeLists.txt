@@ -15,6 +15,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets)
 set(DSP_SOURCES
 	src/dsp/Compressor.cpp
 	src/dsp/Exciter.cpp
+	src/dsp/Leveler.cpp
 	src/dsp/ParametricEQ.cpp
 	src/dsp/ProcessorChain.cpp
 	src/dsp/DspController.cpp

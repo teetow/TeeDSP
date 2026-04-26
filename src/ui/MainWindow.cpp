@@ -559,6 +559,18 @@ QWidget *MainWindow::buildInputPane()
     m_inputTrim->setBipolarOrigin(0.0);
     col->addWidget(m_inputTrim, 0, Qt::AlignHCenter);
 
+    m_levelerEnabled = new QCheckBox(QStringLiteral("Auto"));
+    m_levelerEnabled->setToolTip(
+        QStringLiteral("Auto-leveler — slow loudness rider that nudges the input "
+                       "toward -18 LUFS without pumping. Sits before the input "
+                       "trim, so the trim knob still rides on top."));
+    col->addWidget(m_levelerEnabled, 0, Qt::AlignHCenter);
+
+    m_levelerGainLabel = new QLabel(QStringLiteral("0.0 dB"));
+    m_levelerGainLabel->setProperty("role", "status");
+    m_levelerGainLabel->setAlignment(Qt::AlignHCenter);
+    col->addWidget(m_levelerGainLabel, 0, Qt::AlignHCenter);
+
     return section;
 }
 
@@ -645,6 +657,9 @@ void MainWindow::connectSignals()
 
     connect(m_inputTrim, &ui::Knob::valueChanged, this, [this](double v) {
         if (!m_syncingUi) m_dspController->setInputTrimDb(static_cast<float>(v));
+    });
+    connect(m_levelerEnabled, &QCheckBox::toggled, this, [this](bool c) {
+        if (!m_syncingUi) m_dspController->setLevelerEnabled(c);
     });
     connect(m_outputTrim, &ui::Knob::valueChanged, this, [this](double v) {
         if (!m_syncingUi) m_dspController->setOutputTrimDb(static_cast<float>(v));
@@ -860,6 +875,13 @@ void MainWindow::connectSignals()
         else
             m_outputLufsLabel->setText(QStringLiteral("LUFS-M: -inf"));
 
+        if (m_levelerGainLabel) {
+            const float g = m_dspController->levelerGainDb();
+            const QChar sign = g >= 0.0f ? QLatin1Char('+') : QLatin1Char('-');
+            m_levelerGainLabel->setText(QStringLiteral("%1%2 dB")
+                .arg(sign).arg(std::fabs(g), 0, 'f', 1));
+        }
+
         const float hotDbfs = m_dispOutHotDbfs;
         if (hotDbfs > -0.2f) {
             m_outputHotIndicator->setText(QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
@@ -956,6 +978,7 @@ void MainWindow::pullStateFromController()
     m_inputTrim->setValue(m_dspController->inputTrimDb());
     m_outputTrim->setValue(m_dspController->outputTrimDb());
     m_stereoWidth->setValue(m_dspController->stereoWidth() * 100.0f);
+    m_levelerEnabled->setChecked(m_dspController->levelerEnabled());
 
     m_compEnabled->setChecked(m_dspController->compressorEnabled());
     m_compThreshold->setValue(m_dspController->compThresholdDb());

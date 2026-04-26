@@ -78,6 +78,8 @@ private:
     QProgressBar *m_inputMeterBarL = nullptr;
     QProgressBar *m_inputMeterBarR = nullptr;
     ui::Knob *m_inputTrim = nullptr;
+    QCheckBox *m_levelerEnabled = nullptr;
+    QLabel *m_levelerGainLabel = nullptr;
 
     QProgressBar *m_outputMeterBarL = nullptr;
     QProgressBar *m_outputMeterBarR = nullptr;

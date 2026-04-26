@@ -39,6 +39,8 @@ class DspController : public QObject
     Q_PROPERTY(float inputTrimDb READ inputTrimDb WRITE setInputTrimDb NOTIFY bypassChanged FINAL)
     Q_PROPERTY(float outputTrimDb READ outputTrimDb WRITE setOutputTrimDb NOTIFY bypassChanged FINAL)
     Q_PROPERTY(float stereoWidth READ stereoWidth WRITE setStereoWidth NOTIFY bypassChanged FINAL)
+    Q_PROPERTY(bool levelerEnabled READ levelerEnabled WRITE setLevelerEnabled NOTIFY levelerChanged FINAL)
+    Q_PROPERTY(float levelerGainDb READ levelerGainDb NOTIFY meterChanged FINAL)
 
     Q_PROPERTY(bool compressorEnabled READ compressorEnabled WRITE setCompressorEnabled NOTIFY compressorChanged FINAL)
     Q_PROPERTY(float compThresholdDb READ compThresholdDb WRITE setCompThresholdDb NOTIFY compressorChanged FINAL)
@@ -71,6 +73,9 @@ public:
     void setOutputTrimDb(float v);
     float stereoWidth() const { return m_stereoWidth; }
     void setStereoWidth(float v);
+    bool levelerEnabled() const { return m_levelerEnabled; }
+    void setLevelerEnabled(bool b);
+    float levelerGainDb() const;
 
     bool compressorEnabled() const;
     void setCompressorEnabled(bool b);
@@ -127,6 +132,7 @@ signals:
     void compressorChanged();
     void exciterChanged();
     void eqChanged();
+    void levelerChanged();
     void meterChanged();
 
 private:
@@ -141,6 +147,7 @@ private:
     float m_inputTrimDb = 0.0f;
     float m_outputTrimDb = 0.0f;
     float m_stereoWidth = 1.0f;
+    bool m_levelerEnabled = false;
 
     bool m_compressorEnabled = true;
     float m_compThresholdDb = -18.0f;
