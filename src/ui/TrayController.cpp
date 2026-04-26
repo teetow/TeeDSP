@@ -92,6 +92,13 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
     m_startWithWindowsAction->setCheckable(true);
     connect(m_startWithWindowsAction, &QAction::toggled, this, &TrayController::onStartWithWindows);
 
+    m_keepInjectedAction = m_menu->addAction(QStringLiteral("Keep TeeDSP &injected"));
+    m_keepInjectedAction->setCheckable(true);
+    m_keepInjectedAction->setToolTip(QStringLiteral(
+        "When Windows changes the default output (e.g. Bluetooth headphones connecting), "
+        "automatically restore TeeDSP as the system output so audio keeps flowing through DSP."));
+    connect(m_keepInjectedAction, &QAction::toggled, this, &TrayController::onKeepInjected);
+
     m_menu->addSeparator();
 
     m_quitAction = m_menu->addAction(QStringLiteral("&Quit TeeDSP"));
@@ -139,6 +146,14 @@ void TrayController::setStartWithWindows(bool on)
     if (m_startWithWindowsAction) {
         QSignalBlocker block(m_startWithWindowsAction);
         m_startWithWindowsAction->setChecked(on);
+    }
+}
+
+void TrayController::setKeepInjected(bool on)
+{
+    if (m_keepInjectedAction) {
+        QSignalBlocker block(m_keepInjectedAction);
+        m_keepInjectedAction->setChecked(on);
     }
 }
 
@@ -202,6 +217,7 @@ void TrayController::onShowToggle()
 
 void TrayController::onBypass(bool b)               { emit bypassToggled(b); }
 void TrayController::onStartWithWindows(bool b)     { emit startWithWindowsToggled(b); }
+void TrayController::onKeepInjected(bool b)         { emit keepInjectedToggled(b); }
 void TrayController::onQuit()                       { emit quitRequested(); }
 
 } // namespace ui

@@ -42,6 +42,7 @@ QString WasapiRender::start(const QString &renderDeviceId)
     if (renderDeviceId.isEmpty()) return QStringLiteral("no render device selected");
 
     m_stopRequested.store(false);
+    m_endedUnexpectedly.store(false);
     m_running.store(true);
 
     {
@@ -71,6 +72,14 @@ void WasapiRender::stop()
     m_running.store(false);
     m_channels.store(0);
     m_sampleRate.store(0);
+    // Explicit stop, not a thread-self-exit, so don't surface "ended
+    // unexpectedly" — the engine asked for this.
+    m_endedUnexpectedly.store(false);
+}
+
+bool WasapiRender::consumeEndedFlag()
+{
+    return m_endedUnexpectedly.exchange(false);
 }
 
 void WasapiRender::write(const float *interleaved, int numFrames, int numChannels)
@@ -242,7 +251,17 @@ void WasapiRender::threadMain(QString deviceId)
     if (renderEvent) CloseHandle(renderEvent);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
     if (SUCCEEDED(hrCo)) CoUninitialize();
+
+    // If we got here without an external stop request, the audio client
+    // bailed (typically AUDCLNT_E_DEVICE_INVALIDATED during a Bluetooth
+    // tear-down). Reset the negotiated format so write() stops queueing
+    // samples into a ring nobody drains, and raise the flag so the engine
+    // can recover by re-picking and re-starting.
+    const bool selfExit = !m_stopRequested.load();
+    m_channels.store(0);
+    m_sampleRate.store(0);
     m_running.store(false);
+    if (selfExit) m_endedUnexpectedly.store(true);
 }
 
 } // namespace host

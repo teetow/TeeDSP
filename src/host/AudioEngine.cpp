@@ -5,6 +5,8 @@
 #include "WasapiDeviceNotifier.h"
 #include "WasapiDevices.h"
 
+#include <QMetaObject>
+
 #include <cmath>
 
 namespace host {
@@ -136,6 +138,8 @@ AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
             this, &AudioEngine::onDevicesChanged);
     connect(m_notifier, &WasapiDeviceNotifier::devicesChanged,
             this, &AudioEngine::devicesChanged);
+    connect(m_notifier, &WasapiDeviceNotifier::defaultRenderChanged,
+            this, &AudioEngine::defaultRenderChanged);
     m_lufsMonitor = std::make_unique<LufsMonitor>();
 }
 
@@ -237,7 +241,11 @@ void AudioEngine::setPreferredRender(const QString &id)
 {
     if (m_preferredRenderId == id) return;
     m_preferredRenderId = id;
-    if (isRunning()) onDevicesChanged();
+    // Gate on capture (not full isRunning) so a manual device pick can
+    // resurrect a render thread that's already dead — that's the common
+    // recovery path when the previous render endpoint went away mid-stream
+    // and we haven't auto-rerouted yet.
+    if (m_capture.isRunning()) onDevicesChanged();
 }
 
 // Returns the device id we should be rendering to right now. The preferred
@@ -294,9 +302,28 @@ bool AudioEngine::switchRenderTo(const QString &deviceId)
 
 void AudioEngine::onDevicesChanged()
 {
-    if (!isRunning()) return;
+    // Recovery must be possible even when the render side is currently dead
+    // (Bluetooth removal storm killed the previous client). Capture alive is
+    // the meaningful precondition.
+    if (!m_capture.isRunning()) return;
     const QString target = pickRenderId();
-    if (target.isEmpty() || target == m_currentRenderId) return;
+    if (target.isEmpty()) return;
+    if (target == m_currentRenderId && m_render.isRunning()) return;
+    switchRenderTo(target);
+}
+
+void AudioEngine::onRenderEndedUnexpectedly()
+{
+    if (!m_capture.isRunning()) return;
+    const QString target = pickRenderId();
+    if (target.isEmpty()) {
+        m_lastError = QStringLiteral("Render endpoint disappeared and no fallback is available.");
+        emit errorOccurred(m_lastError);
+        m_currentRenderId.clear();
+        emit currentRenderChanged(m_currentRenderId);
+        emit runningChanged();
+        return;
+    }
     switchRenderTo(target);
 }
 
@@ -304,6 +331,15 @@ void AudioEngine::onCapturePacket(const float *interleaved,
                                   int numFrames, int numChannels, int sampleRate)
 {
     if (!m_chain || numFrames <= 0 || numChannels <= 0) return;
+
+    // The render thread can die silently if the audio client gets
+    // invalidated (Bluetooth tear-down is the common one). Surface that to
+    // the engine's own thread for a clean re-pick — checking from here
+    // because this is the one place that runs every audio packet.
+    if (m_render.consumeEndedFlag()) {
+        QMetaObject::invokeMethod(this, "onRenderEndedUnexpectedly",
+                                  Qt::QueuedConnection);
+    }
 
     // Post-input-trim peak — per-channel and mono-mixed.
     // Measured before the rest of DSP so it reflects what hits the EQ/compressor.

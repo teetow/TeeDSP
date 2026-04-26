@@ -145,6 +145,11 @@ private:
     bool m_syncingUi = false;
     bool m_quitting = false;
 
+    // When true, restore Windows default output to our capture device whenever
+    // it gets demoted (e.g. AirPods auto-promoting on connect). Default true;
+    // toggle lives in the tray menu. Persisted under kKeepInjectedKey.
+    bool m_keepInjected = true;
+
     // Coalesces resize/move events into a single QSettings write a moment
     // after the user stops dragging. Without this, geometry would only persist
     // on a clean close — a crash or force-quit would lose layout changes.
