@@ -71,11 +71,6 @@ signals:
     void captureFormatChanged(int sampleRate, int channels);
     // Re-emitted from WasapiDeviceNotifier; subscribers should re-enumerate.
     void devicesChanged();
-    // Re-emitted from WasapiDeviceNotifier when the Windows default render
-    // endpoint changes (eConsole role). The UI uses this to re-inject
-    // TeeDSP into the audio chain when a connecting device (e.g. AirPods)
-    // would otherwise demote our capture endpoint from default.
-    void defaultRenderChanged(QString deviceId);
 
 private slots:
     void onDevicesChanged();

@@ -39,20 +39,7 @@ public:
     HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR, DWORD) override        { notify(); return S_OK; }
     HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override                       { notify(); return S_OK; }
     HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override                     { notify(); return S_OK; }
-    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR newId) override
-    {
-        notify();
-        // Only the eConsole role for render endpoints — Windows fires this
-        // three times for a single user-visible change (one per role); we
-        // forward just one to subscribers.
-        if (flow == eRender && role == eConsole && m_owner) {
-            const QString id = newId ? QString::fromWCharArray(newId) : QString();
-            QMetaObject::invokeMethod(m_owner, "defaultRenderChanged",
-                                      Qt::QueuedConnection,
-                                      Q_ARG(QString, id));
-        }
-        return S_OK;
-    }
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow, ERole, LPCWSTR) override { notify(); return S_OK; }
     HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) override { return S_OK; }
 
 private:

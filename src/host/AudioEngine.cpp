@@ -138,8 +138,6 @@ AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
             this, &AudioEngine::onDevicesChanged);
     connect(m_notifier, &WasapiDeviceNotifier::devicesChanged,
             this, &AudioEngine::devicesChanged);
-    connect(m_notifier, &WasapiDeviceNotifier::defaultRenderChanged,
-            this, &AudioEngine::defaultRenderChanged);
     m_lufsMonitor = std::make_unique<LufsMonitor>();
 }
 

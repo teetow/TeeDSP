@@ -52,7 +52,6 @@ constexpr const char *kGeometryKey      = "ui/geometry";
 constexpr const char *kShowInputSpecKey  = "ui/showInputSpectrum";
 constexpr const char *kShowOutputSpecKey = "ui/showOutputSpectrum";
 constexpr const char *kShowHeatmapKey    = "ui/showHeatmap";
-constexpr const char *kKeepInjectedKey   = "io/keepInjected";
 
 namespace UiMetrics {
 constexpr int kRootMarginTop = 14;
@@ -151,12 +150,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_tray = new ui::TrayController(this, this);
     m_tray->setStartWithWindows(ui::startup::isEnabled());
-
-    {
-        QSettings s;
-        m_keepInjected = s.value(QString::fromLatin1(kKeepInjectedKey), true).toBool();
-        m_tray->setKeepInjected(m_keepInjected);
-    }
 
     connectSignals();
     refreshDevices();
@@ -946,24 +939,21 @@ void MainWindow::connectSignals()
     });
 
     connect(m_engine, &host::AudioEngine::currentRenderChanged,
-            this, [this](const QString &) { refreshEngineStatus(); });
+            this, [this](const QString &id) {
+        refreshEngineStatus();
+        // Snap the render combo to whatever the engine is actually playing
+        // through. Use QSignalBlocker so the index change doesn't trigger
+        // a setPreferredRender round-trip back into the engine.
+        if (m_renderDevice && !id.isEmpty()) {
+            const int idx = m_renderDevice->findData(id);
+            if (idx >= 0 && idx != m_renderDevice->currentIndex()) {
+                QSignalBlocker block(m_renderDevice);
+                m_renderDevice->setCurrentIndex(idx);
+            }
+        }
+    });
     connect(m_engine, &host::AudioEngine::captureFormatChanged,
             this, [this](int, int) { refreshEngineStatus(); });
-
-    // Keep TeeDSP injected: when Windows promotes another endpoint to default
-    // (typical trigger: AirPods auto-connect), put our capture device back in
-    // the default slot so audio keeps flowing through DSP. The check guards
-    // against loops: when we set default *to* our capture device, the
-    // resulting event fails this predicate. User-driven Windows-side default
-    // changes still take effect when the engine is stopped.
-    connect(m_engine, &host::AudioEngine::defaultRenderChanged,
-            this, [this](const QString &newDefault) {
-        if (!m_keepInjected) return;
-        if (!m_engine || !m_engine->isRunning()) return;
-        const QString captureId = selectedCaptureDeviceId();
-        if (captureId.isEmpty() || newDefault == captureId) return;
-        host::WasapiDevices::setDefaultRender(captureId);
-    });
 
     if (m_tray) {
         connect(m_tray, &ui::TrayController::startStopRequested,
@@ -973,11 +963,6 @@ void MainWindow::connectSignals()
         });
         connect(m_tray, &ui::TrayController::startWithWindowsToggled,
                 this, [](bool on) { ui::startup::setEnabled(on); });
-        connect(m_tray, &ui::TrayController::keepInjectedToggled,
-                this, [this](bool on) {
-            m_keepInjected = on;
-            QSettings().setValue(QString::fromLatin1(kKeepInjectedKey), on);
-        });
         connect(m_tray, &ui::TrayController::inputDeviceSelected,
                 this, [this](const QString &id) {
             if (id.isEmpty() || !m_captureDevice) return;
@@ -1104,8 +1089,17 @@ void MainWindow::syncSelectedBandDyn()
 
 void MainWindow::refreshDevices()
 {
-    const QString prevCapture = selectedCaptureDeviceId();
-    const QString prevRender = selectedRenderDeviceId();
+    // Use QSettings as the authoritative preference source — not the combo's
+    // current selection, which can drift between refreshes.
+    const QSettings s;
+    const QString prefCapture = s.value(QString::fromLatin1(kCaptureDeviceKey)).toString();
+    const QString prefRender   = s.value(QString::fromLatin1(kRenderDeviceKey)).toString();
+
+    // When running, the engine is the source of truth for which endpoints are
+    // actually active. We restore to those IDs after repopulating so the
+    // combo always matches what's really happening.
+    const QString engineRender = (m_engine && m_engine->isRunning())
+        ? m_engine->currentRender() : QString();
 
     m_devices = host::WasapiDevices::enumerateRender();
 
@@ -1122,28 +1116,29 @@ void MainWindow::refreshDevices()
         m_renderDevice->addItem(label, d.id);
     }
 
-    auto selectById = [](QComboBox *cb, const QString &id) {
-        if (id.isEmpty()) return;
+    auto selectById = [](QComboBox *cb, const QString &id) -> bool {
+        if (id.isEmpty()) return false;
         const int idx = cb->findData(id);
-        if (idx >= 0) cb->setCurrentIndex(idx);
+        if (idx >= 0) { cb->setCurrentIndex(idx); return true; }
+        return false;
     };
-    selectById(m_captureDevice, prevCapture);
-    selectById(m_renderDevice, prevRender);
 
+    selectById(m_captureDevice, prefCapture);
+
+    // Render: prefer the engine's live endpoint (ground truth when running),
+    // fall back to the persisted user preference.
+    if (!selectById(m_renderDevice, engineRender))
+        selectById(m_renderDevice, prefRender);
+
+    // First-run / no-pref fallbacks: pick something reasonable.
     if (m_captureDevice->currentIndex() < 0 && m_captureDevice->count() > 0) {
         for (int i = 0; i < m_devices.size(); ++i) {
-            if (m_devices[i].isDefault) {
-                m_captureDevice->setCurrentIndex(i);
-                break;
-            }
+            if (m_devices[i].isDefault) { m_captureDevice->setCurrentIndex(i); break; }
         }
     }
     if (m_renderDevice->currentIndex() < 0 && m_renderDevice->count() > 0) {
         for (int i = 0; i < m_devices.size(); ++i) {
-            if (!m_devices[i].isDefault) {
-                m_renderDevice->setCurrentIndex(i);
-                break;
-            }
+            if (!m_devices[i].isDefault) { m_renderDevice->setCurrentIndex(i); break; }
         }
         if (m_renderDevice->currentIndex() < 0) m_renderDevice->setCurrentIndex(0);
     }
