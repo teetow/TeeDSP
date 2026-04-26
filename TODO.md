@@ -19,3 +19,6 @@
 - [x] stop button should restore native routing (just like when exiting). in other words, the routing should only be active when 
 - [x] linear interpolation on the analyzer looks tacky, not sure what FL Studio uses but it looks amazing (ask for screenshot if you can't find info online)
 - [x] double-clicking an EQ node should reset only its EQ params, not its dynamics params
+- [x] we can lengthen the max release for the compressors a bit, maybe 3s
+- [x] non-linear knob response: the compressor Ratio knob could have 4.0 at 12 o'clock
+- [x] compressor make-up 24 dB is extreme, 12 dB feels better

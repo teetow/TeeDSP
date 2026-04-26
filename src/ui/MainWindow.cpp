@@ -387,7 +387,7 @@ QWidget *MainWindow::buildEqSection()
     m_eqDynThreshold = makeKnob(QStringLiteral("Thresh"), -60.0, 0.0, -18.0, 1, QStringLiteral("dB"));
     m_eqDynRatio = makeKnob(QStringLiteral("Ratio"), 1.0, 20.0, 2.0, 2);
     m_eqDynAttack = makeKnob(QStringLiteral("Attack"), 0.1, 200.0, 10.0, 1, QStringLiteral("ms"), ui::Knob::Scale::Log);
-    m_eqDynRelease = makeKnob(QStringLiteral("Release"), 1.0, 1000.0, 120.0, 0, QStringLiteral("ms"), ui::Knob::Scale::Log);
+    m_eqDynRelease = makeKnob(QStringLiteral("Release"), 1.0, 3000.0, 120.0, 0, QStringLiteral("ms"), ui::Knob::Scale::Log);
     m_eqDynRange = makeKnob(QStringLiteral("Range"), 0.0, 24.0, 12.0, 1, QStringLiteral("dB"));
     dynRow->addWidget(m_eqDynThreshold);
     dynRow->addWidget(m_eqDynRatio);
@@ -445,11 +445,11 @@ QWidget *MainWindow::buildCompSection()
     grid->setVerticalSpacing(4);
 
     m_compThreshold = makeKnob(QStringLiteral("Thresh"),  -60.0,    0.0, -18.0, 1, QStringLiteral("dB"));
-    m_compRatio     = makeKnob(QStringLiteral("Ratio"),     1.0,   20.0,   4.0, 2);
+    m_compRatio     = makeKnob(QStringLiteral("Ratio"),     1.0,   16.0,   4.0, 2, QString(), ui::Knob::Scale::Log);
     m_compKnee      = makeKnob(QStringLiteral("Knee"),      0.0,   24.0,   6.0, 1, QStringLiteral("dB"));
     m_compAttack    = makeKnob(QStringLiteral("Attack"),    0.1,  200.0,  10.0, 1, QStringLiteral("ms"), ui::Knob::Scale::Log);
-    m_compRelease   = makeKnob(QStringLiteral("Release"),   1.0, 1000.0, 120.0, 0, QStringLiteral("ms"), ui::Knob::Scale::Log);
-    m_compMakeup    = makeKnob(QStringLiteral("Makeup"),  -12.0,   24.0,   0.0, 1, QStringLiteral("dB"));
+    m_compRelease   = makeKnob(QStringLiteral("Release"),   1.0, 3000.0, 120.0, 0, QStringLiteral("ms"), ui::Knob::Scale::Log);
+    m_compMakeup    = makeKnob(QStringLiteral("Makeup"),  -12.0,   12.0,   0.0, 1, QStringLiteral("dB"));
     m_compMakeup->setPolarity(ui::Knob::Polarity::Bipolar);
     m_compMakeup->setBipolarOrigin(0.0);
 

@@ -3,12 +3,14 @@
 #include "Processor.h"
 
 #include <atomic>
-#include <vector>
+#include <cstddef>
 
 namespace dsp {
 
-// Feed-forward peak compressor with smoothed gain reduction.
-// Threshold/ratio/knee in dB; attack/release in milliseconds.
+// Feed-forward RMS compressor with hold-before-release.
+// Threshold/ratio/knee in dB; attack/hold/release in milliseconds.
+// A fixed 10ms RMS integration window smooths sub-perceptual peaks before
+// the envelope follower, reducing pumping and breathing artifacts.
 class Compressor : public Processor
 {
 public:
@@ -20,6 +22,7 @@ public:
     void setRatio(float v) { m_ratio.store(v < 1.0f ? 1.0f : v, std::memory_order_relaxed); }
     void setKneeDb(float v) { m_kneeDb.store(v < 0.0f ? 0.0f : v, std::memory_order_relaxed); }
     void setAttackMs(float v) { m_attackMs.store(v < 0.1f ? 0.1f : v, std::memory_order_relaxed); }
+    void setHoldMs(float v) { m_holdMs.store(v < 0.0f ? 0.0f : v, std::memory_order_relaxed); }
     void setReleaseMs(float v) { m_releaseMs.store(v < 1.0f ? 1.0f : v, std::memory_order_relaxed); }
     void setMakeupDb(float v) { m_makeupDb.store(v, std::memory_order_relaxed); }
 
@@ -31,13 +34,16 @@ private:
     std::atomic<float> m_ratio{4.0f};
     std::atomic<float> m_kneeDb{6.0f};
     std::atomic<float> m_attackMs{10.0f};
+    std::atomic<float> m_holdMs{80.0f};
     std::atomic<float> m_releaseMs{120.0f};
     std::atomic<float> m_makeupDb{0.0f};
 
     std::atomic<float> m_currentGrDb{0.0f};
 
-    float m_envelopeDb = -120.0f;
-    std::vector<float> m_peakState;
+    // Audio-thread-only state (no locking needed).
+    float       m_rmsEnv       = 0.0f;   // running mean-square (linear)
+    float       m_envelopeDb   = -120.0f;
+    std::size_t m_holdRemaining = 0;
 };
 
 } // namespace dsp
