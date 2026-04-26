@@ -951,6 +951,16 @@ void MainWindow::connectSignals()
                 m_renderDevice->setCurrentIndex(idx);
             }
         }
+        // Sync the tray Output submenu — it won't update on its own unless
+        // refreshDevices() runs, which only happens on a devicesChanged event.
+        if (m_tray && !m_devices.isEmpty()) {
+            QList<ui::TrayController::DeviceChoice> choices;
+            choices.reserve(m_devices.size());
+            for (const auto &d : m_devices)
+                choices.push_back({d.id, d.name});
+            m_tray->setRoutingOptions(choices, selectedCaptureDeviceId(),
+                                      choices, selectedRenderDeviceId());
+        }
     });
     connect(m_engine, &host::AudioEngine::captureFormatChanged,
             this, [this](int, int) { refreshEngineStatus(); });
