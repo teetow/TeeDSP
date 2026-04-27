@@ -54,6 +54,13 @@ public:
     QString preferredRender() const { return m_preferredRenderId; }
     QString currentRender() const { return m_currentRenderId; }
 
+    // Hot-swap the capture endpoint. Unlike render switching, this is a
+    // full stop/restart — capture format (rate/channels) drives the chain
+    // and resampler, so there's no useful in-place handover. Expect a
+    // brief silence while WASAPI tears down and rebuilds.
+    void setPreferredCapture(const QString &id);
+    QString preferredCapture() const { return m_captureDeviceId; }
+
     // Latest-packet meter telemetry in dBFS. Each capture packet stores its
     // Latest-packet meter telemetry in dBFS.
     // ch=0 → L, ch=1 → R; default ch=0 for backwards-compatible call sites.

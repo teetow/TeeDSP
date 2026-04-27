@@ -235,6 +235,19 @@ bool AudioEngine::isRunning() const
     return m_capture.isRunning() && m_render.isRunning();
 }
 
+void AudioEngine::setPreferredCapture(const QString &id)
+{
+    if (id == m_captureDeviceId) return;
+    if (!isRunning()) {
+        // Not running — just remember the choice for the next start().
+        m_captureDeviceId = id;
+        return;
+    }
+    // Running: full restart against the new endpoint. start() already
+    // stops first and re-prepares the chain at the new capture format.
+    start(id, m_preferredRenderId);
+}
+
 void AudioEngine::setPreferredRender(const QString &id)
 {
     if (m_preferredRenderId == id) return;

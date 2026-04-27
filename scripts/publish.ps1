@@ -27,13 +27,21 @@ $exeName   = 'TeeDsp.exe'
 $exePath   = Join-Path $buildDir $exeName
 
 # ---- Build --------------------------------------------------------------------
+# Prefer vs2022-local if CMakeUserPresets.json exists, otherwise use vs2022
+$configPreset = 'vs2022'
+$buildPreset = 'vs2022-release'
+if (Test-Path (Join-Path $repoRoot 'CMakeUserPresets.json')) {
+    $configPreset = 'vs2022-local'
+    $buildPreset = 'vs2022-local-release'
+}
+
 if (-not $SkipBuild) {
     Write-Host "Configuring..."
-    & cmake --preset vs2022 | Out-Null
+    & cmake --preset $configPreset | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
 
     Write-Host "Building Release..."
-    & cmake --build --preset vs2022-release --parallel
+    & cmake --build --preset $buildPreset --parallel
     if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
 }
 
@@ -42,9 +50,38 @@ if (-not (Test-Path $exePath)) {
 }
 
 # ---- Deploy Qt ----------------------------------------------------------------
-# Locate windeployqt — prefer the one next to the Qt used by CMakePresets.json.
-$presets = Get-Content (Join-Path $repoRoot 'CMakePresets.json') -Raw | ConvertFrom-Json
-$qtPrefix = ($presets.configurePresets | Where-Object { $_.name -eq 'vs2022' }).cacheVariables.CMAKE_PREFIX_PATH
+# Locate windeployqt — prefer the one next to the Qt used by CMakePresets.json
+# or CMakeUserPresets.json (which holds user-specific paths like CMAKE_PREFIX_PATH).
+function Get-QtPrefixFromPresets([string]$file) {
+    if (-not (Test-Path $file)) { return $null }
+    $p = Get-Content $file -Raw | ConvertFrom-Json
+    # First, try to find vs2022-local (user override)
+    foreach ($preset in $p.configurePresets) {
+        if ($preset.name -eq 'vs2022-local') {
+            $cv = $preset.cacheVariables
+            if ($cv -and (Get-Member -InputObject $cv -Name 'CMAKE_PREFIX_PATH' -MemberType NoteProperty)) {
+                return $cv.CMAKE_PREFIX_PATH
+            }
+        }
+    }
+    # Fall back to vs2022
+    foreach ($preset in $p.configurePresets) {
+        if ($preset.name -eq 'vs2022') {
+            $cv = $preset.cacheVariables
+            if ($cv -and (Get-Member -InputObject $cv -Name 'CMAKE_PREFIX_PATH' -MemberType NoteProperty)) {
+                return $cv.CMAKE_PREFIX_PATH
+            }
+        }
+    }
+    return $null
+}
+
+$qtPrefix = Get-QtPrefixFromPresets (Join-Path $repoRoot 'CMakeUserPresets.json')
+if (-not $qtPrefix) {
+    $qtPrefix = Get-QtPrefixFromPresets (Join-Path $repoRoot 'CMakePresets.json')
+}
+if (-not $qtPrefix) { throw "CMAKE_PREFIX_PATH not found in CMakePresets.json or CMakeUserPresets.json" }
+
 $windeployqt = Join-Path $qtPrefix 'bin\windeployqt.exe'
 if (-not (Test-Path $windeployqt)) { throw "windeployqt not found at $windeployqt" }
 
@@ -69,6 +106,12 @@ New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
 Write-Host "Copying artifacts to $InstallDir"
 Copy-Item -Path (Join-Path $buildDir '*') -Destination $InstallDir -Recurse -Force
+
+# Copy theme.qss from source
+$themeQss = Join-Path $repoRoot 'src\ui\theme.qss'
+if (Test-Path $themeQss) {
+    Copy-Item -Path $themeQss -Destination $InstallDir -Force
+}
 
 $installedExe = Join-Path $InstallDir $exeName
 if (-not (Test-Path $installedExe)) {

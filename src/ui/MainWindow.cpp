@@ -983,7 +983,15 @@ void MainWindow::connectSignals()
     });
 
     connect(m_captureDevice, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int){ if (!m_syncingUi) saveSelectedDevices(); });
+            this, [this](int){
+        if (m_syncingUi) return;
+        saveSelectedDevices();
+        // Mirror the render combo's hot-switch behaviour. Capture swaps
+        // are a stop/restart under the hood — see AudioEngine — so the
+        // user will hear a brief gap, but the engine doesn't have to be
+        // toggled by hand.
+        if (m_engine) m_engine->setPreferredCapture(selectedCaptureDeviceId());
+    });
     connect(m_renderDevice, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int){
         if (m_syncingUi) return;
@@ -1038,6 +1046,9 @@ void MainWindow::connectSignals()
             m_captureDevice->setCurrentIndex(idx);
             m_syncingUi = wasSyncing;
             saveSelectedDevices();
+            if (m_engine)
+                m_engine->setPreferredCapture(selectedCaptureDeviceId());
+            refreshEngineStatus();
         });
         connect(m_tray, &ui::TrayController::outputDeviceSelected,
                 this, [this](const QString &id) {
