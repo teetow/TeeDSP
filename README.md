@@ -6,6 +6,8 @@ Compressor → Exciter), and renders the result to another endpoint.
 
 No kernel component. No APO. No elevation. No registry changes.
 
+![TeeDSP screenshot](image/screenshot.png)
+
 ## Requirements
 
 - Windows 10/11
