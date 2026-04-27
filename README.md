@@ -32,6 +32,11 @@ Typical system-wide setup:
 
 ## Build
 
+Qt 6 must be discoverable by CMake. If it is not in a standard location (the
+usual case on Windows), copy `CMakeUserPresets.json.example` to
+`CMakeUserPresets.json`, update the Qt path inside it, and substitute
+`vs2022-local` / `vs2022-local-release` for the preset names below.
+
 ```
 cmake --preset vs2022
 cmake --build --preset vs2022-release --parallel

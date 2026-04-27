@@ -3,9 +3,8 @@
 - [x] Double check the fills on ALL EQ curves, still seeing some strange black fill
 - [x] Add build timestamp to the context menu
 - [x] Context menu doesn't look native. no mouseovers on menu items, no accelerator keys (underscored characters indicating what key to hit)
-
 - [x] On launch, TeeDSP should "inject" itself in the Windows output chain -- set Windows output to whatever TeeDSP is set to listen to (normally the loopback) and set its output to whatever Windows was sending to
-- [x] I can hear what seems to be a limiter "pumping" when the signal goes to hot (it's not the compressor). can we get an indicator for this somewhere? 
+- [x] I can hear what seems to be a limiter "pumping" when the signal goes to hot (it's not the compressor). can we get an indicator for this somewhere?
 - [x] Deep-dive in how the FL Studio "heat map" style spectrogram works, it's incredibly useful.
 - [x] middle-click knob to reset
 - [x] make curve fill semi-transparent so it doesn't fully occlude the spectrogram
@@ -16,7 +15,7 @@
 - [x] When quitting TeeDSP cleanly, set Windows output to TeeDSP:s output (healing the gap, as it were)
 
 - [x] enable QSS styling for knobs, the gap between the knob and its value is HUGE
-- [x] stop button should restore native routing (just like when exiting). in other words, the routing should only be active when 
+- [x] stop button should restore native routing (just like when exiting). in other words, the routing should only be active when
 - [x] linear interpolation on the analyzer looks tacky, not sure what FL Studio uses but it looks amazing (ask for screenshot if you can't find info online)
 - [x] double-clicking an EQ node should reset only its EQ params, not its dynamics params
 - [x] we can lengthen the max release for the compressors a bit, maybe 3s

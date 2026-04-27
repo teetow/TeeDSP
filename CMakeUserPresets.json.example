@@ -1,0 +1,28 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "vs2022-local",
+      "displayName": "VS 2022 x64 (local)",
+      "description": "Inherits the shared vs2022 preset and adds a local Qt path.",
+      "inherits": "vs2022",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.x.x/msvc2022_64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs2022-local-debug",
+      "displayName": "VS 2022 Debug (local)",
+      "configurePreset": "vs2022-local",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-local-release",
+      "displayName": "VS 2022 Release (local)",
+      "configurePreset": "vs2022-local",
+      "configuration": "Release"
+    }
+  ]
+}
