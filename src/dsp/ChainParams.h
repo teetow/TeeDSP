@@ -22,12 +22,13 @@ struct EqBandParams {
 };
 
 struct ChainParams {
-    uint32_t    version = 3;
+    uint32_t    version = 4;
     bool        bypassed = false;
 
     float       inputTrimDb = 0.0f;
     float       outputTrimDb = 0.0f;
     bool        levelerEnabled = false;
+    bool        outputLevelerEnabled = false;
 
     bool        eqEnabled = true;
     EqBandParams eqBands[5] = {

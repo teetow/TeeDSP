@@ -33,6 +33,7 @@ DspController::DspController(ProcessorChain *chain, QObject *parent)
     m_chain->setOutputTrimDb(m_outputTrimDb);
     m_chain->setStereoWidth(m_stereoWidth);
     m_chain->leveler().setBypass(!m_levelerEnabled);
+    m_chain->outputLeveler().setBypass(!m_outputLevelerEnabled);
     m_chain->setBypass(m_bypass);
 
     m_meterTimer.setInterval(kMeterIntervalMs);
@@ -53,6 +54,15 @@ DspController::DspController(ProcessorChain *chain, QObject *parent)
     connect(this, &DspController::exciterChanged,    this, &DspController::scheduleSave);
     connect(this, &DspController::eqChanged,         this, &DspController::scheduleSave);
     connect(this, &DspController::levelerChanged,    this, &DspController::scheduleSave);
+}
+
+void DspController::setMeterTimerActive(bool active)
+{
+    if (active) {
+        if (!m_meterTimer.isActive()) m_meterTimer.start();
+    } else {
+        m_meterTimer.stop();
+    }
 }
 
 void DspController::scheduleSave()
@@ -108,6 +118,19 @@ void DspController::setLevelerEnabled(bool b)
 float DspController::levelerGainDb() const
 {
     return m_chain->leveler().currentGainDb();
+}
+
+void DspController::setOutputLevelerEnabled(bool b)
+{
+    if (m_outputLevelerEnabled == b) return;
+    m_outputLevelerEnabled = b;
+    m_chain->outputLeveler().setBypass(!b);
+    emit levelerChanged();
+}
+
+float DspController::outputLevelerGainDb() const
+{
+    return m_chain->outputLeveler().currentGainDb();
 }
 
 bool DspController::compressorEnabled() const { return m_compressorEnabled; }
@@ -382,6 +405,7 @@ ChainParams DspController::buildSnapshot() const
     p.outputTrimDb    = m_outputTrimDb;
     p.stereoWidth     = m_stereoWidth;
     p.levelerEnabled  = m_levelerEnabled;
+    p.outputLevelerEnabled = m_outputLevelerEnabled;
     p.eqEnabled       = m_eqEnabled;
     p.compEnabled     = m_compressorEnabled;
     p.compThreshDb    = m_compThresholdDb;
@@ -419,6 +443,7 @@ void DspController::applySnapshot(const ChainParams &params)
     m_outputTrimDb = params.outputTrimDb;
     m_stereoWidth = params.stereoWidth;
     m_levelerEnabled = params.levelerEnabled;
+    m_outputLevelerEnabled = params.outputLevelerEnabled;
     m_compressorEnabled = params.compEnabled;
     m_compThresholdDb = params.compThreshDb;
     m_compRatio = params.compRatio;
@@ -458,6 +483,7 @@ void DspController::applySnapshot(const ChainParams &params)
     m_chain->setOutputTrimDb(m_outputTrimDb);
     m_chain->setStereoWidth(m_stereoWidth);
     m_chain->leveler().setBypass(!m_levelerEnabled);
+    m_chain->outputLeveler().setBypass(!m_outputLevelerEnabled);
     m_chain->setBypass(m_bypass);
 
     emit bypassChanged();
@@ -480,6 +506,7 @@ void DspController::loadFromSettings()
     params.outputTrimDb = settings.value(QStringLiteral("outputTrimDb"), params.outputTrimDb).toFloat();
     params.stereoWidth = settings.value(QStringLiteral("channelMixer/width"), params.stereoWidth).toFloat();
     params.levelerEnabled = settings.value(QStringLiteral("leveler/enabled"), params.levelerEnabled).toBool();
+    params.outputLevelerEnabled = settings.value(QStringLiteral("leveler/outputEnabled"), params.outputLevelerEnabled).toBool();
     params.compEnabled = settings.value(QStringLiteral("comp/enabled"), params.compEnabled).toBool();
     params.compThreshDb = settings.value(QStringLiteral("comp/threshold"), params.compThreshDb).toFloat();
     params.compRatio = settings.value(QStringLiteral("comp/ratio"), params.compRatio).toFloat();
@@ -567,6 +594,7 @@ void DspController::saveToSettings() const
     settings.setValue(QStringLiteral("outputTrimDb"), m_outputTrimDb);
     settings.setValue(QStringLiteral("channelMixer/width"), m_stereoWidth);
     settings.setValue(QStringLiteral("leveler/enabled"), m_levelerEnabled);
+    settings.setValue(QStringLiteral("leveler/outputEnabled"), m_outputLevelerEnabled);
     settings.setValue(QStringLiteral("comp/enabled"), m_compressorEnabled);
     settings.setValue(QStringLiteral("comp/threshold"), m_compThresholdDb);
     settings.setValue(QStringLiteral("comp/ratio"), m_compRatio);

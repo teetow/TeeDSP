@@ -41,6 +41,8 @@ class DspController : public QObject
     Q_PROPERTY(float stereoWidth READ stereoWidth WRITE setStereoWidth NOTIFY bypassChanged FINAL)
     Q_PROPERTY(bool levelerEnabled READ levelerEnabled WRITE setLevelerEnabled NOTIFY levelerChanged FINAL)
     Q_PROPERTY(float levelerGainDb READ levelerGainDb NOTIFY meterChanged FINAL)
+    Q_PROPERTY(bool outputLevelerEnabled READ outputLevelerEnabled WRITE setOutputLevelerEnabled NOTIFY levelerChanged FINAL)
+    Q_PROPERTY(float outputLevelerGainDb READ outputLevelerGainDb NOTIFY meterChanged FINAL)
 
     Q_PROPERTY(bool compressorEnabled READ compressorEnabled WRITE setCompressorEnabled NOTIFY compressorChanged FINAL)
     Q_PROPERTY(float compThresholdDb READ compThresholdDb WRITE setCompThresholdDb NOTIFY compressorChanged FINAL)
@@ -76,6 +78,9 @@ public:
     bool levelerEnabled() const { return m_levelerEnabled; }
     void setLevelerEnabled(bool b);
     float levelerGainDb() const;
+    bool outputLevelerEnabled() const { return m_outputLevelerEnabled; }
+    void setOutputLevelerEnabled(bool b);
+    float outputLevelerGainDb() const;
 
     bool compressorEnabled() const;
     void setCompressorEnabled(bool b);
@@ -132,6 +137,12 @@ public:
     void loadFromSettings();
     void saveToSettings() const;
 
+    // Pauses/resumes the meter tick. Used by the UI to silence the 125 Hz
+    // meter→widget repaint chain while the window is hidden or minimized.
+    // Audio processing and parameter state are unaffected; meters resume from
+    // current atomic state on the next tick after resume.
+    void setMeterTimerActive(bool active);
+
 private slots:
     // Coalesces rapid changes (knob drags, etc.) into a single write a short
     // moment after the user stops twiddling. Suppressed during loadFromSettings.
@@ -160,6 +171,7 @@ private:
     float m_outputTrimDb = 0.0f;
     float m_stereoWidth = 1.0f;
     bool m_levelerEnabled = false;
+    bool m_outputLevelerEnabled = false;
 
     bool m_compressorEnabled = true;
     float m_compThresholdDb = -18.0f;

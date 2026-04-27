@@ -40,6 +40,9 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void moveEvent(QMoveEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private:
     struct EqBandWidgets {};
@@ -64,6 +67,13 @@ private:
 
     void onStartStopClicked();
     void onEngineError(const QString &message);
+
+    // Pauses/resumes the analyzer + meter timers based on whether the window
+    // is actually being looked at. The 60 Hz analyzer FFTs and 125 Hz meter
+    // updates drive the QOpenGLWidget EqCurve and meter widgets — useless
+    // work when hidden to tray or minimized, and a soak-time GPU-pin risk
+    // across display-sleep / DXGI device-reset transitions.
+    void updateUiTimerGate();
 
     // Stops the audio engine and restores Windows default output to the
     // engine's render target — same "heal the gap" routing fix-up the clean
@@ -96,6 +106,8 @@ private:
     QLabel *m_outputVuLabel = nullptr;
     QLabel *m_outputLufsLabel = nullptr;
     ui::Knob *m_outputTrim = nullptr;
+    QCheckBox *m_outputLevelerEnabled = nullptr;
+    QLabel *m_outputLevelerGainLabel = nullptr;
 
     QCheckBox *m_globalBypass = nullptr;
 

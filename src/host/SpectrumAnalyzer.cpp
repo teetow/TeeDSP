@@ -41,6 +41,20 @@ void SpectrumAnalyzer::start(double sampleRate, int /*channels*/)
     m_running.store(true);
 }
 
+void SpectrumAnalyzer::setUiActive(bool active)
+{
+    if (active) {
+        if (!m_timer.isActive()) m_timer.start();
+    } else {
+        m_timer.stop();
+        // Drop a "no data" frame so any consumers (EqCurve overlay) clear
+        // immediately rather than freezing on the last spectrum until the
+        // window is shown again.
+        emit spectraUpdated(QVector<float>(), QVector<float>(),
+                            m_sampleRate.load(), kFftSize);
+    }
+}
+
 void SpectrumAnalyzer::stop()
 {
     m_running.store(false);

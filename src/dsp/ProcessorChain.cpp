@@ -16,6 +16,12 @@ void ProcessorChain::prepare(double sampleRate, std::size_t channels)
     m_sampleRate = sampleRate;
     m_channels = channels;
     m_leveler.prepare(sampleRate, channels);
+    // Output stage rides toward -12 LUFS with a symmetric ±12 dB window.
+    // Tighter target than the input rider since by here the chain has
+    // already roughly normalized; the output stage just trims residual
+    // loudness drift caused by internal gain changes (EQ, makeup, etc.).
+    m_outputLeveler.configure(-12.0f, 12.0f, 12.0f);
+    m_outputLeveler.prepare(sampleRate, channels);
     m_eq.prepare(sampleRate, channels);
     m_compressor.prepare(sampleRate, channels);
     m_exciter.prepare(sampleRate, channels);
@@ -24,6 +30,7 @@ void ProcessorChain::prepare(double sampleRate, std::size_t channels)
 void ProcessorChain::reset()
 {
     m_leveler.reset();
+    m_outputLeveler.reset();
     m_eq.reset();
     m_compressor.reset();
     m_exciter.reset();
@@ -70,6 +77,12 @@ void ProcessorChain::process(float *interleaved, std::size_t frameCount)
             }
         }
     }
+
+    // Output leveler runs ahead of out trim — symmetric with the input
+    // side (leveler → trim) and keeps Out Trim audibly functional even
+    // when the leveler is engaged: trim rides on top of the leveled
+    // signal rather than being absorbed by it.
+    m_outputLeveler.process(interleaved, frameCount);
 
     if (outTrimLin != 1.0f) {
         const std::size_t sampleCount = frameCount * m_channels;

@@ -25,6 +25,13 @@ inline float clampf(float x, float lo, float hi)
 }
 } // namespace
 
+void Leveler::configure(float targetLufs, float maxBoostDb, float maxCutDb)
+{
+    m_targetLufs = targetLufs;
+    m_maxBoostDb = std::max(0.0f, maxBoostDb);
+    m_maxCutDb   = std::max(0.0f, maxCutDb);
+}
+
 void Leveler::prepare(double sampleRate, std::size_t channels)
 {
     m_sampleRate    = sampleRate;
@@ -131,7 +138,7 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
             if (power > 1e-10) {
                 const float lufs = static_cast<float>(-0.691 + 10.0 * std::log10(power));
                 const float targetGainDb =
-                    clampf(kTargetLufs - lufs, -kMaxCutDb, kMaxBoostDb);
+                    clampf(m_targetLufs - lufs, -m_maxCutDb, m_maxBoostDb);
                 // Asymmetric one-pole: faster down-ride than up-ride.
                 const float coef = (targetGainDb < m_smoothedGainDb)
                                        ? m_attackCoef : m_releaseCoef;

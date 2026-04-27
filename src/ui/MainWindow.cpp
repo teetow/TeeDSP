@@ -18,6 +18,9 @@
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QEvent>
+#include <QHideEvent>
+#include <QShowEvent>
 #include <QComboBox>
 #include <QMoveEvent>
 #include <QResizeEvent>
@@ -245,6 +248,34 @@ void MainWindow::moveEvent(QMoveEvent *event)
 {
     QMainWindow::moveEvent(event);
     m_geometrySaveTimer.start();
+}
+
+void MainWindow::hideEvent(QHideEvent *event)
+{
+    QMainWindow::hideEvent(event);
+    updateUiTimerGate();
+}
+
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+    updateUiTimerGate();
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange) updateUiTimerGate();
+}
+
+void MainWindow::updateUiTimerGate()
+{
+    const bool active = isVisible() && !isMinimized();
+    if (m_dspController) m_dspController->setMeterTimerActive(active);
+    if (m_engine) {
+        if (auto *analyzer = m_engine->analyzer())
+            analyzer->setUiActive(active);
+    }
 }
 
 void MainWindow::buildUi()
@@ -575,8 +606,9 @@ QWidget *MainWindow::buildInputPane()
     m_levelerEnabled = new QCheckBox(QStringLiteral("Auto"));
     m_levelerEnabled->setToolTip(
         QStringLiteral("Auto-leveler — slow loudness rider that nudges the input "
-                       "toward -18 LUFS without pumping. Sits before the input "
-                       "trim, so the trim knob still rides on top."));
+                       "toward -18 LUFS (up to +18 / -9 dB) without pumping. "
+                       "Sits before the input trim, so the trim knob still "
+                       "rides on top."));
     col->addWidget(m_levelerEnabled, 0, Qt::AlignHCenter);
 
     m_levelerGainLabel = new QLabel(QStringLiteral("0.0 dB"));
@@ -652,6 +684,19 @@ QWidget *MainWindow::buildOutputPane()
     m_outputTrim->setBipolarOrigin(0.0);
     col->addWidget(m_outputTrim, 0, Qt::AlignHCenter);
 
+    m_outputLevelerEnabled = new QCheckBox(QStringLiteral("Auto"));
+    m_outputLevelerEnabled->setToolTip(
+        QStringLiteral("Output auto-leveler — slow loudness rider that anchors "
+                       "the chain output near -12 LUFS regardless of internal "
+                       "gain choices. Sits before Out Trim, so the trim still "
+                       "rides on top."));
+    col->addWidget(m_outputLevelerEnabled, 0, Qt::AlignHCenter);
+
+    m_outputLevelerGainLabel = new QLabel(QStringLiteral("0.0 dB"));
+    m_outputLevelerGainLabel->setProperty("role", "status");
+    m_outputLevelerGainLabel->setAlignment(Qt::AlignHCenter);
+    col->addWidget(m_outputLevelerGainLabel, 0, Qt::AlignHCenter);
+
     return section;
 }
 
@@ -676,6 +721,9 @@ void MainWindow::connectSignals()
     });
     connect(m_outputTrim, &ui::Knob::valueChanged, this, [this](double v) {
         if (!m_syncingUi) m_dspController->setOutputTrimDb(static_cast<float>(v));
+    });
+    connect(m_outputLevelerEnabled, &QCheckBox::toggled, this, [this](bool c) {
+        if (!m_syncingUi) m_dspController->setOutputLevelerEnabled(c);
     });
     connect(m_stereoWidth, &ui::Knob::valueChanged, this, [this](double v) {
         if (!m_syncingUi) m_dspController->setStereoWidth(static_cast<float>(v / 100.0));
@@ -900,6 +948,13 @@ void MainWindow::connectSignals()
                 .arg(sign).arg(std::fabs(g), 0, 'f', 1));
         }
 
+        if (m_outputLevelerGainLabel) {
+            const float g = m_dspController->outputLevelerGainDb();
+            const QChar sign = g >= 0.0f ? QLatin1Char('+') : QLatin1Char('-');
+            m_outputLevelerGainLabel->setText(QStringLiteral("%1%2 dB")
+                .arg(sign).arg(std::fabs(g), 0, 'f', 1));
+        }
+
         const float hotDbfs = m_dispOutHotDbfs;
         if (hotDbfs > -0.2f) {
             m_outputHotIndicator->setText(QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
@@ -1019,6 +1074,8 @@ void MainWindow::pullStateFromController()
     m_outputTrim->setValue(m_dspController->outputTrimDb());
     m_stereoWidth->setValue(m_dspController->stereoWidth() * 100.0f);
     m_levelerEnabled->setChecked(m_dspController->levelerEnabled());
+    if (m_outputLevelerEnabled)
+        m_outputLevelerEnabled->setChecked(m_dspController->outputLevelerEnabled());
 
     m_compEnabled->setChecked(m_dspController->compressorEnabled());
     m_compThreshold->setValue(m_dspController->compThresholdDb());

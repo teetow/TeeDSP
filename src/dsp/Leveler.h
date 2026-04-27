@@ -25,14 +25,16 @@ public:
     // means the rider is boosting; negative means it is attenuating.
     float currentGainDb() const { return m_currentGainDb.load(std::memory_order_relaxed); }
 
+    // Retune target loudness and clamp range. Defaults suit an input-stage
+    // rider correcting for highly varying source loudness (music vs. voice
+    // calls); the output stage instance uses a tighter, hotter target.
+    void configure(float targetLufs, float maxBoostDb, float maxCutDb);
+
 private:
     static constexpr int   kMaxCh        = 8;
-    static constexpr float kTargetLufs   = -18.0f;
-    static constexpr float kMaxBoostDb   =  12.0f;
-    static constexpr float kMaxCutDb     =   6.0f;
     static constexpr float kSilenceDbfs  = -50.0f;
-    static constexpr float kAttackMs     =  250.0f;  // gain decreases (down-ride)
-    static constexpr float kReleaseMs    = 2000.0f;  // gain increases (up-ride)
+    static constexpr float kAttackMs     =  400.0f;  // gain decreases (down-ride)
+    static constexpr float kReleaseMs    = 3500.0f;  // gain increases (up-ride)
     static constexpr float kWindowSec    =    3.0f;  // short-term LUFS window
     static constexpr float kEnableMixMs  =   40.0f;  // crossfade tau for enable toggle
 
@@ -53,6 +55,10 @@ private:
         std::vector<float> ring;
         double sumSq = 0.0;
     };
+
+    float m_targetLufs   = -18.0f;
+    float m_maxBoostDb   =  18.0f;
+    float m_maxCutDb     =   9.0f;
 
     ChannelState m_ch[kMaxCh];
     int   m_numCh         = 0;

@@ -32,6 +32,14 @@ public:
     void stop();
     bool isRunning() const { return m_running.load(); }
 
+    // Pauses/resumes the FFT tick timer. Used by the UI to silence the 60 Hz
+    // analyzer→EqCurve repaint chain while the window is hidden or minimized:
+    // there is no point burning CPU on FFTs whose output nothing draws, and
+    // a continuously refreshing QOpenGLWidget across a display-sleep / GPU
+    // power transition is the most likely path to a runaway repaint loop.
+    // Must be called from the timer's owning thread (the main thread).
+    void setUiActive(bool active);
+
     // Called from the capture thread.
     void pushPre(const float *interleaved, int frames, int channels);
     void pushPost(const float *interleaved, int frames, int channels);

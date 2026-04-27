@@ -9,9 +9,13 @@
 
 namespace dsp {
 
-// Ordered chain: Leveler -> [input trim] -> EQ -> Exciter -> Compressor.
-// Auto-leveling normalizes the source before tone-shape, harmonic
-// enhancement, and dynamic control see it.
+// Ordered chain:
+//   Leveler -> [input trim] -> EQ -> Exciter -> Compressor -> [width]
+//   -> Output Leveler -> [output trim].
+// Input leveler normalizes the source before tone-shape and dynamics see
+// it. Output leveler anchors the chain output near a fixed loudness
+// regardless of internal gain choices; output trim then rides on top so
+// the trim knob is always audibly functional, mirroring the input side.
 class ProcessorChain
 {
 public:
@@ -33,9 +37,11 @@ public:
     Compressor &compressor() { return m_compressor; }
     Exciter &exciter() { return m_exciter; }
     Leveler &leveler() { return m_leveler; }
+    Leveler &outputLeveler() { return m_outputLeveler; }
 
 private:
     Leveler m_leveler;
+    Leveler m_outputLeveler;
     ParametricEQ m_eq;
     Compressor m_compressor;
     Exciter m_exciter;
