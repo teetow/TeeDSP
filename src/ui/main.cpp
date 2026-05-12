@@ -3,14 +3,17 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFont>
 #include <QIcon>
+#include <QLockFile>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
 #include <QPixmap>
+#include <QStandardPaths>
 #include <QSurfaceFormat>
 
 #include <memory>
@@ -78,6 +81,13 @@ int main(int argc, char *argv[])
     }
 
     QApplication app(argc, argv);
+
+    QLockFile instanceLock(QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+        .filePath(QStringLiteral("TeeDSP.lock")));
+    instanceLock.setStaleLockTime(5000);
+    if (!instanceLock.tryLock(100)) {
+        return 0;
+    }
 
     // Apply dark palette so anything that bypasses the stylesheet still reads dark.
     QPalette pal = app.palette();
