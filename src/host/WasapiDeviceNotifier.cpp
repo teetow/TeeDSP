@@ -40,7 +40,7 @@ public:
     HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override                       { notify(); return S_OK; }
     HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override                     { notify(); return S_OK; }
     HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow, ERole, LPCWSTR) override { notify(); return S_OK; }
-    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) override { notify(); return S_OK; }
 
 private:
     void notify()

@@ -7,6 +7,7 @@
 
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -16,6 +17,25 @@ namespace host {
 namespace {
 
 constexpr REFERENCE_TIME kBufferDuration = 10'000'000; // 1 second in 100ns ticks — worst-case pool
+
+DWORD pollIntervalMs(IAudioClient *client)
+{
+    if (!client) return 2;
+
+    REFERENCE_TIME defaultPeriod = 0;
+    REFERENCE_TIME minimumPeriod = 0;
+    if (FAILED(client->GetDevicePeriod(&defaultPeriod, &minimumPeriod)) || defaultPeriod <= 0)
+        return 2;
+    const REFERENCE_TIME period =
+        (minimumPeriod > 0) ? std::min(defaultPeriod, minimumPeriod) : defaultPeriod;
+
+    // REFERENCE_TIME is 100 ns. Poll at roughly half the engine period, but
+    // keep the sleep bounded so low-latency virtual cables are noticed quickly
+    // without busy-spinning at larger shared-mode periods.
+    const auto halfPeriodMs = static_cast<DWORD>(
+        std::max<REFERENCE_TIME>(1, period / 20'000));
+    return std::clamp<DWORD>(halfPeriodMs, 1, 10);
+}
 
 bool isFloatFormat(const WAVEFORMATEX *wf)
 {
@@ -153,6 +173,7 @@ void WasapiLoopbackCapture::threadMain(QString deviceId, Callback cb)
 
         UINT32 bufferFrames = 0;
         client->GetBufferSize(&bufferFrames);
+        const DWORD emptyPollMs = pollIntervalMs(client.Get());
 
         ComPtr<IAudioCaptureClient> capture;
         if (FAILED(client->GetService(IID_PPV_ARGS(&capture)))) { CoTaskMemFree(mix); break; }
@@ -170,7 +191,7 @@ void WasapiLoopbackCapture::threadMain(QString deviceId, Callback cb)
             if (FAILED(capture->GetNextPacketSize(&packetFrames))) break;
 
             if (packetFrames == 0) {
-                Sleep(2);
+                Sleep(emptyPollMs);
                 continue;
             }
 

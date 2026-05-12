@@ -47,8 +47,7 @@ QString WasapiRender::start(const QString &renderDeviceId)
 
     {
         std::lock_guard<std::mutex> g(m_mutex);
-        // 2 seconds of stereo float headroom — dropped if underrun recovery falls behind.
-        m_ring.assign(96000 * 2 * 2, 0.0f);
+        m_ring.clear();
         m_writePos = m_readPos = m_available = 0;
     }
 
@@ -171,10 +170,22 @@ void WasapiRender::threadMain(QString deviceId)
         if (FAILED(client->GetService(IID_PPV_ARGS(&renderClient)))) { CoTaskMemFree(mix); break; }
 
         const int channels = mix->nChannels;
+        const int sampleRate = static_cast<int>(mix->nSamplesPerSec);
         const int bytesPerSample = mix->wBitsPerSample / 8;
         const bool floatFormat = isFloatFormat(mix);
+
+        {
+            std::lock_guard<std::mutex> g(m_mutex);
+            const size_t ringSamples =
+                static_cast<size_t>(std::max(sampleRate, 48000))
+                * static_cast<size_t>(std::max(channels, 1))
+                * 2; // 2 seconds of negotiated-format headroom.
+            m_ring.assign(ringSamples, 0.0f);
+            m_writePos = m_readPos = m_available = 0;
+        }
+
         m_channels.store(channels);
-        m_sampleRate.store(static_cast<int>(mix->nSamplesPerSec));
+        m_sampleRate.store(sampleRate);
         m_isFloat.store(floatFormat);
 
         // Pre-fill the buffer with silence so the device can start cleanly.
