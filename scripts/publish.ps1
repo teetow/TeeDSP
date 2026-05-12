@@ -22,9 +22,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot  = Split-Path $PSScriptRoot -Parent
-$buildDir  = Join-Path $repoRoot 'out\build\vs2022\Release'
 $exeName   = 'TeeDsp.exe'
-$exePath   = Join-Path $buildDir $exeName
 
 # ---- Build --------------------------------------------------------------------
 # Prefer vs2022-local if CMakeUserPresets.json exists, otherwise use vs2022
@@ -34,6 +32,9 @@ if (Test-Path (Join-Path $repoRoot 'CMakeUserPresets.json')) {
     $configPreset = 'vs2022-local'
     $buildPreset = 'vs2022-local-release'
 }
+
+$buildDir = Join-Path $repoRoot "out\build\$configPreset\Release"
+$exePath  = Join-Path $buildDir $exeName
 
 if (-not $SkipBuild) {
     Write-Host "Configuring..."
