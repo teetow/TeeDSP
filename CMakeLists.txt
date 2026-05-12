@@ -84,3 +84,8 @@ install(FILES
 	src/ui/theme.qss
 	DESTINATION .
 )
+
+option(TEEDSP_BUILD_APO "Build the TeeDSP Audio Processing Object DLL" ON)
+if(TEEDSP_BUILD_APO)
+	add_subdirectory(apo)
+endif()
