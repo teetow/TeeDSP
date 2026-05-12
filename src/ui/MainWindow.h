@@ -80,6 +80,11 @@ private:
     // quit path performs.
     void stopEngineAndHealRouting();
 
+    // Inserts TeeDSP into the current Windows playback chain: TeeDSP renders
+    // to whatever Windows was sending to, and Windows default is flipped to
+    // the render endpoint paired with TeeDSP's selected input.
+    void setTeeDspAsActive();
+
     QString selectedCaptureDeviceId() const;
     QString selectedRenderDeviceId() const;
     void saveSelectedDevices() const;
@@ -153,7 +158,8 @@ private:
     host::AudioEngine *m_engine = nullptr;
     ui::TrayController *m_tray = nullptr;
 
-    QList<host::DeviceInfo> m_devices;
+    QList<host::DeviceInfo> m_inputDevices;
+    QList<host::DeviceInfo> m_outputDevices;
     bool m_syncingUi = false;
     bool m_quitting = false;
 

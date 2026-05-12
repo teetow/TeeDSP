@@ -133,6 +133,12 @@ void WasapiLoopbackCapture::threadMain(QString deviceId, Callback cb)
         if (FAILED(enumerator->GetDevice(
                 reinterpret_cast<LPCWSTR>(deviceId.utf16()), &dev))) break;
 
+        EDataFlow flow = eRender;
+        ComPtr<IMMEndpoint> endpoint;
+        if (SUCCEEDED(dev.As(&endpoint)) && endpoint) {
+            endpoint->GetDataFlow(&flow);
+        }
+
         ComPtr<IAudioClient> client;
         if (FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client))) break;
 
@@ -141,7 +147,7 @@ void WasapiLoopbackCapture::threadMain(QString deviceId, Callback cb)
 
         HRESULT hr = client->Initialize(
             AUDCLNT_SHAREMODE_SHARED,
-            AUDCLNT_STREAMFLAGS_LOOPBACK,
+            flow == eRender ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0,
             kBufferDuration, 0, mix, nullptr);
         if (FAILED(hr)) { CoTaskMemFree(mix); break; }
 

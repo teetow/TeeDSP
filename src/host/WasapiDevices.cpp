@@ -98,9 +98,7 @@ bool waveFormatToStreamFormat(const WAVEFORMATEX *wf, StreamFormat &out)
     return false;
 }
 
-} // namespace
-
-QList<DeviceInfo> WasapiDevices::enumerateRender()
+QList<DeviceInfo> enumerateEndpoints(EDataFlow flow)
 {
     QList<DeviceInfo> out;
     CoInitScope co;
@@ -113,7 +111,7 @@ QList<DeviceInfo> WasapiDevices::enumerateRender()
     QString defaultId;
     {
         ComPtr<IMMDevice> defDev;
-        if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &defDev))) {
+        if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(flow, eConsole, &defDev))) {
             LPWSTR pid = nullptr;
             if (SUCCEEDED(defDev->GetId(&pid))) {
                 defaultId = wideToQString(pid);
@@ -123,7 +121,7 @@ QList<DeviceInfo> WasapiDevices::enumerateRender()
     }
 
     ComPtr<IMMDeviceCollection> collection;
-    if (FAILED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection)))
+    if (FAILED(enumerator->EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE, &collection)))
         return out;
 
     UINT count = 0;
@@ -167,6 +165,76 @@ QList<DeviceInfo> WasapiDevices::enumerateRender()
     }
 
     return out;
+}
+
+const DeviceInfo *findById(const QList<DeviceInfo> &devices, const QString &id)
+{
+    for (const auto &d : devices) {
+        if (d.id == id) return &d;
+    }
+    return nullptr;
+}
+
+bool sameInterface(const DeviceInfo &a, const DeviceInfo &b)
+{
+    return !a.interfaceName.isEmpty()
+        && a.interfaceName.compare(b.interfaceName, Qt::CaseInsensitive) == 0;
+}
+
+} // namespace
+
+QList<DeviceInfo> WasapiDevices::enumerateRender()
+{
+    return enumerateEndpoints(eRender);
+}
+
+QList<DeviceInfo> WasapiDevices::enumerateCapture()
+{
+    return enumerateEndpoints(eCapture);
+}
+
+QString WasapiDevices::routeRenderForInput(const QString &inputDeviceId)
+{
+    if (inputDeviceId.isEmpty()) return {};
+
+    const auto renders = enumerateRender();
+    if (findById(renders, inputDeviceId)) {
+        return inputDeviceId;
+    }
+
+    const auto captures = enumerateCapture();
+    const DeviceInfo *input = findById(captures, inputDeviceId);
+    if (!input || !input->isVirtual) return {};
+
+    for (const auto &render : renders) {
+        if (render.isVirtual && sameInterface(*input, render))
+            return render.id;
+    }
+    for (const auto &render : renders) {
+        if (sameInterface(*input, render))
+            return render.id;
+    }
+    return {};
+}
+
+QString WasapiDevices::pairedCaptureForRender(const QString &renderDeviceId)
+{
+    if (renderDeviceId.isEmpty()) return {};
+
+    const auto renders = enumerateRender();
+    const DeviceInfo *render = findById(renders, renderDeviceId);
+    if (!render || !render->isVirtual) return {};
+
+    const auto captures = enumerateCapture();
+    for (const auto &capture : captures) {
+        if (capture.isVirtual && sameInterface(*render, capture))
+            return capture.id;
+    }
+    for (const auto &capture : captures) {
+        if (sameInterface(*render, capture))
+            return capture.id;
+    }
+    return {};
 }
 
 QString WasapiDevices::defaultRenderId()

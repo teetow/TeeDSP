@@ -77,6 +77,11 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
         emit startStopRequested();
     });
 
+    m_setAsActiveAction = m_menu->addAction(QStringLiteral("Set as &active"));
+    connect(m_setAsActiveAction, &QAction::triggered, this, [this]() {
+        emit setAsActiveRequested();
+    });
+
     m_menu->addSeparator();
 
     m_inputMenu = m_menu->addMenu(QStringLiteral("&Input"));

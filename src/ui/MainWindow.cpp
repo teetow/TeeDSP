@@ -176,12 +176,15 @@ MainWindow::MainWindow(QWidget *parent)
         if (m_engine->isRunning()) return;
 
         const QString captureId = selectedCaptureDeviceId();
+        const QString routeRenderId = host::WasapiDevices::routeRenderForInput(captureId);
         const QString previousDefaultRender = host::WasapiDevices::defaultRenderId();
 
         // On launch, inject TeeDSP into the Windows output chain:
         // 1) TeeDSP renders to whatever Windows was previously sending to.
-        // 2) Windows default output is switched to TeeDSP's loopback source.
-        if (!previousDefaultRender.isEmpty() && previousDefaultRender != captureId) {
+        // 2) Windows default output is switched to TeeDSP's route endpoint.
+        if (!routeRenderId.isEmpty()
+            && !previousDefaultRender.isEmpty()
+            && previousDefaultRender != routeRenderId) {
             const int idx = m_renderDevice->findData(previousDefaultRender);
             if (idx >= 0) {
                 const bool wasSyncing = m_syncingUi;
@@ -195,9 +198,9 @@ MainWindow::MainWindow(QWidget *parent)
         const QString err = m_engine->start(captureId, selectedRenderDeviceId());
         if (!err.isEmpty()) m_statusLabel->setText(err);
 
-        if (err.isEmpty() && !captureId.isEmpty() && previousDefaultRender != captureId) {
-            if (!host::WasapiDevices::setDefaultRender(captureId)) {
-                m_statusLabel->setText(QStringLiteral("Running (warning: failed to set Windows default output to capture device)."));
+        if (err.isEmpty() && !routeRenderId.isEmpty() && previousDefaultRender != routeRenderId) {
+            if (!host::WasapiDevices::setDefaultRender(routeRenderId)) {
+                m_statusLabel->setText(QStringLiteral("Running (warning: failed to set Windows default output to TeeDSP route)."));
             }
         }
 
@@ -1016,13 +1019,19 @@ void MainWindow::connectSignals()
         }
         // Sync the tray Output submenu — it won't update on its own unless
         // refreshDevices() runs, which only happens on a devicesChanged event.
-        if (m_tray && !m_devices.isEmpty()) {
-            QList<ui::TrayController::DeviceChoice> choices;
-            choices.reserve(m_devices.size());
-            for (const auto &d : m_devices)
-                choices.push_back({d.id, d.name});
-            m_tray->setRoutingOptions(choices, selectedCaptureDeviceId(),
-                                      choices, selectedRenderDeviceId());
+        if (m_tray && (!m_inputDevices.isEmpty() || !m_outputDevices.isEmpty())) {
+            QList<ui::TrayController::DeviceChoice> inputChoices;
+            inputChoices.reserve(m_captureDevice ? m_captureDevice->count() : 0);
+            for (int i = 0; m_captureDevice && i < m_captureDevice->count(); ++i)
+                inputChoices.push_back({m_captureDevice->itemData(i).toString(),
+                                        m_captureDevice->itemText(i)});
+
+            QList<ui::TrayController::DeviceChoice> outputChoices;
+            outputChoices.reserve(m_outputDevices.size());
+            for (const auto &d : m_outputDevices)
+                outputChoices.push_back({d.id, d.name});
+            m_tray->setRoutingOptions(inputChoices, selectedCaptureDeviceId(),
+                                      outputChoices, selectedRenderDeviceId());
         }
     });
     connect(m_engine, &host::AudioEngine::captureFormatChanged,
@@ -1031,6 +1040,8 @@ void MainWindow::connectSignals()
     if (m_tray) {
         connect(m_tray, &ui::TrayController::startStopRequested,
                 this, &MainWindow::onStartStopClicked);
+        connect(m_tray, &ui::TrayController::setAsActiveRequested,
+                this, &MainWindow::setTeeDspAsActive);
         connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
             m_dspController->setBypass(b);
         });
@@ -1179,7 +1190,18 @@ void MainWindow::refreshDevices()
     const QString engineRender = (m_engine && m_engine->isRunning())
         ? m_engine->currentRender() : QString();
 
-    m_devices = host::WasapiDevices::enumerateRender();
+    m_outputDevices = host::WasapiDevices::enumerateRender();
+    m_inputDevices = host::WasapiDevices::enumerateCapture();
+
+    // Preserve classic physical-output loopback as an input option, but do
+    // not offer virtual render endpoints here. VB-CABLE/VoiceMeeter audio is
+    // readable from their capture side; render-loopback on those endpoints can
+    // produce packets full of zeros.
+    const int realCaptureCount = m_inputDevices.size();
+    for (const auto &d : m_outputDevices) {
+        if (!d.isVirtual)
+            m_inputDevices.append(d);
+    }
 
     // Hold m_syncingUi across the entire populate + select sequence — every
     // setCurrentIndex emits currentIndexChanged, and we don't want any of
@@ -1188,9 +1210,15 @@ void MainWindow::refreshDevices()
     m_syncingUi = true;
     m_captureDevice->clear();
     m_renderDevice->clear();
-    for (const auto &d : m_devices) {
-        const QString label = d.name;
+    for (int i = 0; i < m_inputDevices.size(); ++i) {
+        const auto &d = m_inputDevices[i];
+        const QString label = (i >= realCaptureCount)
+            ? QStringLiteral("Loopback: %1").arg(d.name)
+            : d.name;
         m_captureDevice->addItem(label, d.id);
+    }
+    for (const auto &d : m_outputDevices) {
+        const QString label = d.name;
         m_renderDevice->addItem(label, d.id);
     }
 
@@ -1201,7 +1229,11 @@ void MainWindow::refreshDevices()
         return false;
     };
 
-    selectById(m_captureDevice, prefCapture);
+    bool migratedCapture = false;
+    if (!selectById(m_captureDevice, prefCapture)) {
+        const QString pairedCapture = host::WasapiDevices::pairedCaptureForRender(prefCapture);
+        migratedCapture = selectById(m_captureDevice, pairedCapture);
+    }
 
     // Render: prefer the engine's live endpoint (ground truth when running),
     // fall back to the persisted user preference.
@@ -1210,26 +1242,44 @@ void MainWindow::refreshDevices()
 
     // First-run / no-pref fallbacks: pick something reasonable.
     if (m_captureDevice->currentIndex() < 0 && m_captureDevice->count() > 0) {
-        for (int i = 0; i < m_devices.size(); ++i) {
-            if (m_devices[i].isDefault) { m_captureDevice->setCurrentIndex(i); break; }
+        for (int i = 0; i < m_inputDevices.size(); ++i) {
+            if (m_inputDevices[i].isVirtual) { m_captureDevice->setCurrentIndex(i); break; }
         }
+        if (m_captureDevice->currentIndex() < 0)
+            m_captureDevice->setCurrentIndex(0);
     }
     if (m_renderDevice->currentIndex() < 0 && m_renderDevice->count() > 0) {
-        for (int i = 0; i < m_devices.size(); ++i) {
-            if (!m_devices[i].isDefault) { m_renderDevice->setCurrentIndex(i); break; }
+        for (int i = 0; i < m_outputDevices.size(); ++i) {
+            if (!m_outputDevices[i].isDefault && !m_outputDevices[i].isVirtual) {
+                m_renderDevice->setCurrentIndex(i);
+                break;
+            }
         }
         if (m_renderDevice->currentIndex() < 0) m_renderDevice->setCurrentIndex(0);
     }
     m_syncingUi = wasSyncing;
 
+    if (migratedCapture)
+        saveSelectedDevices();
+
     if (m_tray) {
-        QList<ui::TrayController::DeviceChoice> choices;
-        choices.reserve(m_devices.size());
-        for (const auto &d : m_devices) {
-            choices.push_back(ui::TrayController::DeviceChoice{d.id, d.name});
+        QList<ui::TrayController::DeviceChoice> inputChoices;
+        inputChoices.reserve(m_inputDevices.size());
+        for (int i = 0; i < m_inputDevices.size(); ++i) {
+            const auto &d = m_inputDevices[i];
+            inputChoices.push_back(ui::TrayController::DeviceChoice{
+                d.id,
+                (i >= realCaptureCount) ? QStringLiteral("Loopback: %1").arg(d.name) : d.name
+            });
         }
-        m_tray->setRoutingOptions(choices, selectedCaptureDeviceId(),
-                                  choices, selectedRenderDeviceId());
+
+        QList<ui::TrayController::DeviceChoice> outputChoices;
+        outputChoices.reserve(m_outputDevices.size());
+        for (const auto &d : m_outputDevices) {
+            outputChoices.push_back(ui::TrayController::DeviceChoice{d.id, d.name});
+        }
+        m_tray->setRoutingOptions(inputChoices, selectedCaptureDeviceId(),
+                                  outputChoices, selectedRenderDeviceId());
     }
 }
 
@@ -1282,6 +1332,52 @@ void MainWindow::onStartStopClicked()
     refreshEngineStatus();
 }
 
+void MainWindow::setTeeDspAsActive()
+{
+    if (!m_engine) return;
+    const QString captureId = selectedCaptureDeviceId();
+    if (captureId.isEmpty()) return;
+
+    const QString routeRenderId = host::WasapiDevices::routeRenderForInput(captureId);
+    if (routeRenderId.isEmpty()) {
+        m_statusLabel->setText(QStringLiteral("Selected input cannot be made the Windows output route."));
+        return;
+    }
+
+    const QString previousDefaultRender = host::WasapiDevices::defaultRenderId();
+
+    // Point TeeDSP's render at whatever Windows was sending to, so audio
+    // continues flowing to that endpoint once we flip the default below.
+    if (!previousDefaultRender.isEmpty()
+        && previousDefaultRender != routeRenderId
+        && m_renderDevice) {
+        const int idx = m_renderDevice->findData(previousDefaultRender);
+        if (idx >= 0) {
+            const bool wasSyncing = m_syncingUi;
+            m_syncingUi = true;
+            m_renderDevice->setCurrentIndex(idx);
+            m_syncingUi = wasSyncing;
+            saveSelectedDevices();
+            if (m_engine->isRunning())
+                m_engine->setPreferredRender(previousDefaultRender);
+        }
+    }
+
+    if (!m_engine->isRunning()) {
+        const QString err = m_engine->start(captureId, selectedRenderDeviceId());
+        if (!err.isEmpty()) {
+            m_statusLabel->setText(err);
+            return;
+        }
+    }
+
+    if (previousDefaultRender != routeRenderId
+        && !host::WasapiDevices::setDefaultRender(routeRenderId)) {
+        m_statusLabel->setText(QStringLiteral("Failed to set Windows default output to TeeDSP route."));
+    }
+    refreshEngineStatus();
+}
+
 void MainWindow::stopEngineAndHealRouting()
 {
     // Heal the gap: before stopping, point Windows default output at TeeDSP's
@@ -1315,7 +1411,7 @@ void MainWindow::refreshEngineStatus()
     QString currentName;
     if (running) {
         const QString currentId = m_engine->currentRender();
-        for (const auto &d : m_devices) {
+        for (const auto &d : m_outputDevices) {
             if (d.id == currentId) { currentName = d.name; break; }
         }
         const QString src = QStringLiteral("%1 Hz · %2 ch")

@@ -26,14 +26,28 @@ struct StreamFormat {
 class WasapiDevices
 {
 public:
-    // Lists all active render (output) endpoints. Used both as render targets
-    // AND as loopback capture sources.
+    // Lists all active render (output) endpoints. Used as render targets and,
+    // for physical devices, as optional loopback capture sources.
     static QList<DeviceInfo> enumerateRender();
+
+    // Lists all active capture/input endpoints. Virtual cables expose their
+    // readable side here (e.g. "CABLE Output"), while Windows renders into
+    // their paired render endpoint (e.g. "CABLE Input").
+    static QList<DeviceInfo> enumerateCapture();
+
+    // If inputDeviceId is a capture endpoint backed by a virtual cable, return
+    // the paired render endpoint Windows should be switched to. If it is
+    // already a render endpoint, return it unchanged for classic loopback.
+    static QString routeRenderForInput(const QString &inputDeviceId);
+
+    // Migration helper: if a saved input is an old virtual render-loopback id,
+    // return the paired capture endpoint that actually carries the cable audio.
+    static QString pairedCaptureForRender(const QString &renderDeviceId);
 
     // Returns the id of the default render endpoint (empty string on failure).
     static QString defaultRenderId();
 
-    // Fetches the engine mix format for a render endpoint.
+    // Fetches the engine mix format for a render or capture endpoint.
     // Used to confirm the capture and render sides can be wired up.
     static bool queryMixFormat(const QString &deviceId, StreamFormat &out);
 
