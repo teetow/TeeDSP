@@ -34,7 +34,10 @@
 param(
     [string]$DllPath,
     [string]$EndpointId,
-    [switch]$List
+    [switch]$List,
+    # Dev-only: set DisableProtectedAudioDG=1 so audiodg loads the unsigned DLL.
+    # Security downgrade — use only for bring-up, then sign properly and clear it.
+    [switch]$DevBypassSigning
 )
 
 $ErrorActionPreference = 'Stop'
@@ -93,8 +96,19 @@ if (-not $EndpointId) {
 [TeeDsp.Apo.Helpers]::SetClsidProp(
     $EndpointId, [TeeDsp.Apo.PK]::ModeEffectCLSID, $ApoClsid)
 
-# --- Step 4: restart audio service ------------------------------------------
-Write-Host "[4/4] Restarting Windows Audio service"
+# --- Step 4: (dev) let audiodg load the unsigned DLL -------------------------
+if ($DevBypassSigning) {
+    Write-Host "[4/5] Dev bypass: DisableProtectedAudioDG=1 (audiodg will load unsigned DLLs)"
+    Write-Warning "Security downgrade — clear this and sign the DLL before any real use."
+    New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio' `
+        -Name 'DisableProtectedAudioDG' -Value 1 -PropertyType DWord -Force | Out-Null
+} else {
+    Write-Host "[4/5] Skipping signing bypass (-DevBypassSigning not set)."
+    Write-Host "       The DLL must be signed for audiodg to load it."
+}
+
+# --- Step 5: restart audio service ------------------------------------------
+Write-Host "[5/5] Restarting Windows Audio service"
 Restart-Service -Name 'Audiosrv' -Force
 
 Write-Host ""

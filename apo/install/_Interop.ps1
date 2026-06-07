@@ -5,6 +5,9 @@
 $cs = @'
 using System;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace TeeDsp.Apo
 {
@@ -122,37 +125,107 @@ namespace TeeDsp.Apo
             return result;
         }
 
+        // The FX effect CLSIDs the audio engine actually consults live in the
+        // endpoint's FxProperties registry store — NOT the device property
+        // store returned by IMMDevice::OpenPropertyStore. That store is locked
+        // to TrustedInstaller, so we take ownership, grant Administrators write,
+        // then set/clear the "{fmtid},pid" string value.
+        //
+        // deviceId looks like "{0.0.0.00000000}.{endpoint-guid}"; the registry
+        // subkey under ...\MMDevices\Audio\Render is the trailing {endpoint-guid}.
+
+        static string FxKeyPath(string deviceId)
+        {
+            int idx = deviceId.LastIndexOf(".{");
+            string guid = (idx >= 0) ? deviceId.Substring(idx + 1) : deviceId;
+            return @"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\"
+                   + guid + @"\FxProperties";
+        }
+
+        static string FxValueName(uint pid)
+        {
+            return "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D}," + pid;
+        }
+
+        static RegistryKey OpenFxKeyWritable(string deviceId)
+        {
+            string path = FxKeyPath(deviceId);
+
+            // Fast path: already writable (some endpoints/builds permit it).
+            try {
+                var k = Registry.LocalMachine.OpenSubKey(path, true);
+                if (k != null) return k;
+            } catch (UnauthorizedAccessException) { }
+
+            // Take ownership and grant Administrators full control.
+            EnablePrivilege("SeTakeOwnershipPrivilege");
+            EnablePrivilege("SeRestorePrivilege");
+            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+
+            using (var own = Registry.LocalMachine.OpenSubKey(
+                       path, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.TakeOwnership)) {
+                if (own == null)
+                    throw new Exception("FxProperties key not found for endpoint: " + deviceId
+                                        + " (expected HKLM\\" + path + ")");
+                var sec = own.GetAccessControl(AccessControlSections.Owner);
+                sec.SetOwner(admins);
+                own.SetAccessControl(sec);
+            }
+            using (var perm = Registry.LocalMachine.OpenSubKey(
+                       path, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.ChangePermissions)) {
+                var sec = perm.GetAccessControl(AccessControlSections.Access);
+                sec.AddAccessRule(new RegistryAccessRule(
+                    admins, RegistryRights.FullControl,
+                    InheritanceFlags.None, PropagationFlags.None, AccessControlType.Allow));
+                perm.SetAccessControl(sec);
+            }
+            return Registry.LocalMachine.OpenSubKey(path, true);
+        }
+
         public static void SetClsidProp(string deviceId, uint pid, string clsidString)
         {
-            var e = NewEnumerator();
-            IMMDevice d; e.GetDevice(deviceId, out d);
-            IPropertyStore ps; d.OpenPropertyStore(STGM_READWRITE, out ps);
-
-            var key = new PROPERTYKEY { fmtid = PK.Fmtid, pid = pid };
-            var pv = new PROPVARIANT();
-            pv.vt = VT_LPWSTR;
-            pv.p  = Marshal.StringToCoTaskMemUni(clsidString);
-            int hr = ps.SetValue(ref key, ref pv);
-            Marshal.FreeCoTaskMem(pv.p);
-            if (hr < 0) throw new System.ComponentModel.Win32Exception(hr,
-                "IPropertyStore.SetValue failed (HRESULT 0x" + hr.ToString("X8") + ")");
-            ps.Commit();
+            using (var k = OpenFxKeyWritable(deviceId)) {
+                if (k == null)
+                    throw new Exception("Could not open FxProperties key writable for " + deviceId);
+                k.SetValue(FxValueName(pid), clsidString, RegistryValueKind.String);
+            }
         }
 
         public static void ClearClsidProp(string deviceId, uint pid)
         {
-            var e = NewEnumerator();
-            IMMDevice d; e.GetDevice(deviceId, out d);
-            IPropertyStore ps; d.OpenPropertyStore(STGM_READWRITE, out ps);
+            using (var k = OpenFxKeyWritable(deviceId)) {
+                if (k == null) return;
+                if (k.GetValue(FxValueName(pid)) != null)
+                    k.DeleteValue(FxValueName(pid), false);
+            }
+        }
 
-            var key = new PROPERTYKEY { fmtid = PK.Fmtid, pid = pid };
-            // Setting VT_EMPTY clears the property.
-            var pv = new PROPVARIANT();
-            pv.vt = VT_EMPTY;
-            int hr = ps.SetValue(ref key, ref pv);
-            if (hr < 0) throw new System.ComponentModel.Win32Exception(hr,
-                "IPropertyStore.SetValue(VT_EMPTY) failed (HRESULT 0x" + hr.ToString("X8") + ")");
-            ps.Commit();
+        // ---- privilege helper (needed to take ownership of the protected key) ----
+        [StructLayout(LayoutKind.Sequential)] struct LUID { public uint LowPart; public int HighPart; }
+        [StructLayout(LayoutKind.Sequential)] struct TOKEN_PRIVILEGES { public uint Count; public LUID Luid; public uint Attributes; }
+
+        [DllImport("advapi32.dll", SetLastError=true)]
+        static extern bool OpenProcessToken(IntPtr h, uint access, out IntPtr token);
+        [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+        static extern bool LookupPrivilegeValue(string sys, string name, out LUID luid);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll,
+            ref TOKEN_PRIVILEGES newState, uint len, IntPtr prev, IntPtr retLen);
+        [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+        [DllImport("kernel32.dll", SetLastError=true)] static extern bool CloseHandle(IntPtr h);
+
+        static void EnablePrivilege(string priv)
+        {
+            const uint TOKEN_ADJUST_PRIVILEGES = 0x20, TOKEN_QUERY = 0x8, SE_PRIVILEGE_ENABLED = 0x2;
+            IntPtr tok;
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out tok))
+                return;
+            try {
+                LUID luid;
+                if (!LookupPrivilegeValue(null, priv, out luid)) return;
+                var tp = new TOKEN_PRIVILEGES { Count = 1, Luid = luid, Attributes = SE_PRIVILEGE_ENABLED };
+                AdjustTokenPrivileges(tok, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
+            } finally { CloseHandle(tok); }
         }
     }
 }

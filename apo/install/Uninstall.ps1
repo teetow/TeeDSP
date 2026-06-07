@@ -49,6 +49,13 @@ if (Test-Path $systemDll) {
         -ArgumentList "/s", "/u", "`"$systemDll`"" -Wait | Out-Null
 }
 
+# --- Clear the dev signing bypass if it was set -----------------------------
+$audioKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio'
+if (Get-ItemProperty -Path $audioKey -Name 'DisableProtectedAudioDG' -ErrorAction SilentlyContinue) {
+    Write-Host "Clearing DisableProtectedAudioDG (restoring audiodg protection)"
+    Remove-ItemProperty -Path $audioKey -Name 'DisableProtectedAudioDG' -ErrorAction SilentlyContinue
+}
+
 # --- Step 3: restart audio service so audiodg releases the DLL --------------
 Write-Host "[3/3] Restarting Windows Audio service"
 Restart-Service -Name 'Audiosrv' -Force
