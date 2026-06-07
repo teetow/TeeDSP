@@ -7,11 +7,15 @@
 #include <array>
 
 #include "ChainParams.h"
-#include "ParametricEQ.h"   // kEqBandCount, ParametricEQ::BandType
+#include "shared/TeeDspParams.h"   // teedsp::kBandCount
 
 namespace host { class ClapHost; }
 
 namespace dsp {
+
+// Band count, mirrored from the shared param contract. Kept as a dsp:: name so
+// existing call sites read unchanged; the DSP itself now lives in the plugin.
+inline constexpr int kEqBandCount = teedsp::kBandCount;
 
 // Lightweight POD view of a single EQ band, for high-frequency UI reads
 // (paint loops). Intentionally NOT exposed via QVariant — direct field access
@@ -30,10 +34,10 @@ struct EqBandView {
     float dynGainReductionDb;
 };
 
-// QObject wrapper that owns the ProcessorChain and exposes its parameters
-// to QML. The audio thread reads parameters via std::atomic loads inside
-// each Processor; this controller only writes them, so cross-thread access
-// is safe without additional locking.
+// QObject param model for the UI. Owns the canonical copy of every parameter,
+// pushes changes to the CLAP plugin via ClapHost (lock-free SPSC queue), and
+// pulls live metering back through the plugin's telemetry extension. The DSP
+// itself runs inside teedsp.clap, not here.
 class DspController : public QObject
 {
     Q_OBJECT

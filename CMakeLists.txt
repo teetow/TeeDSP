@@ -25,9 +25,9 @@ FetchContent_Declare(clap
 FetchContent_MakeAvailable(clap)
 
 # ---------------------------------------------------------------------------
-# teedsp_dsp — the Qt-free DSP core. Shared by the app (for now) and by the
-# CLAP plugin target. DspController is intentionally NOT here: it's a QObject
-# and belongs to the host/UI side.
+# teedsp_dsp — the Qt-free DSP core. Linked only by the CLAP plugin now; the
+# app no longer runs DSP inline (it hosts teedsp.clap). DspController is not
+# here: it's a QObject param model and belongs to the host/UI side.
 # ---------------------------------------------------------------------------
 add_library(teedsp_dsp STATIC
 	src/dsp/Compressor.cpp
@@ -90,7 +90,6 @@ target_compile_definitions(TeeDsp PRIVATE
 )
 
 target_link_libraries(TeeDsp PRIVATE
-	teedsp_dsp
 	clap
 	Qt6::Core
 	Qt6::Gui
