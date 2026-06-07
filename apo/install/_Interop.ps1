@@ -189,12 +189,24 @@ namespace TeeDsp.Apo
             return Registry.LocalMachine.OpenSubKey(path, true);
         }
 
+        // PKEY_MFX_ProcessingModes_Supported_For_Streaming and the DEFAULT mode.
+        // Without a declared streaming mode an MFX CLSID is only *discovered*,
+        // never inserted into the audio graph — so the APO never loads.
+        const string MfxModesValue = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6";
+        const string ModeDefault   = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}";
+
         public static void SetClsidProp(string deviceId, uint pid, string clsidString)
         {
             using (var k = OpenFxKeyWritable(deviceId)) {
                 if (k == null)
                     throw new Exception("Could not open FxProperties key writable for " + deviceId);
                 k.SetValue(FxValueName(pid), clsidString, RegistryValueKind.String);
+                if (pid == PK.ModeEffectCLSID && k.GetValue(MfxModesValue) == null) {
+                    // Only seed the mode list if the endpoint doesn't already
+                    // declare one (don't clobber a vendor's existing modes).
+                    k.SetValue(MfxModesValue, new string[] { ModeDefault },
+                               RegistryValueKind.MultiString);
+                }
             }
         }
 
