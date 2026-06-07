@@ -33,6 +33,11 @@ target_compile_definitions(TeeDspApo PRIVATE
 set_property(TARGET TeeDspApo PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 
+# An embedded manifest makes the loader touch APIs that are forbidden inside
+# the protected audiodg.exe process, so the APO fails to load there even when
+# correctly signed. Suppress manifest embedding entirely.
+target_link_options(TeeDspApo PRIVATE /MANIFEST:NO)
+
 target_link_libraries(TeeDspApo PRIVATE
     Ole32
     OleAut32

@@ -59,6 +59,9 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::QueryInterface(REFIID riid, void **ppv)
         *ppv = static_cast<IAudioProcessingObjectRT *>(this);
     } else if (riid == __uuidof(IAudioProcessingObjectConfiguration)) {
         *ppv = static_cast<IAudioProcessingObjectConfiguration *>(this);
+    } else if (riid == __uuidof(IAudioSystemEffects)) {
+        // The audio engine QIs for this to accept us as a system-effects APO.
+        *ppv = static_cast<IAudioSystemEffects *>(this);
     } else {
         return E_NOINTERFACE;
     }
@@ -143,7 +146,10 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::GetRegistrationProperties(APO_REG_PROPERTIE
 {
     if (!ppRegProps) return E_POINTER;
 
-    constexpr UINT32 kNumIfaces = 3;
+    // The APO interface list advertises the system-effects marker interface,
+    // matching the sysvad SwapAPO convention (and the registry registration in
+    // DllRegisterServer). It is NOT the IAudioProcessingObject* trio.
+    constexpr UINT32 kNumIfaces = 1;
     const SIZE_T cb = sizeof(APO_REG_PROPERTIES) + (kNumIfaces - 1) * sizeof(IID);
     auto *p = static_cast<APO_REG_PROPERTIES *>(CoTaskMemAlloc(cb));
     if (!p) return E_OUTOFMEMORY;
@@ -166,9 +172,7 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::GetRegistrationProperties(APO_REG_PROPERTIE
     p->u32MaxInstances = 0xFFFFFFFFul;
     p->u32NumAPOInterfaces = kNumIfaces;
 
-    p->iidAPOInterfaceList[0] = __uuidof(IAudioProcessingObject);
-    p->iidAPOInterfaceList[1] = __uuidof(IAudioProcessingObjectRT);
-    p->iidAPOInterfaceList[2] = __uuidof(IAudioProcessingObjectConfiguration);
+    p->iidAPOInterfaceList[0] = __uuidof(IAudioSystemEffects);
 
     *ppRegProps = p;
     return S_OK;

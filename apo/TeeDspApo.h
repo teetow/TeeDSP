@@ -30,6 +30,7 @@ class TeeDspApo final
     : public IAudioProcessingObjectRT
     , public IAudioProcessingObject
     , public IAudioProcessingObjectConfiguration
+    , public IAudioSystemEffects   // marker the engine QIs for to recognize an sAPO
 {
 public:
     TeeDspApo();

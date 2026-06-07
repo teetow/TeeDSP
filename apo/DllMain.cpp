@@ -82,6 +82,16 @@ HRESULT writeRegString(HKEY parent, const wchar_t *subkey, const wchar_t *name, 
     return rc == ERROR_SUCCESS ? S_OK : HRESULT_FROM_WIN32(rc);
 }
 
+HRESULT writeRegDword(HKEY parent, const wchar_t *subkey, const wchar_t *name, DWORD value)
+{
+    HKEY h = nullptr;
+    LONG rc = RegCreateKeyExW(parent, subkey, 0, nullptr, 0, KEY_WRITE, nullptr, &h, nullptr);
+    if (rc != ERROR_SUCCESS) return HRESULT_FROM_WIN32(rc);
+    rc = RegSetValueExW(h, name, 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value));
+    RegCloseKey(h);
+    return rc == ERROR_SUCCESS ? S_OK : HRESULT_FROM_WIN32(rc);
+}
+
 } // namespace
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/)
@@ -132,9 +142,41 @@ extern "C" HRESULT __stdcall DllRegisterServer()
     hr = writeRegString(HKEY_CLASSES_ROOT, key, L"ThreadingModel", L"Both");
     if (FAILED(hr)) return hr;
 
-    // Register as an APO so the audio engine will discover us.
+    // Register the APO metadata so the audio engine will discover and accept
+    // us. The engine reads this whole property set; a bare friendly name is not
+    // enough. Mirrors the APO_REG_PROPERTIES returned by GetRegistrationProperties.
+    // The APOInterface list advertises IAudioSystemEffects — the interface the
+    // engine QIs for to treat the CLSID as a system-effects APO.
     swprintf_s(key, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AudioEngine\\AudioProcessingObjects\\%s", kClsid);
     hr = writeRegString(HKEY_LOCAL_MACHINE, key, nullptr, L"TeeDSP Mode Effect APO");
+    if (FAILED(hr)) return hr;
+    hr = writeRegString(HKEY_LOCAL_MACHINE, key, L"FriendlyName", L"TeeDSP Mode Effect");
+    if (FAILED(hr)) return hr;
+    hr = writeRegString(HKEY_LOCAL_MACHINE, key, L"Copyright", L"TeeDSP");
+    if (FAILED(hr)) return hr;
+
+    const DWORD apoFlags = static_cast<DWORD>(APO_FLAG_SAMPLESPERFRAME_MUST_MATCH
+                                              | APO_FLAG_FRAMESPERSECOND_MUST_MATCH
+                                              | APO_FLAG_BITSPERSAMPLE_MUST_MATCH);
+    struct { const wchar_t *name; DWORD value; } dwords[] = {
+        { L"MajorVersion",          1 },
+        { L"MinorVersion",          0 },
+        { L"Flags",                 apoFlags },
+        { L"MinInputConnections",   1 },
+        { L"MaxInputConnections",   1 },
+        { L"MinOutputConnections",  1 },
+        { L"MaxOutputConnections",  1 },
+        { L"MaxInstances",          0xFFFFFFFFul },
+        { L"NumAPOInterfaces",      1 },
+    };
+    for (const auto &d : dwords) {
+        hr = writeRegDword(HKEY_LOCAL_MACHINE, key, d.name, d.value);
+        if (FAILED(hr)) return hr;
+    }
+
+    // APOInterface0 = IID_IAudioSystemEffects {FD7F2B29-24D0-4B5C-B177-592C39F9CA10}
+    hr = writeRegString(HKEY_LOCAL_MACHINE, key, L"APOInterface0",
+                        L"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}");
     return hr;
 }
 
