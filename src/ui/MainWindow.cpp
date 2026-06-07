@@ -9,12 +9,13 @@
 #include "widgets/WidgetMetrics.h"
 
 #include "../dsp/DspController.h"
-#include "../dsp/ProcessorChain.h"
 #include "../host/AudioEngine.h"
+#include "../host/ClapHost.h"
 #include "../host/SpectrumAnalyzer.h"
 #include "../host/WasapiDevices.h"
 
 #include <QApplication>
+#include <QMessageBox>
 
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -115,13 +116,22 @@ ui::Knob *makeKnob(const QString &label,
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    m_chain = new dsp::ProcessorChain();
-    m_chain->prepare(48000.0, 2);
+    // The whole DSP chain now lives in teedsp.clap, loaded in-process. The app
+    // is a CLAP host: DspController drives the plugin's params, AudioEngine
+    // runs audio through it.
+    m_clapHost = new host::ClapHost();
+    if (!m_clapHost->load()) {
+        QMessageBox::warning(
+            this, QStringLiteral("TeeDSP"),
+            QStringLiteral("Failed to load the DSP plugin (teedsp.clap):\n%1\n\n"
+                           "Audio will pass through unprocessed.")
+                .arg(QString::fromStdString(m_clapHost->error())));
+    }
 
-    m_dspController = new dsp::DspController(m_chain, this);
+    m_dspController = new dsp::DspController(m_clapHost, this);
     m_dspController->loadFromSettings();
 
-    m_engine = new host::AudioEngine(m_chain, this);
+    m_engine = new host::AudioEngine(m_clapHost, this);
 
     // First-run defaults: register Start-with-Windows.
     {
@@ -213,7 +223,11 @@ MainWindow::~MainWindow()
     if (m_engine) m_engine->stop();
     if (m_dspController) m_dspController->saveToSettings();
     saveSelectedDevices();
-    delete m_chain;
+    // Tear down in dependency order: engine (audio threads already stopped) and
+    // controller both reference the ClapHost, so the host outlives them.
+    delete m_engine; m_engine = nullptr;
+    delete m_dspController; m_dspController = nullptr;
+    delete m_clapHost; m_clapHost = nullptr;
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

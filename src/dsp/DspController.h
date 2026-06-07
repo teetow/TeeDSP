@@ -7,7 +7,9 @@
 #include <array>
 
 #include "ChainParams.h"
-#include "ProcessorChain.h"
+#include "ParametricEQ.h"   // kEqBandCount, ParametricEQ::BandType
+
+namespace host { class ClapHost; }
 
 namespace dsp {
 
@@ -63,7 +65,7 @@ class DspController : public QObject
     Q_PROPERTY(QVariantList eqBands READ eqBands NOTIFY eqChanged FINAL)
 
 public:
-    explicit DspController(ProcessorChain *chain, QObject *parent = nullptr);
+    explicit DspController(host::ClapHost *host, QObject *parent = nullptr);
 
     ChainParams buildSnapshot() const;
 
@@ -157,11 +159,14 @@ signals:
     void meterChanged();
 
 private:
-    void pushCompressorParams();
-    void pushExciterParams();
+    void pushAllToHost();
     void applySnapshot(const ChainParams &params);
 
-    ProcessorChain   *m_chain;
+    host::ClapHost   *m_host;
+    // Local source-of-truth for EQ band params. The chain lives behind the
+    // CLAP boundary now, so the controller caches params (pushing changes as
+    // events) and only pulls telemetry (gain reduction) back.
+    EqBandParams      m_eqBands[kEqBandCount];
     QTimer m_meterTimer;
     QTimer m_saveDebounceTimer;
     bool m_loadingSettings = false;

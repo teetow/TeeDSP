@@ -1,5 +1,9 @@
 #include "DspController.h"
 
+#include "host/ClapHost.h"
+#include "shared/TeeDspParams.h"
+#include "shared/TeeDspTelemetry.h"
+
 #include <QSettings>
 #include <QVariantMap>
 
@@ -16,25 +20,22 @@ ChainParams defaultParams()
 {
     return {};
 }
-}
+} // namespace
 
-DspController::DspController(ProcessorChain *chain, QObject *parent)
+DspController::DspController(host::ClapHost *host, QObject *parent)
     : QObject(parent)
-    , m_chain(chain)
+    , m_host(host)
 {
-    Q_ASSERT(m_chain != nullptr);
+    Q_ASSERT(m_host != nullptr);
 
-    pushCompressorParams();
-    pushExciterParams();
-    m_chain->compressor().setBypass(!m_compressorEnabled);
-    m_chain->exciter().setBypass(!m_exciterEnabled);
-    m_chain->eq().setBypass(!m_eqEnabled);
-    m_chain->setInputTrimDb(m_inputTrimDb);
-    m_chain->setOutputTrimDb(m_outputTrimDb);
-    m_chain->setStereoWidth(m_stereoWidth);
-    m_chain->leveler().setBypass(!m_levelerEnabled);
-    m_chain->outputLeveler().setBypass(!m_outputLevelerEnabled);
-    m_chain->setBypass(m_bypass);
+    // Seed the EQ band cache from the compiled-in defaults.
+    const ChainParams def = defaultParams();
+    for (int i = 0; i < kEqBandCount; ++i)
+        m_eqBands[i] = def.eqBands[i];
+
+    // Push the full default state across the CLAP boundary so the plugin and
+    // controller start in agreement.
+    pushAllToHost();
 
     m_meterTimer.setInterval(kMeterIntervalMs);
     m_meterTimer.setTimerType(Qt::PreciseTimer);
@@ -71,13 +72,56 @@ void DspController::scheduleSave()
     m_saveDebounceTimer.start();
 }
 
+// --- param push helpers ----------------------------------------------------
+
+void DspController::pushAllToHost()
+{
+    using namespace teedsp;
+    m_host->setParam(PID_Bypass, m_bypass ? 1.0 : 0.0);
+    m_host->setParam(PID_InputTrim, m_inputTrimDb);
+    m_host->setParam(PID_OutputTrim, m_outputTrimDb);
+    m_host->setParam(PID_StereoWidth, m_stereoWidth);
+    m_host->setParam(PID_LevelerEnabled, m_levelerEnabled ? 1.0 : 0.0);
+    m_host->setParam(PID_OutputLevelerEnabled, m_outputLevelerEnabled ? 1.0 : 0.0);
+    m_host->setParam(PID_EqEnabled, m_eqEnabled ? 1.0 : 0.0);
+
+    m_host->setParam(PID_CompEnabled, m_compressorEnabled ? 1.0 : 0.0);
+    m_host->setParam(PID_CompThreshold, m_compThresholdDb);
+    m_host->setParam(PID_CompRatio, m_compRatio);
+    m_host->setParam(PID_CompKnee, m_compKneeDb);
+    m_host->setParam(PID_CompAttack, m_compAttackMs);
+    m_host->setParam(PID_CompRelease, m_compReleaseMs);
+    m_host->setParam(PID_CompMakeup, m_compMakeupDb);
+
+    m_host->setParam(PID_ExciterEnabled, m_exciterEnabled ? 1.0 : 0.0);
+    m_host->setParam(PID_ExciterDrive, m_exciterDrive);
+    m_host->setParam(PID_ExciterMix, m_exciterMix);
+    m_host->setParam(PID_ExciterTone, m_exciterToneHz);
+
+    for (int b = 0; b < kEqBandCount; ++b) {
+        const EqBandParams &p = m_eqBands[b];
+        m_host->setParam(bandParamId(b, BF_Enabled),      p.enabled ? 1.0 : 0.0);
+        m_host->setParam(bandParamId(b, BF_Type),         p.type);
+        m_host->setParam(bandParamId(b, BF_Freq),         p.freqHz);
+        m_host->setParam(bandParamId(b, BF_Q),            p.q);
+        m_host->setParam(bandParamId(b, BF_Gain),         p.gainDb);
+        m_host->setParam(bandParamId(b, BF_DynThreshold), p.dynThresholdDb);
+        m_host->setParam(bandParamId(b, BF_DynRatio),     p.dynRatio);
+        m_host->setParam(bandParamId(b, BF_DynAttack),    p.dynAttackMs);
+        m_host->setParam(bandParamId(b, BF_DynRelease),   p.dynReleaseMs);
+        m_host->setParam(bandParamId(b, BF_DynRange),     p.dynRangeDb);
+    }
+}
+
+// --- global / dynamics setters ---------------------------------------------
+
 bool DspController::bypass() const { return m_bypass; }
 
 void DspController::setBypass(bool b)
 {
     if (m_bypass == b) return;
     m_bypass = b;
-    m_chain->setBypass(b);
+    m_host->setParam(teedsp::PID_Bypass, b ? 1.0 : 0.0);
     emit bypassChanged();
 }
 
@@ -85,7 +129,7 @@ void DspController::setInputTrimDb(float v)
 {
     if (m_inputTrimDb == v) return;
     m_inputTrimDb = v;
-    m_chain->setInputTrimDb(v);
+    m_host->setParam(teedsp::PID_InputTrim, v);
     emit bypassChanged();
 }
 
@@ -93,7 +137,7 @@ void DspController::setOutputTrimDb(float v)
 {
     if (m_outputTrimDb == v) return;
     m_outputTrimDb = v;
-    m_chain->setOutputTrimDb(v);
+    m_host->setParam(teedsp::PID_OutputTrim, v);
     emit bypassChanged();
 }
 
@@ -103,7 +147,7 @@ void DspController::setStereoWidth(float v)
     if (v > 1.0f) v = 1.0f;
     if (m_stereoWidth == v) return;
     m_stereoWidth = v;
-    m_chain->setStereoWidth(v);
+    m_host->setParam(teedsp::PID_StereoWidth, v);
     emit bypassChanged();
 }
 
@@ -111,26 +155,30 @@ void DspController::setLevelerEnabled(bool b)
 {
     if (m_levelerEnabled == b) return;
     m_levelerEnabled = b;
-    m_chain->leveler().setBypass(!b);
+    m_host->setParam(teedsp::PID_LevelerEnabled, b ? 1.0 : 0.0);
     emit levelerChanged();
 }
 
 float DspController::levelerGainDb() const
 {
-    return m_chain->leveler().currentGainDb();
+    teedsp_telemetry_data t;
+    m_host->readTelemetry(t);
+    return t.levelerGainDb;
 }
 
 void DspController::setOutputLevelerEnabled(bool b)
 {
     if (m_outputLevelerEnabled == b) return;
     m_outputLevelerEnabled = b;
-    m_chain->outputLeveler().setBypass(!b);
+    m_host->setParam(teedsp::PID_OutputLevelerEnabled, b ? 1.0 : 0.0);
     emit levelerChanged();
 }
 
 float DspController::outputLevelerGainDb() const
 {
-    return m_chain->outputLeveler().currentGainDb();
+    teedsp_telemetry_data t;
+    m_host->readTelemetry(t);
+    return t.outputLevelerGainDb;
 }
 
 bool DspController::compressorEnabled() const { return m_compressorEnabled; }
@@ -139,7 +187,7 @@ void DspController::setCompressorEnabled(bool b)
 {
     if (m_compressorEnabled == b) return;
     m_compressorEnabled = b;
-    m_chain->compressor().setBypass(!b);
+    m_host->setParam(teedsp::PID_CompEnabled, b ? 1.0 : 0.0);
     emit compressorChanged();
 }
 
@@ -147,7 +195,7 @@ void DspController::setCompThresholdDb(float v)
 {
     if (m_compThresholdDb == v) return;
     m_compThresholdDb = v;
-    m_chain->compressor().setThresholdDb(v);
+    m_host->setParam(teedsp::PID_CompThreshold, v);
     emit compressorChanged();
 }
 
@@ -156,7 +204,7 @@ void DspController::setCompRatio(float v)
     if (v < 1.0f) v = 1.0f;
     if (m_compRatio == v) return;
     m_compRatio = v;
-    m_chain->compressor().setRatio(v);
+    m_host->setParam(teedsp::PID_CompRatio, v);
     emit compressorChanged();
 }
 
@@ -165,7 +213,7 @@ void DspController::setCompKneeDb(float v)
     if (v < 0.0f) v = 0.0f;
     if (m_compKneeDb == v) return;
     m_compKneeDb = v;
-    m_chain->compressor().setKneeDb(v);
+    m_host->setParam(teedsp::PID_CompKnee, v);
     emit compressorChanged();
 }
 
@@ -174,7 +222,7 @@ void DspController::setCompAttackMs(float v)
     if (v < 0.1f) v = 0.1f;
     if (m_compAttackMs == v) return;
     m_compAttackMs = v;
-    m_chain->compressor().setAttackMs(v);
+    m_host->setParam(teedsp::PID_CompAttack, v);
     emit compressorChanged();
 }
 
@@ -183,7 +231,7 @@ void DspController::setCompReleaseMs(float v)
     if (v < 1.0f) v = 1.0f;
     if (m_compReleaseMs == v) return;
     m_compReleaseMs = v;
-    m_chain->compressor().setReleaseMs(v);
+    m_host->setParam(teedsp::PID_CompRelease, v);
     emit compressorChanged();
 }
 
@@ -191,13 +239,15 @@ void DspController::setCompMakeupDb(float v)
 {
     if (m_compMakeupDb == v) return;
     m_compMakeupDb = v;
-    m_chain->compressor().setMakeupDb(v);
+    m_host->setParam(teedsp::PID_CompMakeup, v);
     emit compressorChanged();
 }
 
 float DspController::compGainReductionDb() const
 {
-    return m_chain->compressor().currentGainReductionDb();
+    teedsp_telemetry_data t;
+    m_host->readTelemetry(t);
+    return t.compGrDb;
 }
 
 bool DspController::exciterEnabled() const { return m_exciterEnabled; }
@@ -206,7 +256,7 @@ void DspController::setExciterEnabled(bool b)
 {
     if (m_exciterEnabled == b) return;
     m_exciterEnabled = b;
-    m_chain->exciter().setBypass(!b);
+    m_host->setParam(teedsp::PID_ExciterEnabled, b ? 1.0 : 0.0);
     emit exciterChanged();
 }
 
@@ -215,7 +265,7 @@ void DspController::setExciterDrive(float v)
     if (v < 0.0f) v = 0.0f;
     if (m_exciterDrive == v) return;
     m_exciterDrive = v;
-    m_chain->exciter().setDrive(v);
+    m_host->setParam(teedsp::PID_ExciterDrive, v);
     emit exciterChanged();
 }
 
@@ -225,7 +275,7 @@ void DspController::setExciterMix(float v)
     if (v > 1.0f) v = 1.0f;
     if (m_exciterMix == v) return;
     m_exciterMix = v;
-    m_chain->exciter().setMix(v);
+    m_host->setParam(teedsp::PID_ExciterMix, v);
     emit exciterChanged();
 }
 
@@ -234,7 +284,7 @@ void DspController::setExciterToneHz(float v)
     if (v < 200.0f) v = 200.0f;
     if (m_exciterToneHz == v) return;
     m_exciterToneHz = v;
-    m_chain->exciter().setToneHz(v);
+    m_host->setParam(teedsp::PID_ExciterTone, v);
     emit exciterChanged();
 }
 
@@ -244,27 +294,31 @@ void DspController::setEqEnabled(bool b)
 {
     if (m_eqEnabled == b) return;
     m_eqEnabled = b;
-    m_chain->eq().setBypass(!b);
+    m_host->setParam(teedsp::PID_EqEnabled, b ? 1.0 : 0.0);
     emit eqChanged();
 }
 
+// --- EQ band reads (cache for params, telemetry for GR) --------------------
+
 QVariantList DspController::eqBands() const
 {
+    teedsp_telemetry_data t;
+    m_host->readTelemetry(t);
     QVariantList list;
-    auto &eq = m_chain->eq();
     for (int i = 0; i < kEqBandCount; ++i) {
+        const EqBandParams &b = m_eqBands[i];
         QVariantMap map;
-        map.insert(QStringLiteral("enabled"), eq.bandEnabled(i));
-        map.insert(QStringLiteral("type"), static_cast<int>(eq.bandType(i)));
-        map.insert(QStringLiteral("frequencyHz"), eq.bandFrequency(i));
-        map.insert(QStringLiteral("q"), eq.bandQ(i));
-        map.insert(QStringLiteral("gainDb"), eq.bandGainDb(i));
-        map.insert(QStringLiteral("dynThresholdDb"), eq.bandDynamicThresholdDb(i));
-        map.insert(QStringLiteral("dynRatio"), eq.bandDynamicRatio(i));
-        map.insert(QStringLiteral("dynAttackMs"), eq.bandDynamicAttackMs(i));
-        map.insert(QStringLiteral("dynReleaseMs"), eq.bandDynamicReleaseMs(i));
-        map.insert(QStringLiteral("dynRangeDb"), eq.bandDynamicRangeDb(i));
-        map.insert(QStringLiteral("dynGainReductionDb"), eq.bandDynamicGainReductionDb(i));
+        map.insert(QStringLiteral("enabled"), b.enabled);
+        map.insert(QStringLiteral("type"), b.type);
+        map.insert(QStringLiteral("frequencyHz"), b.freqHz);
+        map.insert(QStringLiteral("q"), b.q);
+        map.insert(QStringLiteral("gainDb"), b.gainDb);
+        map.insert(QStringLiteral("dynThresholdDb"), b.dynThresholdDb);
+        map.insert(QStringLiteral("dynRatio"), b.dynRatio);
+        map.insert(QStringLiteral("dynAttackMs"), b.dynAttackMs);
+        map.insert(QStringLiteral("dynReleaseMs"), b.dynReleaseMs);
+        map.insert(QStringLiteral("dynRangeDb"), b.dynRangeDb);
+        map.insert(QStringLiteral("dynGainReductionDb"), t.bandGrDb[i]);
         list.append(map);
     }
     return list;
@@ -272,20 +326,22 @@ QVariantList DspController::eqBands() const
 
 void DspController::eqBandViews(std::array<EqBandView, kEqBandCount> &out) const
 {
-    auto &eq = m_chain->eq();
+    teedsp_telemetry_data t;
+    m_host->readTelemetry(t);
     for (int i = 0; i < kEqBandCount; ++i) {
+        const EqBandParams &b = m_eqBands[i];
         EqBandView &v = out[i];
-        v.enabled            = eq.bandEnabled(i);
-        v.type               = static_cast<int>(eq.bandType(i));
-        v.freqHz             = eq.bandFrequency(i);
-        v.q                  = eq.bandQ(i);
-        v.gainDb             = eq.bandGainDb(i);
-        v.dynThresholdDb     = eq.bandDynamicThresholdDb(i);
-        v.dynRatio           = eq.bandDynamicRatio(i);
-        v.dynAttackMs        = eq.bandDynamicAttackMs(i);
-        v.dynReleaseMs       = eq.bandDynamicReleaseMs(i);
-        v.dynRangeDb         = eq.bandDynamicRangeDb(i);
-        v.dynGainReductionDb = eq.bandDynamicGainReductionDb(i);
+        v.enabled            = b.enabled;
+        v.type               = b.type;
+        v.freqHz             = b.freqHz;
+        v.q                  = b.q;
+        v.gainDb             = b.gainDb;
+        v.dynThresholdDb     = b.dynThresholdDb;
+        v.dynRatio           = b.dynRatio;
+        v.dynAttackMs        = b.dynAttackMs;
+        v.dynReleaseMs       = b.dynReleaseMs;
+        v.dynRangeDb         = b.dynRangeDb;
+        v.dynGainReductionDb = t.bandGrDb[i];
     }
 }
 
@@ -293,109 +349,112 @@ EqBandView DspController::eqBandView(int band) const
 {
     EqBandView v{};
     if (band < 0 || band >= kEqBandCount) return v;
-    auto &eq = m_chain->eq();
-    v.enabled            = eq.bandEnabled(band);
-    v.type               = static_cast<int>(eq.bandType(band));
-    v.freqHz             = eq.bandFrequency(band);
-    v.q                  = eq.bandQ(band);
-    v.gainDb             = eq.bandGainDb(band);
-    v.dynThresholdDb     = eq.bandDynamicThresholdDb(band);
-    v.dynRatio           = eq.bandDynamicRatio(band);
-    v.dynAttackMs        = eq.bandDynamicAttackMs(band);
-    v.dynReleaseMs       = eq.bandDynamicReleaseMs(band);
-    v.dynRangeDb         = eq.bandDynamicRangeDb(band);
-    v.dynGainReductionDb = eq.bandDynamicGainReductionDb(band);
+    teedsp_telemetry_data t;
+    m_host->readTelemetry(t);
+    const EqBandParams &b = m_eqBands[band];
+    v.enabled            = b.enabled;
+    v.type               = b.type;
+    v.freqHz             = b.freqHz;
+    v.q                  = b.q;
+    v.gainDb             = b.gainDb;
+    v.dynThresholdDb     = b.dynThresholdDb;
+    v.dynRatio           = b.dynRatio;
+    v.dynAttackMs        = b.dynAttackMs;
+    v.dynReleaseMs       = b.dynReleaseMs;
+    v.dynRangeDb         = b.dynRangeDb;
+    v.dynGainReductionDb = t.bandGrDb[band];
     return v;
 }
+
+// --- EQ band setters -------------------------------------------------------
 
 void DspController::setEqBandEnabled(int band, bool enabled)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandEnabled(band, enabled);
+    m_eqBands[band].enabled = enabled;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Enabled), enabled ? 1.0 : 0.0);
     emit eqChanged();
 }
 
 void DspController::setEqBandType(int band, int type)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandType(band, static_cast<ParametricEQ::BandType>(type));
+    m_eqBands[band].type = type;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Type), type);
     emit eqChanged();
 }
 
 void DspController::setEqBandFrequency(int band, float hz)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandFrequency(band, hz);
+    if (hz < 10.0f) hz = 10.0f;
+    m_eqBands[band].freqHz = hz;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Freq), hz);
     emit eqChanged();
 }
 
 void DspController::setEqBandQ(int band, float q)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandQ(band, q);
+    if (q < 0.05f) q = 0.05f;
+    m_eqBands[band].q = q;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Q), q);
     emit eqChanged();
 }
 
 void DspController::setEqBandGainDb(int band, float gainDb)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandGainDb(band, gainDb);
+    m_eqBands[band].gainDb = gainDb;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Gain), gainDb);
     emit eqChanged();
 }
 
 void DspController::setEqBandDynamicThresholdDb(int band, float thresholdDb)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandDynamicThresholdDb(band, thresholdDb);
+    m_eqBands[band].dynThresholdDb = thresholdDb;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynThreshold), thresholdDb);
     emit eqChanged();
 }
 
 void DspController::setEqBandDynamicRatio(int band, float ratio)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandDynamicRatio(band, ratio);
+    if (ratio < 1.0f) ratio = 1.0f;
+    m_eqBands[band].dynRatio = ratio;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynRatio), ratio);
     emit eqChanged();
 }
 
 void DspController::setEqBandDynamicAttackMs(int band, float attackMs)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandDynamicAttackMs(band, attackMs);
+    if (attackMs < 0.1f) attackMs = 0.1f;
+    m_eqBands[band].dynAttackMs = attackMs;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynAttack), attackMs);
     emit eqChanged();
 }
 
 void DspController::setEqBandDynamicReleaseMs(int band, float releaseMs)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandDynamicReleaseMs(band, releaseMs);
+    if (releaseMs < 1.0f) releaseMs = 1.0f;
+    m_eqBands[band].dynReleaseMs = releaseMs;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynRelease), releaseMs);
     emit eqChanged();
 }
 
 void DspController::setEqBandDynamicRangeDb(int band, float rangeDb)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    m_chain->eq().setBandDynamicRangeDb(band, rangeDb);
+    if (rangeDb < 0.0f) rangeDb = 0.0f;
+    m_eqBands[band].dynRangeDb = rangeDb;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynRange), rangeDb);
     emit eqChanged();
 }
 
-void DspController::pushCompressorParams()
-{
-    auto &c = m_chain->compressor();
-    c.setThresholdDb(m_compThresholdDb);
-    c.setRatio(m_compRatio);
-    c.setKneeDb(m_compKneeDb);
-    c.setAttackMs(m_compAttackMs);
-    c.setReleaseMs(m_compReleaseMs);
-    c.setMakeupDb(m_compMakeupDb);
-}
-
-void DspController::pushExciterParams()
-{
-    auto &e = m_chain->exciter();
-    e.setDrive(m_exciterDrive);
-    e.setMix(m_exciterMix);
-    e.setToneHz(m_exciterToneHz);
-}
+// --- snapshots / presets / persistence -------------------------------------
 
 ChainParams DspController::buildSnapshot() const
 {
@@ -419,20 +478,8 @@ ChainParams DspController::buildSnapshot() const
     p.exciterMix      = m_exciterMix;
     p.exciterToneHz   = m_exciterToneHz;
 
-    auto &eq = m_chain->eq();
-    for (int i = 0; i < kEqBandCount; ++i) {
-        auto &b      = p.eqBands[i];
-        b.enabled    = eq.bandEnabled(i);
-        b.type       = static_cast<int32_t>(eq.bandType(i));
-        b.freqHz     = eq.bandFrequency(i);
-        b.q          = eq.bandQ(i);
-        b.gainDb     = eq.bandGainDb(i);
-        b.dynThresholdDb = eq.bandDynamicThresholdDb(i);
-        b.dynRatio = eq.bandDynamicRatio(i);
-        b.dynAttackMs = eq.bandDynamicAttackMs(i);
-        b.dynReleaseMs = eq.bandDynamicReleaseMs(i);
-        b.dynRangeDb = eq.bandDynamicRangeDb(i);
-    }
+    for (int i = 0; i < kEqBandCount; ++i)
+        p.eqBands[i] = m_eqBands[i];
     return p;
 }
 
@@ -459,32 +506,10 @@ void DspController::applySnapshot(const ChainParams &params)
 
     m_eqEnabled = params.eqEnabled;
 
-    auto &eq = m_chain->eq();
-    for (int i = 0; i < kEqBandCount; ++i) {
-        const auto &band = params.eqBands[i];
-        eq.setBandEnabled(i, band.enabled);
-        eq.setBandType(i, static_cast<ParametricEQ::BandType>(band.type));
-        eq.setBandFrequency(i, band.freqHz);
-        eq.setBandQ(i, band.q);
-        eq.setBandGainDb(i, band.gainDb);
-        eq.setBandDynamicThresholdDb(i, band.dynThresholdDb);
-        eq.setBandDynamicRatio(i, band.dynRatio);
-        eq.setBandDynamicAttackMs(i, band.dynAttackMs);
-        eq.setBandDynamicReleaseMs(i, band.dynReleaseMs);
-        eq.setBandDynamicRangeDb(i, band.dynRangeDb);
-    }
+    for (int i = 0; i < kEqBandCount; ++i)
+        m_eqBands[i] = params.eqBands[i];
 
-    pushCompressorParams();
-    pushExciterParams();
-    m_chain->compressor().setBypass(!m_compressorEnabled);
-    m_chain->exciter().setBypass(!m_exciterEnabled);
-    m_chain->eq().setBypass(!m_eqEnabled);
-    m_chain->setInputTrimDb(m_inputTrimDb);
-    m_chain->setOutputTrimDb(m_outputTrimDb);
-    m_chain->setStereoWidth(m_stereoWidth);
-    m_chain->leveler().setBypass(!m_levelerEnabled);
-    m_chain->outputLeveler().setBypass(!m_outputLevelerEnabled);
-    m_chain->setBypass(m_bypass);
+    pushAllToHost();
 
     emit bypassChanged();
     emit compressorChanged();
@@ -550,18 +575,18 @@ void DspController::resetBandToDefaults(int band)
 {
     if (band < 0 || band >= kEqBandCount) return;
     const ChainParams defaults = defaultParams();
-    const auto &b = defaults.eqBands[band];
-    auto &eq = m_chain->eq();
-    eq.setBandEnabled(band, b.enabled);
-    eq.setBandType(band, static_cast<ParametricEQ::BandType>(b.type));
-    eq.setBandFrequency(band, b.freqHz);
-    eq.setBandQ(band, b.q);
-    eq.setBandGainDb(band, b.gainDb);
-    eq.setBandDynamicThresholdDb(band, b.dynThresholdDb);
-    eq.setBandDynamicRatio(band, b.dynRatio);
-    eq.setBandDynamicAttackMs(band, b.dynAttackMs);
-    eq.setBandDynamicReleaseMs(band, b.dynReleaseMs);
-    eq.setBandDynamicRangeDb(band, b.dynRangeDb);
+    m_eqBands[band] = defaults.eqBands[band];
+    const EqBandParams &b = m_eqBands[band];
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Enabled),      b.enabled ? 1.0 : 0.0);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Type),         b.type);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Freq),         b.freqHz);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Q),            b.q);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Gain),         b.gainDb);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynThreshold), b.dynThresholdDb);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynRatio),     b.dynRatio);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynAttack),    b.dynAttackMs);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynRelease),   b.dynReleaseMs);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_DynRange),     b.dynRangeDb);
     emit eqChanged();
 }
 
@@ -569,13 +594,18 @@ void DspController::resetBandEqToDefaults(int band)
 {
     if (band < 0 || band >= kEqBandCount) return;
     const ChainParams defaults = defaultParams();
-    const auto &b = defaults.eqBands[band];
-    auto &eq = m_chain->eq();
-    eq.setBandEnabled(band, b.enabled);
-    eq.setBandType(band, static_cast<ParametricEQ::BandType>(b.type));
-    eq.setBandFrequency(band, b.freqHz);
-    eq.setBandQ(band, b.q);
-    eq.setBandGainDb(band, b.gainDb);
+    const EqBandParams &d = defaults.eqBands[band];
+    // EQ-shape only — leave the per-band dynamics state untouched.
+    m_eqBands[band].enabled = d.enabled;
+    m_eqBands[band].type = d.type;
+    m_eqBands[band].freqHz = d.freqHz;
+    m_eqBands[band].q = d.q;
+    m_eqBands[band].gainDb = d.gainDb;
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Enabled), d.enabled ? 1.0 : 0.0);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Type),    d.type);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Freq),    d.freqHz);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Q),       d.q);
+    m_host->setParam(teedsp::bandParamId(band, teedsp::BF_Gain),    d.gainDb);
     emit eqChanged();
 }
 
@@ -611,19 +641,19 @@ void DspController::saveToSettings() const
     settings.setValue(QStringLiteral("eq/enabled"), m_eqEnabled);
 
     settings.beginWriteArray(QStringLiteral("eq/bands"), kEqBandCount);
-    auto &eq = m_chain->eq();
     for (int i = 0; i < kEqBandCount; ++i) {
+        const EqBandParams &b = m_eqBands[i];
         settings.setArrayIndex(i);
-        settings.setValue(QStringLiteral("enabled"), eq.bandEnabled(i));
-        settings.setValue(QStringLiteral("type"), static_cast<int>(eq.bandType(i)));
-        settings.setValue(QStringLiteral("frequencyHz"), eq.bandFrequency(i));
-        settings.setValue(QStringLiteral("q"), eq.bandQ(i));
-        settings.setValue(QStringLiteral("gainDb"), eq.bandGainDb(i));
-        settings.setValue(QStringLiteral("dynThresholdDb"), eq.bandDynamicThresholdDb(i));
-        settings.setValue(QStringLiteral("dynRatio"), eq.bandDynamicRatio(i));
-        settings.setValue(QStringLiteral("dynAttackMs"), eq.bandDynamicAttackMs(i));
-        settings.setValue(QStringLiteral("dynReleaseMs"), eq.bandDynamicReleaseMs(i));
-        settings.setValue(QStringLiteral("dynRangeDb"), eq.bandDynamicRangeDb(i));
+        settings.setValue(QStringLiteral("enabled"), b.enabled);
+        settings.setValue(QStringLiteral("type"), b.type);
+        settings.setValue(QStringLiteral("frequencyHz"), b.freqHz);
+        settings.setValue(QStringLiteral("q"), b.q);
+        settings.setValue(QStringLiteral("gainDb"), b.gainDb);
+        settings.setValue(QStringLiteral("dynThresholdDb"), b.dynThresholdDb);
+        settings.setValue(QStringLiteral("dynRatio"), b.dynRatio);
+        settings.setValue(QStringLiteral("dynAttackMs"), b.dynAttackMs);
+        settings.setValue(QStringLiteral("dynReleaseMs"), b.dynReleaseMs);
+        settings.setValue(QStringLiteral("dynRangeDb"), b.dynRangeDb);
     }
     settings.endArray();
     settings.endGroup();

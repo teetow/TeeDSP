@@ -1,9 +1,10 @@
 #include "AudioEngine.h"
 
-#include "../dsp/ProcessorChain.h"
+#include "ClapHost.h"
 #include "SpectrumAnalyzer.h"
 #include "WasapiDeviceNotifier.h"
 #include "WasapiDevices.h"
+#include "shared/TeeDspParams.h"
 
 #include <QMetaObject>
 
@@ -128,9 +129,9 @@ struct LufsMonitor {
 };
 // ---- end LufsMonitor ---------------------------------------------------- //
 
-AudioEngine::AudioEngine(dsp::ProcessorChain *chain, QObject *parent)
+AudioEngine::AudioEngine(ClapHost *host, QObject *parent)
     : QObject(parent)
-    , m_chain(chain)
+    , m_host(host)
     , m_analyzer(new SpectrumAnalyzer(this))
     , m_notifier(new WasapiDeviceNotifier(this))
 {
@@ -341,7 +342,7 @@ void AudioEngine::onRenderEndedUnexpectedly()
 void AudioEngine::onCapturePacket(const float *interleaved,
                                   int numFrames, int numChannels, int sampleRate)
 {
-    if (!m_chain || numFrames <= 0 || numChannels <= 0) return;
+    if (!m_host || numFrames <= 0 || numChannels <= 0) return;
 
     // The render thread can die silently if the audio client gets
     // invalidated (Bluetooth tear-down is the common one). Surface that to
@@ -366,7 +367,7 @@ void AudioEngine::onCapturePacket(const float *interleaved,
         const auto toDbfs = [](float a) {
             return (a > 1e-6f) ? 20.0f * std::log10(a) : -120.0f;
         };
-        const float trimDb = m_chain->inputTrimDb();
+        const float trimDb = m_host->paramValue(teedsp::PID_InputTrim);
         const float dbL = toDbfs(prePeakL) + trimDb, dbR = toDbfs(prePeakR) + trimDb;
         m_recentInputPeakChL.store(dbL, std::memory_order_relaxed);
         m_recentInputPeakChR.store(dbR, std::memory_order_relaxed);
@@ -376,9 +377,7 @@ void AudioEngine::onCapturePacket(const float *interleaved,
     if (!m_chainPrepared
         || sampleRate != m_captureSampleRate
         || numChannels != m_captureChannels) {
-        m_chain->prepare(static_cast<double>(sampleRate),
-                         static_cast<std::size_t>(numChannels));
-        m_chain->reset();
+        m_host->activate(static_cast<double>(sampleRate));
         m_captureSampleRate = sampleRate;
         m_captureChannels = numChannels;
         m_chainPrepared = true;
@@ -391,8 +390,9 @@ void AudioEngine::onCapturePacket(const float *interleaved,
 
     if (m_analyzer) m_analyzer->pushPre(interleaved, numFrames, numChannels);
 
-    m_chain->process(const_cast<float *>(interleaved),
-                     static_cast<std::size_t>(numFrames));
+    m_host->process(const_cast<float *>(interleaved),
+                    static_cast<uint32_t>(numFrames),
+                    static_cast<uint32_t>(numChannels));
 
     // Track near-full-scale output as a practical indicator that a hidden
     // limiter/safety clamp may be pumping somewhere downstream.

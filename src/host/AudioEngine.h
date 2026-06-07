@@ -11,11 +11,10 @@
 #include <memory>
 #include <vector>
 
-namespace dsp { class ProcessorChain; }
-
 namespace host {
 
 struct LufsMonitor;  // defined in AudioEngine.cpp
+class ClapHost;
 class SpectrumAnalyzer;
 class WasapiDeviceNotifier;
 
@@ -31,7 +30,7 @@ class AudioEngine : public QObject
     Q_OBJECT
 
 public:
-    explicit AudioEngine(dsp::ProcessorChain *chain, QObject *parent = nullptr);
+    explicit AudioEngine(ClapHost *host, QObject *parent = nullptr);
     ~AudioEngine() override;
 
     // captureDeviceId is the loopback source — typically VB-CABLE.
@@ -91,7 +90,7 @@ private:
     QString pickRenderId() const;
     bool switchRenderTo(const QString &deviceId);
 
-    dsp::ProcessorChain *m_chain;
+    ClapHost *m_host;
     WasapiLoopbackCapture m_capture;
     WasapiRender m_render;
     SpectrumAnalyzer *m_analyzer;

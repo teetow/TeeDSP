@@ -14,11 +14,11 @@ class QProgressBar;
 
 namespace dsp {
 class DspController;
-class ProcessorChain;
 }
 
 namespace host {
 class AudioEngine;
+class ClapHost;
 }
 
 namespace ui {
@@ -153,7 +153,7 @@ private:
     int m_selectedEqBand = 0;
 
 
-    dsp::ProcessorChain *m_chain = nullptr;
+    host::ClapHost *m_clapHost = nullptr;
     dsp::DspController *m_dspController = nullptr;
     host::AudioEngine *m_engine = nullptr;
     ui::TrayController *m_tray = nullptr;
