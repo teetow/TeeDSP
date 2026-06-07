@@ -152,27 +152,34 @@ namespace TeeDsp.Apo
             string path = FxKeyPath(deviceId);
 
             // Fast path: already writable (some endpoints/builds permit it).
+            // A locked key throws UnauthorizedAccessException OR SecurityException
+            // ("Requested registry access is not allowed") — fall through on either.
             try {
                 var k = Registry.LocalMachine.OpenSubKey(path, true);
                 if (k != null) return k;
-            } catch (UnauthorizedAccessException) { }
+            } catch (Exception) { }
 
-            // Take ownership and grant Administrators full control.
+            // Take ownership, then (as owner) grant Administrators full control.
             EnablePrivilege("SeTakeOwnershipPrivilege");
             EnablePrivilege("SeRestorePrivilege");
             var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
 
+            // WRITE_OWNER only: don't read the existing security (we lack
+            // READ_CONTROL until we own it). Apply a fresh owner-only descriptor.
             using (var own = Registry.LocalMachine.OpenSubKey(
                        path, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.TakeOwnership)) {
                 if (own == null)
                     throw new Exception("FxProperties key not found for endpoint: " + deviceId
                                         + " (expected HKLM\\" + path + ")");
-                var sec = own.GetAccessControl(AccessControlSections.Owner);
-                sec.SetOwner(admins);
-                own.SetAccessControl(sec);
+                var ownerSec = new RegistrySecurity();
+                ownerSec.SetOwner(admins);
+                own.SetAccessControl(ownerSec);
             }
+            // As owner we implicitly have READ_CONTROL + WRITE_DAC, so we can now
+            // read and edit the DACL.
             using (var perm = Registry.LocalMachine.OpenSubKey(
-                       path, RegistryKeyPermissionCheck.ReadWriteSubTree, RegistryRights.ChangePermissions)) {
+                       path, RegistryKeyPermissionCheck.ReadWriteSubTree,
+                       RegistryRights.ReadPermissions | RegistryRights.ChangePermissions)) {
                 var sec = perm.GetAccessControl(AccessControlSections.Access);
                 sec.AddAccessRule(new RegistryAccessRule(
                     admins, RegistryRights.FullControl,
