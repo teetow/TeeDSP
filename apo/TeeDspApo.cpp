@@ -41,6 +41,31 @@ bool isFormatAcceptable(const WAVEFORMATEX *wf)
     return true;
 }
 
+// Load the UI's persisted ChainParams (always-on baseline). Returns false if the
+// file is missing/short/wrong-magic/wrong-version, in which case the caller uses
+// defaults. Config-thread only (file I/O); never on the RT path.
+bool loadParamsFile(dsp::ChainParams &out)
+{
+    HANDLE h = CreateFileW(teedsp::kApoParamsPath, GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    bool ok = false;
+    uint32_t magic = 0;
+    DWORD got = 0;
+    dsp::ChainParams tmp;
+    if (ReadFile(h, &magic, sizeof(magic), &got, nullptr) && got == sizeof(magic)
+        && magic == teedsp::kApoParamsMagic
+        && ReadFile(h, &tmp, sizeof(tmp), &got, nullptr) && got == sizeof(tmp)
+        && tmp.version == dsp::ChainParams{}.version) {
+        out = tmp;
+        ok = true;
+    }
+    CloseHandle(h);
+    return ok;
+}
+
 } // namespace
 
 TeeDspApo::TeeDspApo(IUnknown *pUnkOuter)
@@ -408,6 +433,15 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
     m_lufs.prepare(static_cast<double>(m_sampleRate), m_channels);
     m_lufs.reset();
 
+    // Always-on baseline: apply the user's persisted params so the chain runs
+    // with their last settings even when the UI isn't running. A live UI
+    // connection (below) overrides this with fresher params when present.
+    {
+        dsp::ChainParams baseline;
+        if (loadParamsFile(baseline)) dsp::applyChainParams(m_chain, baseline);
+        else                          dsp::applyChainParams(m_chain, dsp::ChainParams{});
+    }
+
     openTelemetry();
 
     // Seed liveness tracking and align with whatever the UI has already
@@ -533,10 +567,10 @@ void STDMETHODCALLTYPE TeeDspApo::APOProcess(
                         reinterpret_cast<const void *>(in->pBuffer),
                         static_cast<size_t>(in->u32ValidFrameCount) * m_bytesPerFrame);
         }
-        // Process only while the UI is present; otherwise pass through cleanly
-        // so closing the app returns the endpoint to unmodified audio.
-        if (uiAlive)
-            m_chain.process(reinterpret_cast<float *>(out->pBuffer), in->u32ValidFrameCount);
+        // Always-on: process with the current params regardless of whether the
+        // UI is running (live edits still arrive via paramGen when it is). "Off"
+        // is the persisted bypass flag, which makes the chain pass through.
+        m_chain.process(reinterpret_cast<float *>(out->pBuffer), in->u32ValidFrameCount);
         publishMeters(reinterpret_cast<const float *>(in->pBuffer),
                       reinterpret_cast<const float *>(out->pBuffer),
                       in->u32ValidFrameCount);

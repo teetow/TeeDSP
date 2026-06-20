@@ -29,6 +29,14 @@ inline constexpr uint32_t kApoSharedVersion = 4u;
 // far more than the UI's drain interval, so it never underruns between ticks.
 inline constexpr uint32_t kApoAudioRing = 8192u;
 
+// Persisted params for always-on operation: the UI writes this file atomically
+// on every change; the APO loads it at stream start so the chain runs with the
+// last-saved settings even when the app isn't running. File = [magic u32]
+// followed by a raw dsp::ChainParams. In ProgramData so the audio service
+// (audiodg) can read what a normal-user UI writes.
+inline constexpr wchar_t  kApoParamsPath[]  = L"C:\\ProgramData\\TeeDSP\\params.bin";
+inline constexpr uint32_t kApoParamsMagic   = 0x50524454u; // 'TDRP'
+
 struct ApoShared {
     // --- header ---
     uint32_t magic;

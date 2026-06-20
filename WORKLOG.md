@@ -16,16 +16,28 @@ seqlock `ChainParams` + heartbeat + meters/LUFS + mono pre/post sample ring.
 New since the `POC` tag — NOT committed yet.
 
 **Next, in order:**
-1. **Always-on persistence** (chosen activation model): APO loads saved params
-   from a file at stream start and processes regardless of the app running; drop
-   the heartbeat-gated bypass; "off" = persisted bypass. Control surface is now
-   trustworthy (see/kill/tweak), so this is safe to add.
-2. Minor polish: meters/spectrum freeze on idle (feed silence when the status
+1. ✅ DONE — **Always-on persistence**: APO loads `dsp::ChainParams` from
+   `C:\ProgramData\TeeDSP\params.bin` (`[magic][ChainParams]`) at stream start
+   and processes regardless of the app running; heartbeat-gated bypass dropped;
+   "off" = persisted `bypassed`. UI writes the file atomically (QSaveFile) on
+   every change, plus the live shared block when connected. Verified: with the
+   app killed (`uiAlive=0`), the APO still processes a stream (calls climbing,
+   in≠out). Kill switches remain: relaunch+Bypass, or Sound→enhancements off.
+2. ✅ DONE — **VB-Cable retired.** It was only the old bridge's capture device;
+   the APO path never used it. User uninstalled it. The stale autostarting
+   bridge app (`%LOCALAPPDATA%\Programs\TeeDsp`, 06-08 build) was eradicated:
+   process killed, `HKCU\…\Run\TeeDsp` removed, directory deleted.
+3. ✅ DONE — **Lean editor** (commit `c09f22d`): removed the in-app audio engine
+   (AudioEngine + WASAPI capture/render/notifier/resampler) and the CLAP host
+   from the app. `DspController` is APO-only (snapshot → shared block + params
+   file; meters ← APO). Kept WasapiDevices, Fft, SpectrumAnalyzer, ApoSharedClient.
+   `teedsp.clap` stays as a standalone DAW-plugin target.
+4. Minor polish: meters/spectrum freeze on idle (feed silence when the status
    poll sees no processing — UI-only).
-3. Checkpoint commit of M2 + UI + analysis (POC tag predates all of it).
-4. **Drop-VB-Cable gate (off POC):** bind the APO to the real output endpoints —
-   Focusrite, then AirPods/Bluetooth ([[project_airpods_priority]]).
-5. Production signing (WHQL/attestation) so it loads into a *protected* audiodg;
+5. **Real-output gate (off POC):** bind the APO to the endpoints actually used —
+   Focusrite, then AirPods/Bluetooth ([[project_airpods_priority]]). TeeDSP
+   currently only processes the Realtek endpoint.
+6. Production signing (WHQL/attestation) so it loads into a *protected* audiodg;
    `DisableProtectedAudioDG` is dev-only.
 
 ## ✅ PROVEN: APO PROCESSES audio in audiodg (2026-06-20, later)
