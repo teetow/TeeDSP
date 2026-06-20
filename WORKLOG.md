@@ -32,7 +32,13 @@ New since the `POC` tag — NOT committed yet.
    from the app. `DspController` is APO-only (snapshot → shared block + params
    file; meters ← APO). Kept WasapiDevices, Fft, SpectrumAnalyzer, ApoSharedClient.
    `teedsp.clap` stays as a standalone DAW-plugin target.
-4. Minor polish: meters/spectrum freeze on idle (feed silence when the status
+4. ✅ DONE — **Boot autostart + tray** (commit `9bd197a`): editor deployed
+   self-contained (windeployqt) to `%LOCALAPPDATA%\Programs\TeeDsp`, `HKCU\…\Run`
+   re-pointed there; close-to-tray already worked. Tray icon lights (color vs
+   grayscale) only when TeeDSP is bound to the **current default output** and not
+   bypassed — read from that endpoint's MFX slot. NOTE: the autostart copy is the
+   *installed* build; reinstall (copy exe+theme, windeployqt) to update it.
+5. Minor polish: meters/spectrum freeze on idle (feed silence when the status
    poll sees no processing — UI-only).
 5. **Real-output gate (off POC):** bind the APO to the endpoints actually used —
    Focusrite, then AirPods/Bluetooth ([[project_airpods_priority]]). TeeDSP
