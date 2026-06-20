@@ -1246,33 +1246,64 @@ void MainWindow::restoreSelectedDevices()
     m_syncingUi = wasSyncing;
 }
 
+namespace {
+struct DefaultOutInfo { bool hasApo = false; QString name; };
+
+// Is the TeeDSP APO bound to the *current* default render endpoint, and what's
+// its name? Reads the endpoint's composite MFX slot from the MMDevices registry.
+DefaultOutInfo queryDefaultOut()
+{
+    DefaultOutInfo info;
+    const QString def = host::WasapiDevices::defaultRenderId();   // {0.0.0...}.{guid}
+    if (def.isEmpty()) return info;
+    const int dot = def.lastIndexOf(QLatin1Char('.'));
+    const QString guid = (dot >= 0) ? def.mid(dot + 1) : def;
+    const QString base =
+        QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion"
+                       "\\MMDevices\\Audio\\Render\\") + guid;
+
+    QSettings fx(base + QStringLiteral("\\FxProperties"), QSettings::NativeFormat);
+    const QString mfx = fx.value(
+        QStringLiteral("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14")).toString();
+    info.hasApo = (mfx.compare(QStringLiteral("{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"),
+                               Qt::CaseInsensitive) == 0);
+
+    QSettings pr(base + QStringLiteral("\\Properties"), QSettings::NativeFormat);
+    info.name = pr.value(QStringLiteral("{a45c254e-df1c-4efd-8020-67d146a850e0},2")).toString();
+    if (info.name.isEmpty()) info.name = QStringLiteral("current output");
+    return info;
+}
+} // namespace
+
 void MainWindow::refreshEngineStatus()
 {
-    // Status now reflects the system-wide APO (audiodg), polled from its shared
-    // telemetry — not a local engine. "Processing" = the APO's call counter
-    // advanced since the previous poll.
+    // The tray lights only when TeeDSP is shaping the *current* output device —
+    // i.e. the APO is bound to the default render endpoint and not bypassed.
+    // The shared-block telemetry (single APO) tells us whether audio is flowing.
     if (!m_dspController) return;
     const host::ApoSharedClient::ApoStatus st = m_dspController->apoStatus();
     const bool bypassed = m_dspController->bypass();
+    const DefaultOutInfo out = queryDefaultOut();
 
     const bool advancing = st.open && (st.processCalls != m_lastApoProcessCalls);
     m_lastApoProcessCalls = st.processCalls;
     const bool processing = st.open && st.locked && advancing && !bypassed;
 
+    const bool activeOnOutput = out.hasApo && !bypassed;
+
     QString text;
     const char *role = "status";
-    if (!st.open) {
-        text = QStringLiteral("TeeDSP APO not loaded — play audio to the device");
+    if (!out.hasApo) {
+        text = QStringLiteral("TeeDSP not active on current output (%1)").arg(out.name);
     } else if (bypassed) {
-        text = QStringLiteral("TeeDSP — bypassed");
+        text = QStringLiteral("TeeDSP — bypassed (%1)").arg(out.name);
     } else if (processing) {
-        text = QStringLiteral("TeeDSP active · %1 Hz · %2 ch").arg(st.sampleRate).arg(st.channels);
+        text = QStringLiteral("TeeDSP active on %1 · %2 Hz · %3 ch")
+                   .arg(out.name).arg(st.sampleRate).arg(st.channels);
         role = "statusRunning";
         if (st.sampleRate > 0) m_eqCurve->setSampleRate(static_cast<double>(st.sampleRate));
-    } else if (st.locked) {
-        text = QStringLiteral("TeeDSP ready — no audio on this endpoint");
     } else {
-        text = QStringLiteral("TeeDSP idle");
+        text = QStringLiteral("TeeDSP ready on %1 — no audio").arg(out.name);
     }
     m_statusLabel->setText(text);
     m_statusLabel->setProperty("role", role);
@@ -1280,9 +1311,10 @@ void MainWindow::refreshEngineStatus()
     m_statusLabel->style()->polish(m_statusLabel);
 
     if (m_tray) {
-        m_tray->setRunning(processing);
-        m_tray->setStatusText(bypassed ? QStringLiteral("TeeDSP — bypassed")
-                              : processing ? QStringLiteral("TeeDSP — active")
-                                           : QStringLiteral("TeeDSP — idle"));
+        m_tray->setRunning(activeOnOutput);
+        m_tray->setStatusText(
+            !out.hasApo ? QStringLiteral("TeeDSP — not on %1").arg(out.name)
+            : bypassed  ? QStringLiteral("TeeDSP — bypassed")
+                        : QStringLiteral("TeeDSP — active on %1").arg(out.name));
     }
 }
