@@ -4,7 +4,9 @@
 #include <objbase.h>
 #include <ksmedia.h>
 #include <mmreg.h>
+#include <sddl.h>
 #include <new>
+#include <cmath>
 #include <cstring>
 
 namespace teedsp::apo {
@@ -140,18 +142,28 @@ void TeeDspApo::openTelemetry()
 {
     if (m_shm) return;
 
-    // NULL DACL so a user-session observer can open the section. Dev-only;
-    // the production build will gate this behind a debug flag.
-    SECURITY_DESCRIPTOR sd{};
-    InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
-    SetSecurityDescriptorDacl(&sd, TRUE, nullptr, FALSE);
+    // audiodg runs at a higher integrity than a normal-user UI, so a plain NULL
+    // DACL isn't enough — mandatory "no-write-up" would still block the UI's
+    // writes. SDDL: allow everyone (DACL GA to WD) AND label the object Low
+    // (SACL ML ... LW) so a Medium-integrity UI can write to it. Dev-grade;
+    // production should scope the DACL to the specific UI and gate it behind a
+    // debug flag.
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof(sa);
-    sa.lpSecurityDescriptor = &sd;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            L"D:(A;;GA;;;WD)S:(ML;;NW;;;LW)", SDDL_REVISION_1, &sd, nullptr)) {
+        sa.lpSecurityDescriptor = sd;
+    }
 
-    m_shmHandle = CreateFileMappingW(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE,
-                                     0, sizeof(teedsp::ApoShared), teedsp::kApoSharedName);
+    m_shmHandle = CreateFileMappingW(INVALID_HANDLE_VALUE,
+                                     sa.lpSecurityDescriptor ? &sa : nullptr,
+                                     PAGE_READWRITE, 0, sizeof(teedsp::ApoShared),
+                                     teedsp::kApoSharedName);
+    const DWORD createErr = GetLastError();   // capture before LocalFree clobbers it
+    if (sd) LocalFree(sd);
     if (!m_shmHandle) return;
+    m_createdShared = (createErr != ERROR_ALREADY_EXISTS);
 
     m_shm = static_cast<teedsp::ApoShared *>(
         MapViewOfFile(m_shmHandle, FILE_MAP_WRITE, 0, 0, sizeof(teedsp::ApoShared)));
@@ -161,8 +173,20 @@ void TeeDspApo::openTelemetry()
         return;
     }
 
-    m_shm->magic   = teedsp::kApoSharedMagic;
-    m_shm->version = teedsp::kApoSharedVersion;
+    if (m_createdShared) {
+        // We are the first creator: lay down a clean block with default params.
+        // If the UI already holds the section, we attach without clobbering the
+        // params/heartbeat it has been maintaining.
+        std::memset(m_shm, 0, sizeof(*m_shm));
+        m_shm->magic   = teedsp::kApoSharedMagic;
+        m_shm->version = teedsp::kApoSharedVersion;
+        m_shm->params  = dsp::ChainParams{};
+        m_shm->inPeakDbfs[0]  = m_shm->inPeakDbfs[1]  = -120.0f;
+        m_shm->outPeakDbfs[0] = m_shm->outPeakDbfs[1] = -120.0f;
+        m_shm->outRmsDbfs     = -120.0f;
+        m_shm->outLufsCh[0]   = m_shm->outLufsCh[1]   = -120.0f;
+        m_shm->outLufsM       = -120.0f;
+    }
 }
 
 void TeeDspApo::closeTelemetry()
@@ -176,6 +200,63 @@ void TeeDspApo::closeTelemetry()
         CloseHandle(m_shmHandle);
         m_shmHandle = nullptr;
     }
+}
+
+void TeeDspApo::publishMeters(const float *inBuf, const float *outBuf, UINT32 frames)
+{
+    if (!m_shm) return;
+    const UINT32 ch = m_channels ? m_channels : 1;
+
+    // Single pass: peaks, output power (for RMS), and the mono pre/post sample
+    // ring for the UI spectrum analyzer.
+    float inPk[2]  = { 0.0f, 0.0f };
+    float outPk[2] = { 0.0f, 0.0f };
+    double sumSq = 0.0;
+    const uint64_t wp = m_shm->audioWritePos;
+    for (UINT32 f = 0; f < frames; ++f) {
+        float inMono = 0.0f, outMono = 0.0f;
+        for (UINT32 c = 0; c < ch; ++c) {
+            const size_t i = static_cast<size_t>(f) * ch + c;
+            const float xi = inBuf  ? inBuf[i]  : 0.0f;
+            const float xo = outBuf ? outBuf[i] : 0.0f;
+            inMono  += xi;
+            outMono += xo;
+            const float ai = std::fabs(xi), ao = std::fabs(xo);
+            if (c < 2) { if (ai > inPk[c]) inPk[c] = ai; if (ao > outPk[c]) outPk[c] = ao; }
+            sumSq += static_cast<double>(xo) * xo;
+        }
+        const uint32_t idx = static_cast<uint32_t>((wp + f) % teedsp::kApoAudioRing);
+        m_shm->inRing[idx]  = inMono  / static_cast<float>(ch);
+        m_shm->outRing[idx] = outMono / static_cast<float>(ch);
+    }
+    // Publish the advanced write position last (release), so a UI reader that
+    // acquire-loads it sees the samples already in place.
+    std::atomic_ref<uint64_t>(m_shm->audioWritePos)
+        .store(wp + frames, std::memory_order_release);
+
+    const auto toDb = [](float lin) { return lin > 1e-6f ? 20.0f * std::log10(lin) : -120.0f; };
+    m_shm->inPeakDbfs[0]  = toDb(inPk[0]);
+    m_shm->inPeakDbfs[1]  = toDb(ch > 1 ? inPk[1] : inPk[0]);
+    m_shm->outPeakDbfs[0] = toDb(outPk[0]);
+    m_shm->outPeakDbfs[1] = toDb(ch > 1 ? outPk[1] : outPk[0]);
+    const double n = static_cast<double>(frames) * ch;
+    m_shm->outRmsDbfs = (n > 0.0 && sumSq > 1e-12)
+        ? static_cast<float>(10.0 * std::log10(sumSq / n)) : -120.0f;
+
+    // Chain telemetry (atomic getters — cheap, RT-safe).
+    m_shm->compGrDb         = m_chain.compressor().currentGainReductionDb();
+    m_shm->levelerGainDb    = m_chain.leveler().currentGainDb();
+    m_shm->outLevelerGainDb = m_chain.outputLeveler().currentGainDb();
+    dsp::ParametricEQ &eq = m_chain.eq();
+    for (int b = 0; b < 5; ++b)
+        m_shm->bandGrDb[b] = eq.bandDynamicGainReductionDb(b);
+
+    // Momentary LUFS on the post-chain output (decays toward silence when
+    // outBuf is null).
+    m_lufs.process(outBuf, frames, ch);
+    m_shm->outLufsCh[0] = m_lufs.channelLufs(0);
+    m_shm->outLufsCh[1] = m_lufs.channelLufs(ch > 1 ? 1 : 0);
+    m_shm->outLufsM     = m_lufs.momentaryLufs();
 }
 
 // -------- IAudioProcessingObject --------
@@ -324,33 +405,15 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
     // allocate). The RT path then only calls m_chain.process().
     m_chain.prepare(static_cast<double>(m_sampleRate), m_channels);
     m_chain.reset();
-
-    // --- Milestone-1 PROOF CONFIG ---------------------------------------
-    // Hard-coded, unmistakable setting so we can hear that APOProcess is
-    // actually running inside audiodg: everything bypassed except a large
-    // low-shelf boost (heavy bass). Stage-2 replaces this with live params
-    // read from the UI over shared memory.
-    m_chain.setBypass(false);
-    m_chain.setInputTrimDb(0.0f);
-    m_chain.setOutputTrimDb(0.0f);
-    m_chain.setStereoWidth(1.0f);
-    m_chain.leveler().setBypass(true);
-    m_chain.outputLeveler().setBypass(true);
-    m_chain.compressor().setBypass(true);
-    m_chain.exciter().setBypass(true);
-
-    auto &eq = m_chain.eq();
-    eq.setBypass(false);
-    for (int b = 0; b < dsp::kEqBandCount; ++b)
-        eq.setBandEnabled(b, false);
-    eq.setBandEnabled(0, true);
-    eq.setBandType(0, dsp::ParametricEQ::BandType::LowShelf);
-    eq.setBandFrequency(0, 200.0f);
-    eq.setBandQ(0, 0.7f);
-    eq.setBandGainDb(0, 15.0f);
-    // --------------------------------------------------------------------
+    m_lufs.prepare(static_cast<double>(m_sampleRate), m_channels);
+    m_lufs.reset();
 
     openTelemetry();
+
+    // Seed liveness tracking and align with whatever the UI has already
+    // published. Ongoing changes are picked up in APOProcess.
+    m_lastAppliedGen = 0;
+    m_framesSinceHeartbeat = 0;
     if (m_shm) {
         m_shm->channels        = m_channels;
         m_shm->sampleRate      = m_sampleRate;
@@ -359,6 +422,20 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
         m_shm->framesProcessed = 0;
         m_shm->lastBufferFlags = 0;
         m_shm->locked          = 1;
+
+        std::atomic_ref<uint64_t> hb(m_shm->uiHeartbeat);
+        m_lastHeartbeat = hb.load(std::memory_order_acquire);
+
+        std::atomic_ref<uint32_t> gen(m_shm->paramGen);
+        const uint32_t g = gen.load(std::memory_order_acquire);
+        if (g != 0) {
+            dsp::ChainParams p;
+            if (teedsp::apoReadParams(m_shm, p)) {
+                dsp::applyChainParams(m_chain, p);
+                m_lastAppliedGen = g;
+                std::atomic_ref<uint32_t>(m_shm->appliedGen).store(g, std::memory_order_release);
+            }
+        }
     }
 
     m_locked        = true;
@@ -394,13 +471,43 @@ void STDMETHODCALLTYPE TeeDspApo::APOProcess(
     APO_CONNECTION_PROPERTY *out = ppOutputConnections[0];
     if (!in || !out) return;
 
-    // RT-safe telemetry: single interlocked ops on already-mapped memory.
+    // RT-safe: telemetry, UI-liveness, and live param pickup. All ops here are
+    // interlocked/atomic on already-mapped memory or relaxed atomic loads — no
+    // allocation, locking, or syscalls. applyChainParams only runs when the UI
+    // commits a change (paramGen advances), not every block.
+    bool uiAlive = false;
     if (m_shm) {
+        const UINT32 frames = in->u32ValidFrameCount;
         InterlockedIncrement64(reinterpret_cast<volatile LONG64 *>(&m_shm->processCalls));
         m_shm->lastBufferFlags = in->u32BufferFlags;
         if (in->u32BufferFlags == BUFFER_VALID)
             InterlockedExchangeAdd64(reinterpret_cast<volatile LONG64 *>(&m_shm->framesProcessed),
-                                     static_cast<LONG64>(in->u32ValidFrameCount));
+                                     static_cast<LONG64>(frames));
+
+        // UI liveness: stale if the heartbeat hasn't advanced within ~1s of audio.
+        std::atomic_ref<uint64_t> hb(m_shm->uiHeartbeat);
+        const uint64_t cur = hb.load(std::memory_order_acquire);
+        if (cur != m_lastHeartbeat) {
+            m_lastHeartbeat = cur;
+            m_framesSinceHeartbeat = 0;
+        } else {
+            m_framesSinceHeartbeat += frames;
+        }
+        uiAlive = (m_sampleRate != 0) && (m_framesSinceHeartbeat < m_sampleRate);
+        std::atomic_ref<uint32_t>(m_shm->uiAlive).store(uiAlive ? 1u : 0u, std::memory_order_relaxed);
+
+        if (uiAlive) {
+            std::atomic_ref<uint32_t> gen(m_shm->paramGen);
+            const uint32_t g = gen.load(std::memory_order_acquire);
+            if (g != m_lastAppliedGen) {
+                dsp::ChainParams p;
+                if (teedsp::apoReadParams(m_shm, p)) {
+                    dsp::applyChainParams(m_chain, p);
+                    m_lastAppliedGen = g;
+                    std::atomic_ref<uint32_t>(m_shm->appliedGen).store(g, std::memory_order_release);
+                }
+            }
+        }
     }
 
     switch (in->u32BufferFlags) {
@@ -410,7 +517,9 @@ void STDMETHODCALLTYPE TeeDspApo::APOProcess(
         return;
 
     case BUFFER_SILENT:
-        // No need to copy — engine treats silent output buffers as zero.
+        // No need to copy — engine treats silent output buffers as zero. Still
+        // advance meters/ring/LUFS with silence so they decay correctly.
+        publishMeters(nullptr, nullptr, in->u32ValidFrameCount);
         out->u32ValidFrameCount = in->u32ValidFrameCount;
         out->u32BufferFlags = BUFFER_SILENT;
         return;
@@ -424,7 +533,13 @@ void STDMETHODCALLTYPE TeeDspApo::APOProcess(
                         reinterpret_cast<const void *>(in->pBuffer),
                         static_cast<size_t>(in->u32ValidFrameCount) * m_bytesPerFrame);
         }
-        m_chain.process(reinterpret_cast<float *>(out->pBuffer), in->u32ValidFrameCount);
+        // Process only while the UI is present; otherwise pass through cleanly
+        // so closing the app returns the endpoint to unmodified audio.
+        if (uiAlive)
+            m_chain.process(reinterpret_cast<float *>(out->pBuffer), in->u32ValidFrameCount);
+        publishMeters(reinterpret_cast<const float *>(in->pBuffer),
+                      reinterpret_cast<const float *>(out->pBuffer),
+                      in->u32ValidFrameCount);
         out->u32ValidFrameCount = in->u32ValidFrameCount;
         out->u32BufferFlags = BUFFER_VALID;
         return;

@@ -55,6 +55,39 @@ DspController::DspController(host::ClapHost *host, QObject *parent)
     connect(this, &DspController::exciterChanged,    this, &DspController::scheduleSave);
     connect(this, &DspController::eqChanged,         this, &DspController::scheduleSave);
     connect(this, &DspController::levelerChanged,    this, &DspController::scheduleSave);
+
+    // Mirror every committed change to the system-wide APO inside audiodg, and
+    // run a 20 Hz heartbeat so the APO processes while we're alive and bypasses
+    // when we're gone. The section opens lazily once the APO has created it.
+    connect(this, &DspController::bypassChanged,     this, [this]{ m_apoDirty = true; });
+    connect(this, &DspController::compressorChanged, this, [this]{ m_apoDirty = true; });
+    connect(this, &DspController::exciterChanged,    this, [this]{ m_apoDirty = true; });
+    connect(this, &DspController::eqChanged,         this, [this]{ m_apoDirty = true; });
+    connect(this, &DspController::levelerChanged,    this, [this]{ m_apoDirty = true; });
+    m_apoTimer.setInterval(50);
+    connect(&m_apoTimer, &QTimer::timeout, this, &DspController::syncApo);
+    m_apoTimer.start();
+}
+
+host::ApoSharedClient::ApoStatus DspController::apoStatus()
+{
+    host::ApoSharedClient::ApoStatus s;
+    m_apo.readStatus(s);
+    return s;
+}
+
+void DspController::syncApo()
+{
+    if (!m_apo.isOpen()) {
+        if (!m_apo.tryOpen())
+            return;            // APO hasn't created the shared section yet
+        m_apoDirty = true;     // freshly opened — push the current state once
+    }
+    m_apo.heartbeat();
+    if (m_apoDirty) {
+        m_apo.writeParams(buildSnapshot());
+        m_apoDirty = false;
+    }
 }
 
 void DspController::setMeterTimerActive(bool active)
@@ -161,9 +194,9 @@ void DspController::setLevelerEnabled(bool b)
 
 float DspController::levelerGainDb() const
 {
-    teedsp_telemetry_data t;
-    m_host->readTelemetry(t);
-    return t.levelerGainDb;
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.levelerGainDb;
 }
 
 void DspController::setOutputLevelerEnabled(bool b)
@@ -176,9 +209,9 @@ void DspController::setOutputLevelerEnabled(bool b)
 
 float DspController::outputLevelerGainDb() const
 {
-    teedsp_telemetry_data t;
-    m_host->readTelemetry(t);
-    return t.outputLevelerGainDb;
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.outLevelerGainDb;
 }
 
 bool DspController::compressorEnabled() const { return m_compressorEnabled; }
@@ -245,9 +278,49 @@ void DspController::setCompMakeupDb(float v)
 
 float DspController::compGainReductionDb() const
 {
-    teedsp_telemetry_data t;
-    m_host->readTelemetry(t);
-    return t.compGrDb;
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.compGrDb;
+}
+
+float DspController::apoInPeakDbfs(int ch) const
+{
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.inPeakDbfs[(ch == 1) ? 1 : 0];
+}
+
+float DspController::apoOutPeakDbfs(int ch) const
+{
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.outPeakDbfs[(ch == 1) ? 1 : 0];
+}
+
+float DspController::apoOutRmsDbfs() const
+{
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.outRmsDbfs;
+}
+
+float DspController::apoOutLufs(int ch) const
+{
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.outLufsCh[(ch == 1) ? 1 : 0];
+}
+
+float DspController::apoOutLufsM() const
+{
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    return m.outLufsM;
+}
+
+void DspController::drainApoAudio(std::vector<float> &pre, std::vector<float> &post)
+{
+    m_apo.drainAudio(pre, post);
 }
 
 bool DspController::exciterEnabled() const { return m_exciterEnabled; }
@@ -302,8 +375,8 @@ void DspController::setEqEnabled(bool b)
 
 QVariantList DspController::eqBands() const
 {
-    teedsp_telemetry_data t;
-    m_host->readTelemetry(t);
+    host::ApoSharedClient::ApoMeters t;
+    m_apo.readMeters(t);
     QVariantList list;
     for (int i = 0; i < kEqBandCount; ++i) {
         const EqBandParams &b = m_eqBands[i];
@@ -326,8 +399,8 @@ QVariantList DspController::eqBands() const
 
 void DspController::eqBandViews(std::array<EqBandView, kEqBandCount> &out) const
 {
-    teedsp_telemetry_data t;
-    m_host->readTelemetry(t);
+    host::ApoSharedClient::ApoMeters t;
+    m_apo.readMeters(t);
     for (int i = 0; i < kEqBandCount; ++i) {
         const EqBandParams &b = m_eqBands[i];
         EqBandView &v = out[i];
@@ -349,8 +422,8 @@ EqBandView DspController::eqBandView(int band) const
 {
     EqBandView v{};
     if (band < 0 || band >= kEqBandCount) return v;
-    teedsp_telemetry_data t;
-    m_host->readTelemetry(t);
+    host::ApoSharedClient::ApoMeters t;
+    m_apo.readMeters(t);
     const EqBandParams &b = m_eqBands[band];
     v.enabled            = b.enabled;
     v.type               = b.type;

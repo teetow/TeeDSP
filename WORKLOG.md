@@ -5,6 +5,29 @@ Genuinely low-latency, system-wide processing via a system-effects APO: get
 `TeeDspApo.dll` loaded into `audiodg.exe`. This is the right architecture; the
 user-space bridge is a fallback, not a replacement.
 
+## STATE — POC complete on Realtek (2026-06-20)
+End-to-end works on the Realtek analog endpoint: APO loads + processes
+system-wide; the real `TeeDsp.exe` UI drives the chain live; full analysis
+(level/VU/GR meters, BS.1770 LUFS, pre/post spectrum + heatmap) is read from the
+APO's shared telemetry. UI is the APO-era control surface (Device picker, status
+line, master Bypass; bridge Start/Stop/Output-picker + capture→render engine
+retired). Shared block is now **V4** (`Global\TeeDspApoSharedV4`): telemetry +
+seqlock `ChainParams` + heartbeat + meters/LUFS + mono pre/post sample ring.
+New since the `POC` tag — NOT committed yet.
+
+**Next, in order:**
+1. **Always-on persistence** (chosen activation model): APO loads saved params
+   from a file at stream start and processes regardless of the app running; drop
+   the heartbeat-gated bypass; "off" = persisted bypass. Control surface is now
+   trustworthy (see/kill/tweak), so this is safe to add.
+2. Minor polish: meters/spectrum freeze on idle (feed silence when the status
+   poll sees no processing — UI-only).
+3. Checkpoint commit of M2 + UI + analysis (POC tag predates all of it).
+4. **Drop-VB-Cable gate (off POC):** bind the APO to the real output endpoints —
+   Focusrite, then AirPods/Bluetooth ([[project_airpods_priority]]).
+5. Production signing (WHQL/attestation) so it loads into a *protected* audiodg;
+   `DisableProtectedAudioDG` is dev-only.
+
 ## ✅ PROVEN: APO PROCESSES audio in audiodg (2026-06-20, later)
 `APOProcess` is confirmed executing on real buffers inside audiodg, verified
 deterministically (not by ear) via a cross-process telemetry block the APO
@@ -33,11 +56,34 @@ Scratchpad scripts: `deploy-verify.ps1` (deploy + telemetry read).
 NOTE: InprocServer32 now points at the dev path, NOT the DriverStore package —
 restore it to the DriverStore DLL (or reinstall the package) for the "real" path.
 
-**Next — Milestone 2 (live control):** append a seqlock-guarded
-`dsp::ChainParams` region to the shared block; UI (`DspController`) writes its
-snapshot on change, APO reads + applies to its `ProcessorChain` (re-apply when a
-version counter changes). Then the existing UI drives the system-wide chain and
-the hard-coded proof config is removed.
+## ✅ Milestone 2 (live UI control) — VERIFIED 2026-06-20
+The UI drives the system-wide APO over shared memory. Verified with the real
+`TeeDsp.exe` (normal-user/Medium integrity) + a live stream: `uiAlive=1`,
+`paramGen==appliedGen` (UI→APO loop closed), heartbeat climbing ~20 Hz, process
+counters climbing. Hard-coded proof config removed.
+
+- Shared block v2 (`Global\TeeDspApoSharedV2`, src/shared/TeeDspApoShared.h):
+  telemetry + seqlock `dsp::ChainParams` (UI→APO) + UI heartbeat.
+- `dsp::applyChainParams` (src/dsp/ChainParamsApply.h) mirrors the CLAP plugin's
+  mapping (notably `*Enabled` → `stage.setBypass(!on)`).
+- APO: applies params when `paramGen` advances; **bypasses (passthrough) when
+  the heartbeat goes stale** (UI not running) — so closing the app returns the
+  endpoint to clean audio. Publishes `appliedGen`/`uiAlive` for verification.
+- UI: `host::ApoSharedClient` + a 20 Hz timer in `DspController` opens the
+  section lazily (the APO, a service, must create the Global section first),
+  writes the snapshot on change, pulses the heartbeat.
+- **Integrity gotcha:** audiodg runs at higher integrity than a user UI, so the
+  section is created with SDDL `D:(A;;GA;;;WD)S:(ML;;NW;;;LW)` (everyone DACL +
+  Low mandatory label) so a Medium-integrity UI can write to it.
+- NOT yet committed (POC tag = pre-M2). Dev-grade: NULL-ish DACL + Low label are
+  permissive; production should scope them and gate behind a debug flag.
+
+**Next — endpoint coverage (the actual "drop VB-Cable" gate):** the APO is bound
+only to the Realtek analog endpoint. To replace the loopback bridge it must be on
+the endpoints actually used for output — Focusrite and (the killer use case)
+AirPods/Bluetooth. Focusrite never accepted the binding earlier, but that was
+before we understood the five gates + aggregation + `Disable_SysFx`; worth
+retrying now. Per-endpoint extension INF binds the MFX slot.
 
 ## ✅ PROVEN: APO loads into audiodg (2026-06-20)
 `teedspapo.dll` is confirmed **mapped into `audiodg.exe`** (PID 31864, read via

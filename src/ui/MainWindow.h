@@ -6,6 +6,8 @@
 #include <QTimer>
 #include <QVector>
 
+#include <vector>
+
 class QLabel;
 class QPushButton;
 class QCheckBox;
@@ -19,6 +21,7 @@ class DspController;
 namespace host {
 class AudioEngine;
 class ClapHost;
+class SpectrumAnalyzer;
 }
 
 namespace ui {
@@ -180,4 +183,19 @@ private:
     float m_dispOutLufsPctL = 0.0f;
     float m_dispOutLufsPctR = 0.0f;
     qint64 m_lastMeterTickMs = 0;
+
+    // Polls the APO's shared telemetry to drive the status line (and tray text),
+    // independent of the engine — the engine is retired from the APO path.
+    QTimer m_apoStatusTimer;
+    unsigned long long m_lastApoProcessCalls = 0;
+
+    // Spectrum: drain the APO's pre/post sample ring and feed the analyzer
+    // (whose spectraUpdated drives the EqCurve overlay + heatmap).
+    void onSpectrumTick();
+    host::SpectrumAnalyzer *m_analyzer = nullptr;
+    QTimer m_spectrumTimer;
+    bool   m_analyzerStarted = false;
+    double m_analyzerSr = 0.0;
+    std::vector<float> m_specPre;
+    std::vector<float> m_specPost;
 };

@@ -178,44 +178,36 @@ MainWindow::MainWindow(QWidget *parent)
     pullStateFromController();
     refreshEngineStatus();
 
-    // Auto-start on launch if both endpoints are remembered. Deferred so the
-    // window is up first; failure messages still surface clearly.
-    QTimer::singleShot(0, this, [this]() {
-        if (selectedCaptureDeviceId().isEmpty() || selectedRenderDeviceId().isEmpty())
-            return;
-        if (m_engine->isRunning()) return;
+    // APO-era status polling. The DSP runs system-wide inside audiodg via the
+    // APO; the app no longer captures/renders or starts an engine. We just poll
+    // the APO's shared telemetry to show what it's actually doing.
+    m_apoStatusTimer.setInterval(400);
+    connect(&m_apoStatusTimer, &QTimer::timeout, this, &MainWindow::refreshEngineStatus);
+    m_apoStatusTimer.start();
 
-        const QString captureId = selectedCaptureDeviceId();
-        const QString routeRenderId = host::WasapiDevices::routeRenderForInput(captureId);
-        const QString previousDefaultRender = host::WasapiDevices::defaultRenderId();
+    // Spectrum: drain the APO's pre/post sample ring (~60 Hz) and feed the
+    // analyzer, whose spectraUpdated already drives the EqCurve overlay+heatmap.
+    m_analyzer = m_engine ? m_engine->analyzer() : nullptr;
+    m_spectrumTimer.setInterval(16);
+    connect(&m_spectrumTimer, &QTimer::timeout, this, &MainWindow::onSpectrumTick);
+    m_spectrumTimer.start();
+}
 
-        // On launch, inject TeeDSP into the Windows output chain:
-        // 1) TeeDSP renders to whatever Windows was previously sending to.
-        // 2) Windows default output is switched to TeeDSP's route endpoint.
-        if (!routeRenderId.isEmpty()
-            && !previousDefaultRender.isEmpty()
-            && previousDefaultRender != routeRenderId) {
-            const int idx = m_renderDevice->findData(previousDefaultRender);
-            if (idx >= 0) {
-                const bool wasSyncing = m_syncingUi;
-                m_syncingUi = true;
-                m_renderDevice->setCurrentIndex(idx);
-                m_syncingUi = wasSyncing;
-                saveSelectedDevices();
-            }
-        }
+void MainWindow::onSpectrumTick()
+{
+    if (!m_analyzer || !m_dspController) return;
+    m_dspController->drainApoAudio(m_specPre, m_specPost);
+    if (m_specPre.empty()) return;
 
-        const QString err = m_engine->start(captureId, selectedRenderDeviceId());
-        if (!err.isEmpty()) m_statusLabel->setText(err);
-
-        if (err.isEmpty() && !routeRenderId.isEmpty() && previousDefaultRender != routeRenderId) {
-            if (!host::WasapiDevices::setDefaultRender(routeRenderId)) {
-                m_statusLabel->setText(QStringLiteral("Running (warning: failed to set Windows default output to TeeDSP route)."));
-            }
-        }
-
-        refreshEngineStatus();
-    });
+    const auto st = m_dspController->apoStatus();
+    const double sr = st.sampleRate > 0 ? static_cast<double>(st.sampleRate) : 48000.0;
+    if (!m_analyzerStarted || sr != m_analyzerSr) {
+        m_analyzer->start(sr, 1);
+        m_analyzerStarted = true;
+        m_analyzerSr = sr;
+    }
+    m_analyzer->pushPre(m_specPre.data(), static_cast<int>(m_specPre.size()), 1);
+    m_analyzer->pushPost(m_specPost.data(), static_cast<int>(m_specPost.size()), 1);
 }
 
 MainWindow::~MainWindow()
@@ -289,10 +281,8 @@ void MainWindow::updateUiTimerGate()
 {
     const bool active = isVisible() && !isMinimized();
     if (m_dspController) m_dspController->setMeterTimerActive(active);
-    if (m_engine) {
-        if (auto *analyzer = m_engine->analyzer())
-            analyzer->setUiActive(active);
-    }
+    if (m_analyzer) m_analyzer->setUiActive(active);
+    if (active) m_spectrumTimer.start(); else m_spectrumTimer.stop();
 }
 
 void MainWindow::buildUi()
@@ -336,27 +326,29 @@ QWidget *MainWindow::buildIoSection()
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(8);
 
-    grid->addWidget(createCaption(QStringLiteral("Input")), 0, 0);
+    // Device picker: which endpoint's TeeDSP you're editing. Lists output
+    // devices, defaults to the Windows default output. (POC: the APO is on
+    // Realtek; multi-device per-endpoint settings come later.)
+    grid->addWidget(createCaption(QStringLiteral("Device")), 0, 0);
     m_captureDevice = new QComboBox();
     m_captureDevice->setMinimumWidth(UiMetrics::kDeviceMinWidth);
     grid->addWidget(m_captureDevice, 0, 1);
 
-    grid->addWidget(createCaption(QStringLiteral("Output")), 0, 2);
-    m_renderDevice = new QComboBox();
-    m_renderDevice->setMinimumWidth(UiMetrics::kDeviceMinWidth);
-    grid->addWidget(m_renderDevice, 0, 3);
-
     m_refreshDevicesButton = new QPushButton(QStringLiteral("Refresh"));
-    grid->addWidget(m_refreshDevicesButton, 0, 4);
+    grid->addWidget(m_refreshDevicesButton, 0, 2);
 
     m_globalBypass = new QCheckBox(QStringLiteral("Bypass"));
-    grid->addWidget(m_globalBypass, 0, 5);
+    grid->addWidget(m_globalBypass, 0, 3);
 
-    m_startStopButton = new QPushButton(QStringLiteral("Start"));
-    grid->addWidget(m_startStopButton, 0, 6);
+    // Bridge-era controls retired from the APO surface. Kept as hidden,
+    // parented members so the remaining wiring (device enumeration, tray,
+    // status) stays valid without a sweeping refactor; they never drive audio.
+    m_renderDevice = new QComboBox(section);
+    m_renderDevice->hide();
+    m_startStopButton = new QPushButton(section);
+    m_startStopButton->hide();
 
     grid->setColumnStretch(1, 2);
-    grid->setColumnStretch(3, 2);
 
     m_statusLabel = new QLabel(QStringLiteral("Idle."));
     m_statusLabel->setProperty("role", "status");
@@ -720,11 +712,8 @@ QWidget *MainWindow::buildOutputPane()
 void MainWindow::connectSignals()
 {
     connect(m_refreshDevicesButton, &QPushButton::clicked, this, &MainWindow::refreshDevices);
-    connect(m_startStopButton, &QPushButton::clicked, this, &MainWindow::onStartStopClicked);
-
-    connect(m_engine, &host::AudioEngine::runningChanged, this, &MainWindow::refreshEngineStatus);
-    connect(m_engine, &host::AudioEngine::errorOccurred, this, &MainWindow::onEngineError);
-    connect(m_engine, &host::AudioEngine::devicesChanged, this, &MainWindow::refreshDevices);
+    // No Start/Stop: the APO is always inline in audiodg. The bridge engine is
+    // retired from the audio path, so we don't wire its run/error signals.
 
     connect(m_globalBypass, &QCheckBox::toggled, this, [this](bool c) {
         if (!m_syncingUi) m_dspController->setBypass(c);
@@ -913,14 +902,16 @@ void MainWindow::connectSignals()
             else              disp += alpha * (fresh - disp); // release: smooth
         };
 
-        const float inPeakRaw  = m_engine ? m_engine->currentInputPeakDbfs()  : -120.0f;
-        const float inPeakRawR  = m_engine ? m_engine->currentInputPeakDbfs(1)  : -120.0f;
-        const float outPeakRaw  = m_engine ? m_engine->currentOutputPeakDbfs()  : -120.0f;
-        const float outPeakRawR = m_engine ? m_engine->currentOutputPeakDbfs(1) : -120.0f;
-        const float outRmsRaw   = m_engine ? m_engine->currentOutputRmsDbfs()   : -120.0f;
-        const float outHotRaw   = m_engine ? m_engine->currentOutputHotDbfs()   : -120.0f;
-        const float outLufsRawL = m_engine ? m_engine->currentOutputLufsM(0)    : -70.0f;
-        const float outLufsRawR = m_engine ? m_engine->currentOutputLufsM(1)    : -70.0f;
+        // Meters now come from the APO's shared telemetry (audiodg), not a
+        // local engine. LUFS isn't published yet, so those bars read silent.
+        const float inPeakRaw   = m_dspController->apoInPeakDbfs(0);
+        const float inPeakRawR  = m_dspController->apoInPeakDbfs(1);
+        const float outPeakRaw  = m_dspController->apoOutPeakDbfs(0);
+        const float outPeakRawR = m_dspController->apoOutPeakDbfs(1);
+        const float outRmsRaw   = m_dspController->apoOutRmsDbfs();
+        const float outHotRaw   = std::max(outPeakRaw, outPeakRawR);
+        const float outLufsRawL = m_dspController->apoOutLufs(0);
+        const float outLufsRawR = m_dspController->apoOutLufs(1);
 
         smooth(m_dispInPeakDbfs,  inPeakRaw);
         smooth(m_dispInPeakDbfsR, inPeakRawR);
@@ -952,7 +943,7 @@ void MainWindow::connectSignals()
         } else {
             m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
         }
-        const float lufsM = m_engine ? m_engine->currentOutputLufsM() : -70.0f;
+        const float lufsM = m_dspController->apoOutLufsM();
         if (lufsM > ui::widget_metrics::meter_runtime::kLufsDisplayFloor)
             m_outputLufsLabel->setText(QStringLiteral("LUFS-M: %1").arg(lufsM, 0, 'f', 1));
         else
@@ -1002,12 +993,11 @@ void MainWindow::connectSignals()
     connect(m_captureDevice, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int){
         if (m_syncingUi) return;
+        // Device picker = which endpoint's TeeDSP we're editing. Just remember
+        // the choice; the APO is already inline on whichever device has it.
+        // (Per-device param routing arrives with multi-device support.)
         saveSelectedDevices();
-        // Mirror the render combo's hot-switch behaviour. Capture swaps
-        // are a stop/restart under the hood — see AudioEngine — so the
-        // user will hear a brief gap, but the engine doesn't have to be
-        // toggled by hand.
-        if (m_engine) m_engine->setPreferredCapture(selectedCaptureDeviceId());
+        refreshEngineStatus();
     });
     connect(m_renderDevice, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int){
@@ -1052,10 +1042,9 @@ void MainWindow::connectSignals()
             this, [this](int, int) { refreshEngineStatus(); });
 
     if (m_tray) {
-        connect(m_tray, &ui::TrayController::startStopRequested,
-                this, &MainWindow::onStartStopClicked);
-        connect(m_tray, &ui::TrayController::setAsActiveRequested,
-                this, &MainWindow::setTeeDspAsActive);
+        // Start/Stop and "Set as active" are bridge-era actions that would
+        // re-route Windows audio and spin up the capture engine — retired, so
+        // the tray can't fight the APO.
         connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
             m_dspController->setBypass(b);
         });
@@ -1224,16 +1213,11 @@ void MainWindow::refreshDevices()
     m_syncingUi = true;
     m_captureDevice->clear();
     m_renderDevice->clear();
-    for (int i = 0; i < m_inputDevices.size(); ++i) {
-        const auto &d = m_inputDevices[i];
-        const QString label = (i >= realCaptureCount)
-            ? QStringLiteral("Loopback: %1").arg(d.name)
-            : d.name;
-        m_captureDevice->addItem(label, d.id);
-    }
+    // Device picker lists output endpoints — the things a TeeDSP APO sits on.
+    // (The hidden render combo is kept mirrored only for legacy wiring.)
     for (const auto &d : m_outputDevices) {
-        const QString label = d.name;
-        m_renderDevice->addItem(label, d.id);
+        m_captureDevice->addItem(d.name, d.id);
+        m_renderDevice->addItem(d.name, d.id);
     }
 
     auto selectById = [](QComboBox *cb, const QString &id) -> bool {
@@ -1256,11 +1240,10 @@ void MainWindow::refreshDevices()
 
     // First-run / no-pref fallbacks: pick something reasonable.
     if (m_captureDevice->currentIndex() < 0 && m_captureDevice->count() > 0) {
-        for (int i = 0; i < m_inputDevices.size(); ++i) {
-            if (m_inputDevices[i].isVirtual) { m_captureDevice->setCurrentIndex(i); break; }
-        }
-        if (m_captureDevice->currentIndex() < 0)
-            m_captureDevice->setCurrentIndex(0);
+        int defIdx = -1;
+        for (int i = 0; i < m_outputDevices.size(); ++i)
+            if (m_outputDevices[i].isDefault) { defIdx = i; break; }
+        m_captureDevice->setCurrentIndex(defIdx >= 0 ? defIdx : 0);
     }
     if (m_renderDevice->currentIndex() < 0 && m_renderDevice->count() > 0) {
         for (int i = 0; i < m_outputDevices.size(); ++i) {
@@ -1415,62 +1398,41 @@ void MainWindow::onEngineError(const QString &message)
 
 void MainWindow::refreshEngineStatus()
 {
-    const bool running = m_engine && m_engine->isRunning();
+    // Status now reflects the system-wide APO (audiodg), polled from its shared
+    // telemetry — not a local engine. "Processing" = the APO's call counter
+    // advanced since the previous poll.
+    if (!m_dspController) return;
+    const host::ApoSharedClient::ApoStatus st = m_dspController->apoStatus();
+    const bool bypassed = m_dspController->bypass();
 
-    m_startStopButton->setText(running ? QStringLiteral("Stop") : QStringLiteral("Start"));
-    m_startStopButton->setProperty("running", running);
-    m_startStopButton->style()->unpolish(m_startStopButton);
-    m_startStopButton->style()->polish(m_startStopButton);
+    const bool advancing = st.open && (st.processCalls != m_lastApoProcessCalls);
+    m_lastApoProcessCalls = st.processCalls;
+    const bool processing = st.open && st.locked && advancing && !bypassed;
 
-    QString currentName;
-    if (running) {
-        const QString currentId = m_engine->currentRender();
-        for (const auto &d : m_outputDevices) {
-            if (d.id == currentId) { currentName = d.name; break; }
-        }
-        const QString src = QStringLiteral("%1 Hz · %2 ch")
-            .arg(m_engine->captureSampleRate())
-            .arg(m_engine->captureChannels());
-        if (currentName.isEmpty()) {
-            m_statusLabel->setText(QStringLiteral("Running · %1").arg(src));
-        } else {
-            m_statusLabel->setText(QStringLiteral("Running · %1 → %2").arg(src, currentName));
-        }
-        m_statusLabel->setProperty("role", "statusRunning");
-        if (m_engine->captureSampleRate() > 0)
-            m_eqCurve->setSampleRate(m_engine->captureSampleRate());
+    QString text;
+    const char *role = "status";
+    if (!st.open) {
+        text = QStringLiteral("TeeDSP APO not loaded — play audio to the device");
+    } else if (bypassed) {
+        text = QStringLiteral("TeeDSP — bypassed");
+    } else if (processing) {
+        text = QStringLiteral("TeeDSP active · %1 Hz · %2 ch").arg(st.sampleRate).arg(st.channels);
+        role = "statusRunning";
+        if (st.sampleRate > 0) m_eqCurve->setSampleRate(static_cast<double>(st.sampleRate));
+    } else if (st.locked) {
+        text = QStringLiteral("TeeDSP ready — no audio on this endpoint");
     } else {
-        m_statusLabel->setText(QStringLiteral("Idle."));
-        m_statusLabel->setProperty("role", "status");
-        m_eqCurve->clearSpectra();
-        m_inputMeterBarL->setValue(0);
-        m_inputMeterBarR->setValue(0);
-        m_outputMeterBarL->setValue(0);
-        m_outputMeterBarR->setValue(0);
-        if (m_outputLufsBarL) m_outputLufsBarL->setValue(0);
-        if (m_outputLufsBarR) m_outputLufsBarR->setValue(0);
-        m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
-        m_outputLufsLabel->setText(QStringLiteral("LUFS-M: -inf"));
-        // Reset smoothing state too — otherwise the next meter tick after
-        // stop would smoothly decay from the last observed level back to 0.
-        m_dispInPeakDbfs  = -120.0f;
-        m_dispInPeakDbfsR = -120.0f;
-        m_dispOutPeakDbfs = -120.0f;
-        m_dispOutPeakDbfsR = -120.0f;
-        m_dispOutRmsDbfs  = -120.0f;
-        m_dispOutHotDbfs  = -120.0f;
-        m_dispOutLufsPctL = 0.0f;
-        m_dispOutLufsPctR = 0.0f;
+        text = QStringLiteral("TeeDSP idle");
     }
+    m_statusLabel->setText(text);
+    m_statusLabel->setProperty("role", role);
     m_statusLabel->style()->unpolish(m_statusLabel);
     m_statusLabel->style()->polish(m_statusLabel);
 
     if (m_tray) {
-        m_tray->setRunning(running);
-        m_tray->setStatusText(running
-            ? (currentName.isEmpty()
-                 ? QStringLiteral("TeeDSP — running")
-                 : QStringLiteral("TeeDSP — %1").arg(currentName))
-            : QStringLiteral("TeeDSP — idle"));
+        m_tray->setRunning(processing);
+        m_tray->setStatusText(bypassed ? QStringLiteral("TeeDSP — bypassed")
+                              : processing ? QStringLiteral("TeeDSP — active")
+                                           : QStringLiteral("TeeDSP — idle"));
     }
 }

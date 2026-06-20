@@ -57,6 +57,7 @@ set(HOST_SOURCES
 	src/host/Fft.cpp
 	src/host/Resampler.cpp
 	src/host/SpectrumAnalyzer.cpp
+	src/host/ApoSharedClient.cpp
 )
 
 set(UI_SOURCES
@@ -103,6 +104,16 @@ target_link_libraries(TeeDsp PRIVATE
 	Uuid
 	Winmm
 )
+
+# Keep theme.qss next to the built exe so the stylesheet loads when running
+# straight from the build tree (Theme.cpp looks in applicationDirPath in
+# non-Debug builds). Install copies it too, below.
+add_custom_command(TARGET TeeDsp POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_if_different
+		"${CMAKE_SOURCE_DIR}/src/ui/theme.qss"
+		"$<TARGET_FILE_DIR:TeeDsp>/theme.qss"
+	COMMENT "Copying theme.qss next to TeeDsp.exe"
+	VERBATIM)
 
 install(TARGETS TeeDsp
 	RUNTIME DESTINATION .

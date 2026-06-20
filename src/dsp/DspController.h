@@ -5,8 +5,10 @@
 #include <QVariantList>
 
 #include <array>
+#include <vector>
 
 #include "ChainParams.h"
+#include "host/ApoSharedClient.h"
 #include "shared/TeeDspParams.h"   // teedsp::kBandCount
 
 namespace host { class ClapHost; }
@@ -72,6 +74,20 @@ public:
     explicit DspController(host::ClapHost *host, QObject *parent = nullptr);
 
     ChainParams buildSnapshot() const;
+
+    // Live state of the system-wide APO (for the UI status line). Reflects what
+    // audiodg actually reports, not what the controller thinks.
+    host::ApoSharedClient::ApoStatus apoStatus();
+
+    // Live pre/post level meters published by the APO (dBFS). ch: 0=L, 1=R.
+    float apoInPeakDbfs(int ch) const;
+    float apoOutPeakDbfs(int ch) const;
+    float apoOutRmsDbfs() const;
+    float apoOutLufs(int ch) const;   // per-channel momentary LUFS
+    float apoOutLufsM() const;        // combined momentary LUFS
+
+    // Drain new mono pre/post samples from the APO for the spectrum analyzer.
+    void drainApoAudio(std::vector<float> &pre, std::vector<float> &post);
 
     bool bypass() const;
     void setBypass(bool b);
@@ -154,6 +170,11 @@ private slots:
     // moment after the user stops twiddling. Suppressed during loadFromSettings.
     void scheduleSave();
 
+    // Pushes params to the system-wide APO (inside audiodg) over shared memory
+    // and pulses its liveness heartbeat. Opens the section lazily once the APO
+    // has created it (i.e., once audio has hit that endpoint).
+    void syncApo();
+
 signals:
     void bypassChanged();
     void compressorChanged();
@@ -174,6 +195,11 @@ private:
     QTimer m_meterTimer;
     QTimer m_saveDebounceTimer;
     bool m_loadingSettings = false;
+
+    // System-wide APO bridge (shared memory to audiodg).
+    host::ApoSharedClient m_apo;
+    QTimer m_apoTimer;
+    bool m_apoDirty = true;   // force an initial push once the section opens
 
     bool m_bypass = false;
     float m_inputTrimDb = 0.0f;

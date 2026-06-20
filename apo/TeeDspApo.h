@@ -5,6 +5,8 @@
 #include <audioengineextensionapo.h>
 
 #include "dsp/ProcessorChain.h"
+#include "dsp/ChainParamsApply.h"
+#include "dsp/LufsMeter.h"
 #include "shared/TeeDspApoShared.h"
 
 #include <atomic>
@@ -94,6 +96,9 @@ public:
 private:
     void openTelemetry();
     void closeTelemetry();
+    // RT path: compute in/out peak + RMS and read chain GR/leveler into the
+    // shared block. inBuf/outBuf may be null (silence).
+    void publishMeters(const float *inBuf, const float *outBuf, UINT32 frames);
 
     // Inner non-delegating IUnknown handed to an aggregating outer object.
     struct Inner final : IUnknown {
@@ -116,9 +121,18 @@ private:
     // LockForProcess; process() runs on the RT thread in APOProcess.
     dsp::ProcessorChain m_chain;
 
-    // Cross-process telemetry (APOProcess writes; external observers read).
+    // Post-chain loudness meter (momentary LUFS) for the UI's LUFS readouts.
+    dsp::LufsMeter      m_lufs;
+
+    // Cross-process shared block: telemetry out, params/heartbeat in.
     HANDLE              m_shmHandle = nullptr;
     teedsp::ApoShared  *m_shm = nullptr;
+    bool                m_createdShared = false;
+
+    // Live-control state (RT thread).
+    uint32_t            m_lastAppliedGen = 0;       // last paramGen applied
+    uint64_t            m_lastHeartbeat = 0;        // last UI heartbeat seen
+    uint64_t            m_framesSinceHeartbeat = 0; // frames since it last advanced
 };
 
 } // namespace teedsp::apo
