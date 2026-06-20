@@ -60,6 +60,7 @@ private:
     void connectSignals();
     void pullStateFromController();
     void refreshDevices();
+    void syncDevicePickerToDefaultOutput(const QString &deviceId);
     void refreshEngineStatus();
     void refreshEqCurve();
     // Lightweight refresh of just the dynamic knobs/labels for the currently

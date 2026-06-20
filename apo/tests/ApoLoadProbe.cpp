@@ -6,8 +6,12 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <new>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -32,6 +36,123 @@ int fail(const wchar_t *stage, HRESULT hr)
 {
     std::fwprintf(stderr, L"%ls failed: 0x%08X\n", stage, static_cast<unsigned>(hr));
     return 1;
+}
+
+// The probe only needs GetAudioFormat(), but the APO takes an IAudioMediaType.
+// Keep a tiny local implementation here so the diagnostic remains independent
+// of the optional ATL-based audiomediatype CRT library.
+class TestAudioMediaType final : public IAudioMediaType {
+public:
+    TestAudioMediaType(const WAVEFORMATEX *format, UINT32 formatSize)
+        : m_bytes(formatSize)
+    {
+        std::memcpy(m_bytes.data(), format, formatSize);
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override
+    {
+        if (!ppv) return E_POINTER;
+        *ppv = nullptr;
+        if (riid != IID_IUnknown && riid != __uuidof(IAudioMediaType))
+            return E_NOINTERFACE;
+        *ppv = static_cast<IAudioMediaType *>(this);
+        AddRef();
+        return S_OK;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        return m_refs.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        const ULONG refs = m_refs.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        if (refs == 0) delete this;
+        return refs;
+    }
+
+    HRESULT STDMETHODCALLTYPE IsCompressedFormat(BOOL *compressed) override
+    {
+        if (!compressed) return E_POINTER;
+        *compressed = FALSE;
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE IsEqual(IAudioMediaType *, DWORD *flags) override
+    {
+        if (!flags) return E_POINTER;
+        *flags = 0;
+        return S_FALSE;
+    }
+
+    const WAVEFORMATEX *STDMETHODCALLTYPE GetAudioFormat() override
+    {
+        return reinterpret_cast<const WAVEFORMATEX *>(m_bytes.data());
+    }
+
+    HRESULT STDMETHODCALLTYPE GetUncompressedAudioFormat(UNCOMPRESSEDAUDIOFORMAT *) override
+    {
+        return E_NOTIMPL;
+    }
+
+private:
+    std::atomic<ULONG> m_refs{1};
+    std::vector<BYTE>  m_bytes;
+};
+
+void printFormat(const WAVEFORMATEX *format)
+{
+    if (!format) return;
+    std::wprintf(L"Mix format: tag=0x%04X, %u Hz, %u-bit, %u ch, align=%u, cbSize=%u\n",
+                 format->wFormatTag, format->nSamplesPerSec, format->wBitsPerSample,
+                 format->nChannels, format->nBlockAlign, format->cbSize);
+
+    if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE
+        && format->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
+        const auto *ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE *>(format);
+        wchar_t subformat[64] = {};
+        StringFromGUID2(ext->SubFormat, subformat, static_cast<int>(std::size(subformat)));
+        std::wprintf(L"  valid bits=%u, channel mask=0x%08X, subformat=%ls\n",
+                     ext->Samples.wValidBitsPerSample, ext->dwChannelMask, subformat);
+    }
+}
+
+int checkApoFormat(IAudioProcessingObject *apo, const WAVEFORMATEX *format)
+{
+    const UINT32 formatSize = sizeof(WAVEFORMATEX) + format->cbSize;
+    ComPtr<TestAudioMediaType> mediaType;
+    mediaType.Attach(new (std::nothrow) TestAudioMediaType(format, formatSize));
+    if (!mediaType) return fail(L"TestAudioMediaType", E_OUTOFMEMORY);
+
+    ComPtr<IAudioMediaType> supported;
+    HRESULT hr = apo->IsInputFormatSupported(mediaType.Get(), mediaType.Get(), supported.GetAddressOf());
+    std::wprintf(L"APO IsInputFormatSupported:  0x%08X\n", static_cast<unsigned>(hr));
+    if (FAILED(hr)) return 1;
+
+    supported.Reset();
+    hr = apo->IsOutputFormatSupported(mediaType.Get(), mediaType.Get(), supported.GetAddressOf());
+    std::wprintf(L"APO IsOutputFormatSupported: 0x%08X\n", static_cast<unsigned>(hr));
+    if (FAILED(hr)) return 1;
+
+    ComPtr<IAudioProcessingObjectConfiguration> configuration;
+    hr = apo->QueryInterface(IID_PPV_ARGS(configuration.GetAddressOf()));
+    if (FAILED(hr)) return fail(L"QueryInterface(IAudioProcessingObjectConfiguration)", hr);
+
+    APO_CONNECTION_DESCRIPTOR input{};
+    input.Type = APO_CONNECTION_BUFFER_TYPE_EXTERNAL;
+    input.u32MaxFrameCount = 480;
+    input.pFormat = mediaType.Get();
+    input.u32Signature = APO_CONNECTION_DESCRIPTOR_SIGNATURE;
+    APO_CONNECTION_DESCRIPTOR output = input;
+    APO_CONNECTION_DESCRIPTOR *inputs[] = { &input };
+    APO_CONNECTION_DESCRIPTOR *outputs[] = { &output };
+
+    hr = configuration->LockForProcess(1, inputs, 1, outputs);
+    std::wprintf(L"APO LockForProcess:          0x%08X\n", static_cast<unsigned>(hr));
+    if (FAILED(hr)) return 1;
+    configuration->UnlockForProcess();
+    return 0;
 }
 
 } // namespace
@@ -81,6 +202,14 @@ int wmain(int argc, wchar_t **argv)
 
         hr = client->GetMixFormat(&format);
         if (FAILED(hr)) { result = fail(L"GetMixFormat", hr); break; }
+        printFormat(format);
+
+        hr = apo->Initialize(0, nullptr);
+        if (FAILED(hr)) { result = fail(L"APO Initialize", hr); break; }
+        if (checkApoFormat(apo.Get(), format) != 0) {
+            result = 1;
+            break;
+        }
 
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 200'000, 0, format, nullptr);
         if (FAILED(hr)) { result = fail(L"Initialize", hr); break; }

@@ -310,9 +310,9 @@ QWidget *MainWindow::buildIoSection()
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(8);
 
-    // Device picker: which endpoint's TeeDSP you're editing. Lists output
-    // devices, defaults to the Windows default output. (POC: the APO is on
-    // Realtek; multi-device per-endpoint settings come later.)
+    // The APO follows Windows' current output. Mirror that output in the device
+    // picker so the editor never displays a stale endpoint after an automatic
+    // Bluetooth/Realtek switch.
     grid->addWidget(createCaption(QStringLiteral("Device")), 0, 0);
     m_captureDevice = new QComboBox();
     m_captureDevice->setMinimumWidth(UiMetrics::kDeviceMinWidth);
@@ -1210,6 +1210,34 @@ void MainWindow::refreshDevices()
     }
 }
 
+void MainWindow::syncDevicePickerToDefaultOutput(const QString &deviceId)
+{
+    if (deviceId.isEmpty() || !m_captureDevice || !m_renderDevice) return;
+
+    // A Bluetooth endpoint may have appeared since the last manual refresh.
+    // Re-enumerate once in that case, then align both the visible picker and
+    // its legacy hidden mirror to the Windows default endpoint.
+    int captureIndex = m_captureDevice->findData(deviceId);
+    int renderIndex = m_renderDevice->findData(deviceId);
+    if (captureIndex < 0 || renderIndex < 0) {
+        refreshDevices();
+        captureIndex = m_captureDevice->findData(deviceId);
+        renderIndex = m_renderDevice->findData(deviceId);
+    }
+    if (captureIndex < 0 || renderIndex < 0) return;
+    if (m_captureDevice->currentIndex() == captureIndex
+        && m_renderDevice->currentIndex() == renderIndex) {
+        return;
+    }
+
+    const bool wasSyncing = m_syncingUi;
+    m_syncingUi = true;
+    m_captureDevice->setCurrentIndex(captureIndex);
+    m_renderDevice->setCurrentIndex(renderIndex);
+    m_syncingUi = wasSyncing;
+    saveSelectedDevices();
+}
+
 QString MainWindow::selectedCaptureDeviceId() const
 {
     return m_captureDevice ? m_captureDevice->currentData().toString() : QString();
@@ -1247,15 +1275,17 @@ void MainWindow::restoreSelectedDevices()
 }
 
 namespace {
-struct DefaultOutInfo { bool hasApo = false; QString name; };
+struct DefaultOutInfo { bool hasApo = false; QString name; QString id; };
 
 // Is the TeeDSP APO bound to the *current* default render endpoint, and what's
-// its name? Reads the endpoint's composite MFX slot from the MMDevices registry.
+// its name? Realtek uses the composite MFX slot (pid 14), while the inbox A2DP
+// stack keeps its own MFX and hosts TeeDSP in the third-party SFX slot (pid 5).
 DefaultOutInfo queryDefaultOut()
 {
     DefaultOutInfo info;
     const QString def = host::WasapiDevices::defaultRenderId();   // {0.0.0...}.{guid}
     if (def.isEmpty()) return info;
+    info.id = def;
     const int dot = def.lastIndexOf(QLatin1Char('.'));
     const QString guid = (dot >= 0) ? def.mid(dot + 1) : def;
     const QString base =
@@ -1263,10 +1293,14 @@ DefaultOutInfo queryDefaultOut()
                        "\\MMDevices\\Audio\\Render\\") + guid;
 
     QSettings fx(base + QStringLiteral("\\FxProperties"), QSettings::NativeFormat);
-    const QString mfx = fx.value(
-        QStringLiteral("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14")).toString();
-    info.hasApo = (mfx.compare(QStringLiteral("{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"),
-                               Qt::CaseInsensitive) == 0);
+    const QString teeDspClsid = QStringLiteral("{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}");
+    const auto isTeeDsp = [&fx, &teeDspClsid](const char *property) {
+        return fx.value(QString::fromLatin1(property)).toString()
+                     .compare(teeDspClsid, Qt::CaseInsensitive) == 0;
+    };
+    info.hasApo = isTeeDsp("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14")  // composite MFX
+               || isTeeDsp("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6")   // regular MFX
+               || isTeeDsp("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5");  // SFX
 
     QSettings pr(base + QStringLiteral("\\Properties"), QSettings::NativeFormat);
     info.name = pr.value(QStringLiteral("{a45c254e-df1c-4efd-8020-67d146a850e0},2")).toString();
@@ -1284,6 +1318,7 @@ void MainWindow::refreshEngineStatus()
     const host::ApoSharedClient::ApoStatus st = m_dspController->apoStatus();
     const bool bypassed = m_dspController->bypass();
     const DefaultOutInfo out = queryDefaultOut();
+    syncDevicePickerToDefaultOutput(out.id);
 
     const bool advancing = st.open && (st.processCalls != m_lastApoProcessCalls);
     m_lastApoProcessCalls = st.processCalls;

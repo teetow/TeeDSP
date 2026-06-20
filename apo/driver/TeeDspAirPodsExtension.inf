@@ -1,15 +1,18 @@
 ;
 ; TeeDspAirPodsExtension.inf
 ;
-; Device-extension INF that binds the TeeDSP APO as the mode-effect (MFX) on the
+; Device-extension INF that binds the TeeDSP APO as the stream-effect (SFX) on the
 ; AirPods Pro A2DP render endpoint, which is driven by the inbox Microsoft
 ; Bluetooth A2DP source driver (microsoft_bluetooth_a2dp_src.inf / BthA2dpSrc).
 ;
 ; The inbox driver sets its own effects under the endpoint interface's "MSFX\N"
 ; subkeys and documents that third parties must use "FX\N" instead. So we add an
-; "FX\0" mode effect = CLSID_TeeDspApoMfx. The APO itself is already registered
-; on the system (by the TeeDSP APO software component); this only binds it to
-; this endpoint. Uninstalling the extension restores the stock effect set.
+; "FX\0" stream effect = CLSID_TeeDspApoMfx. Keeping the inbox MFX untouched is
+; essential: a second MFX works after a cold boot but causes the A2DP graph to
+; reject its own mix format after an AirPods reconnect. The APO itself is already
+; registered on the system (by the TeeDSP APO software component); this only
+; binds it to this endpoint. Uninstalling the extension restores the stock effect
+; set.
 ;
 ; Target is the AirPods-specific hardware id (Apple VID 004C / PID 2024) so we
 ; do not blanket every A2DP headphone.
@@ -20,7 +23,7 @@ Class       = Extension
 ClassGuid   = {e2f84ce7-8efa-411c-aa69-97454ca4cb57}
 Provider    = %ProviderName%
 ExtensionId = {2f9b6e11-4c3a-4e7d-9f21-a1b2c3d4e5f6}
-DriverVer   = 06/20/2026,1.0.0.0
+DriverVer   = 06/20/2026,1.0.1.0
 CatalogFile = TeeDspAirPods.cat
 PnpLockDown = 1
 
@@ -40,20 +43,28 @@ AddInterface = %KSCATEGORY_AUDIO%, %A2dpSrcRef%, TeeDspAirPods_AudioInterface
 
 [TeeDspAirPods_AudioInterface]
 AddReg = TeeDspAirPods_SysFx_AddReg
+DelReg = TeeDspAirPods_RemoveOldMfx
 
-; Mirrors the inbox BthA2dpSrc_SysFx_Render_AddReg, but in the third-party "FX\0"
-; slot and pointing at the TeeDSP mode-effect APO. DEFAULT processing mode only.
+; The inbox package owns MSFX\0 and its MFX. Add TeeDSP as the third-party SFX
+; instead; that graph survives a Bluetooth disconnect/reconnect. DEFAULT mode only.
 [TeeDspAirPods_SysFx_AddReg]
 HKR,"FX\\0",%PKEY_ItemNameDisplay%,,%FX_FriendlyName%
-HKR,"FX\\0",%PKEY_FX_ModeEffectClsid%,,%TEEDSP_MFX_CLSID%
+HKR,"FX\\0",%PKEY_FX_StreamEffectClsid%,,%TEEDSP_SFX_CLSID%
 HKR,"FX\\0\\%TeeDsp_Context%",%PKEY_FX_Association%,,%KSNODETYPE_ANY%
 HKR,"FX\\0\\%TeeDsp_Context%\\User",,,
-HKR,"FX\\0",%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%FLG_ADDREG_TYPE_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\\0",%PKEY_SFX_ProcessingModes_Supported_For_Streaming%,%FLG_ADDREG_TYPE_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+
+; Upgrade cleanup: v1.0.0.0 installed TeeDSP as an MFX.  Remove its two
+; properties explicitly so updating the extension cannot leave both bindings
+; active on an already-paired AirPods device.
+[TeeDspAirPods_RemoveOldMfx]
+HKR,"FX\\0",%PKEY_FX_ModeEffectClsid%
+HKR,"FX\\0",%PKEY_MFX_ProcessingModes_Supported_For_Streaming%
 
 [Strings]
 ProviderName = "TeeDSP"
 MfgName      = "TeeDSP"
-DeviceDesc   = "AirPods Pro (TeeDSP mode effect)"
+DeviceDesc   = "AirPods Pro (TeeDSP stream effect)"
 
 KSCATEGORY_AUDIO = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
 A2dpSrcRef       = "SRC"
@@ -61,12 +72,12 @@ TeeDsp_Context   = "{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"
 
 PKEY_ItemNameDisplay                            = "{B725F130-47EF-101A-A5F1-02608C9EEBAC},10"
 PKEY_FX_Association                             = "{D04E05A6-594B-4fb6-A80D-01AF5EED7D1D},0"
-PKEY_FX_ModeEffectClsid                         = "{D04E05A6-594B-4fb6-A80D-01AF5EED7D1D},6"
-PKEY_MFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6"
+PKEY_FX_StreamEffectClsid                       = "{D04E05A6-594B-4fb6-A80D-01AF5EED7D1D},5"
+PKEY_SFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},5"
 
 KSNODETYPE_ANY                     = "{00000000-0000-0000-0000-000000000000}"
 AUDIO_SIGNALPROCESSINGMODE_DEFAULT = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"
-TEEDSP_MFX_CLSID                   = "{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"
-FX_FriendlyName                    = "TeeDSP Mode Effect"
+TEEDSP_SFX_CLSID                   = "{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"
+FX_FriendlyName                    = "TeeDSP Stream Effect"
 
 FLG_ADDREG_TYPE_MULTI_SZ = 0x00010000

@@ -46,17 +46,18 @@ correct, permanent behavior, not a gap.
    *installed* build; reinstall (copy exe+theme, windeployqt) to update it.
 5. Minor polish: meters/spectrum freeze on idle (feed silence when the status
    poll sees no processing — UI-only).
-6. ✅ DONE — **AirPods binding works.** The APO is bound + processing on the
-   AirPods Pro A2DP endpoint (stereo 48 kHz; telemetry: locked, calls climbing,
-   in≠out). Mechanism differs from Realtek: AirPods runs the inbox
-   `microsoft_bluetooth_a2dp_src` driver, which sets endpoint FX under the audio
-   interface's `MSFX\N` subkeys (3rd parties must use `FX\N`). So a device
-   **Extension INF** (`apo/driver/TeeDspAirPodsExtension.inf`, targets HWID
-   `BTHENUM\{0000110b-…}_VID&0001004c_PID&2024`) adds an `FX\0` mode-effect =
-   our CLSID via `AddInterface(KSCATEGORY_AUDIO,"SRC")`. Installed as `oem99.inf`,
-   needed a **reboot** to activate (like Realtek); after reboot the endpoint MFX
-   slot 6 = our CLSID and the APO loads. Reversible: `pnputil /delete-driver oem99.inf`.
-   TODO: verify it survives an AirPods disconnect/reconnect (endpoint GUID changes).
+6. ✅ DONE — **AirPods binding works across reconnects.** The APO is bound +
+processing on the AirPods Pro A2DP endpoint (stereo 44.1 kHz; telemetry: locked,
+calls climbing, in≠out) and survives case-out/case-in reconnects. Mechanism
+differs from Realtek: AirPods runs the inbox
+`microsoft_bluetooth_a2dp_src` driver, which sets endpoint FX under the audio
+interface's `MSFX\N` subkeys (3rd parties must use `FX\N`). So a device
+**Extension INF** (`apo/driver/TeeDspAirPodsExtension.inf`, targets HWID
+`BTHENUM\{0000110b-…}_VID&0001004c_PID&2024`) adds an `FX\0` **stream effect** =
+our CLSID via `AddInterface(KSCATEGORY_AUDIO,"SRC")`. Do not add TeeDSP as a
+second MFX: it works after a cold boot but, on reconnect, the A2DP graph rejects
+its own mix format (`AUDCLNT_E_UNSUPPORTED_FORMAT`). The SFX version was verified
+through a case-out/case-in cycle. Reversible: `pnputil /delete-driver oem99.inf`.
 7. Production signing (WHQL/attestation) so it loads into a *protected* audiodg;
    `DisableProtectedAudioDG` is dev-only.
 
