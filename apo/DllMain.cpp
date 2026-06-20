@@ -48,14 +48,19 @@ public:
     {
         if (!ppv) return E_POINTER;
         *ppv = nullptr;
-        if (pUnkOuter) return CLASS_E_NOAGGREGATION;
+        // The audio engine aggregates APOs. COM permits an aggregating creator
+        // to request only IID_IUnknown.
+        if (pUnkOuter != nullptr && riid != __uuidof(IUnknown))
+            return CLASS_E_NOAGGREGATION;
 
-        auto *obj = new (std::nothrow) teedsp::apo::TeeDspApo();
+        auto *obj = new (std::nothrow) teedsp::apo::TeeDspApo(pUnkOuter);
         if (!obj) return E_OUTOFMEMORY;
 
         g_objectCount.fetch_add(1, std::memory_order_relaxed);
-        const HRESULT hr = obj->QueryInterface(riid, ppv);
-        obj->Release();
+        // Non-delegating QI hands back the inner identity per the aggregation
+        // contract; the paired Release balances the object's initial ref.
+        const HRESULT hr = obj->NonDelegatingQueryInterface(riid, ppv);
+        obj->NonDelegatingRelease();
         if (FAILED(hr)) g_objectCount.fetch_sub(1, std::memory_order_relaxed);
         return hr;
     }
@@ -78,16 +83,6 @@ HRESULT writeRegString(HKEY parent, const wchar_t *subkey, const wchar_t *name, 
     if (rc != ERROR_SUCCESS) return HRESULT_FROM_WIN32(rc);
     const DWORD cb = static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t));
     rc = RegSetValueExW(h, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value), cb);
-    RegCloseKey(h);
-    return rc == ERROR_SUCCESS ? S_OK : HRESULT_FROM_WIN32(rc);
-}
-
-HRESULT writeRegDword(HKEY parent, const wchar_t *subkey, const wchar_t *name, DWORD value)
-{
-    HKEY h = nullptr;
-    LONG rc = RegCreateKeyExW(parent, subkey, 0, nullptr, 0, KEY_WRITE, nullptr, &h, nullptr);
-    if (rc != ERROR_SUCCESS) return HRESULT_FROM_WIN32(rc);
-    rc = RegSetValueExW(h, name, 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value));
     RegCloseKey(h);
     return rc == ERROR_SUCCESS ? S_OK : HRESULT_FROM_WIN32(rc);
 }
@@ -142,41 +137,16 @@ extern "C" HRESULT __stdcall DllRegisterServer()
     hr = writeRegString(HKEY_CLASSES_ROOT, key, L"ThreadingModel", L"Both");
     if (FAILED(hr)) return hr;
 
-    // Register the APO metadata so the audio engine will discover and accept
-    // us. The engine reads this whole property set; a bare friendly name is not
-    // enough. Mirrors the APO_REG_PROPERTIES returned by GetRegistrationProperties.
-    // The APOInterface list advertises IAudioSystemEffects — the interface the
-    // engine QIs for to treat the CLSID as a system-effects APO.
-    swprintf_s(key, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AudioEngine\\AudioProcessingObjects\\%s", kClsid);
-    hr = writeRegString(HKEY_LOCAL_MACHINE, key, nullptr, L"TeeDSP Mode Effect APO");
-    if (FAILED(hr)) return hr;
-    hr = writeRegString(HKEY_LOCAL_MACHINE, key, L"FriendlyName", L"TeeDSP Mode Effect");
-    if (FAILED(hr)) return hr;
-    hr = writeRegString(HKEY_LOCAL_MACHINE, key, L"Copyright", L"TeeDSP");
+    // Use the audio engine's registration API rather than reproducing its
+    // registry format here. RegisterAPO validates and persists the complete
+    // APO_REG_PROPERTIES contract used by audiodg.exe.
+    teedsp::apo::TeeDspApo apo(nullptr);
+    APO_REG_PROPERTIES *properties = nullptr;
+    hr = apo.GetRegistrationProperties(&properties);
     if (FAILED(hr)) return hr;
 
-    const DWORD apoFlags = static_cast<DWORD>(APO_FLAG_SAMPLESPERFRAME_MUST_MATCH
-                                              | APO_FLAG_FRAMESPERSECOND_MUST_MATCH
-                                              | APO_FLAG_BITSPERSAMPLE_MUST_MATCH);
-    struct { const wchar_t *name; DWORD value; } dwords[] = {
-        { L"MajorVersion",          1 },
-        { L"MinorVersion",          0 },
-        { L"Flags",                 apoFlags },
-        { L"MinInputConnections",   1 },
-        { L"MaxInputConnections",   1 },
-        { L"MinOutputConnections",  1 },
-        { L"MaxOutputConnections",  1 },
-        { L"MaxInstances",          0xFFFFFFFFul },
-        { L"NumAPOInterfaces",      1 },
-    };
-    for (const auto &d : dwords) {
-        hr = writeRegDword(HKEY_LOCAL_MACHINE, key, d.name, d.value);
-        if (FAILED(hr)) return hr;
-    }
-
-    // APOInterface0 = IID_IAudioSystemEffects {FD7F2B29-24D0-4B5C-B177-592C39F9CA10}
-    hr = writeRegString(HKEY_LOCAL_MACHINE, key, L"APOInterface0",
-                        L"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}");
+    hr = RegisterAPO(properties);
+    CoTaskMemFree(properties);
     return hr;
 }
 
@@ -185,14 +155,15 @@ extern "C" HRESULT __stdcall DllUnregisterServer()
     constexpr wchar_t kClsid[] = L"{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}";
     wchar_t key[256];
 
+    // Keep the audio engine's registry state in sync with the COM class
+    // registration. This is the counterpart to RegisterAPO above.
+    const HRESULT unregisterApoHr = UnregisterAPO(CLSID_TeeDspApoMfx);
+
     swprintf_s(key, L"CLSID\\%s\\InprocServer32", kClsid);
     RegDeleteKeyW(HKEY_CLASSES_ROOT, key);
 
     swprintf_s(key, L"CLSID\\%s", kClsid);
     RegDeleteKeyW(HKEY_CLASSES_ROOT, key);
 
-    swprintf_s(key, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AudioEngine\\AudioProcessingObjects\\%s", kClsid);
-    RegDeleteKeyW(HKEY_LOCAL_MACHINE, key);
-
-    return S_OK;
+    return unregisterApoHr;
 }

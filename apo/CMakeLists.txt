@@ -39,11 +39,14 @@ set_property(TARGET TeeDspApo PROPERTY
 target_link_options(TeeDspApo PRIVATE /MANIFEST:NO)
 
 target_link_libraries(TeeDspApo PRIVATE
+    teedsp_dsp          # Qt-free DSP core: ProcessorChain + processors
     Ole32
     OleAut32
     Uuid
     Propsys
     Advapi32
+    AudioBaseProcessingObject
+    legacy_stdio_definitions
     RuntimeObject
 )
 
@@ -52,3 +55,8 @@ set_target_properties(TeeDspApo PROPERTIES
     PREFIX ""
     SUFFIX ".dll"
 )
+
+option(TEEDSP_BUILD_APO_PROBE "Build the temporary direct-render APO load probe" OFF)
+if(TEEDSP_BUILD_APO_PROBE)
+    add_subdirectory(tests)
+endif()

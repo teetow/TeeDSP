@@ -1,0 +1,66 @@
+;
+; Device extension for the Focusrite USB Audio adapter on this development
+; machine. It associates the TeeDSP component with Focusrite's two render
+; interface variants (44.1 and 48 kHz) using the MFX post-mix slot.
+;
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Extension
+ClassGuid   = {E2F84CE7-8EFA-411C-AA69-97454CA4CB57}
+Provider    = %ProviderName%
+ExtensionId = {C77050DB-06AA-46ED-B65C-6B4785027A52}
+DriverVer   = 06/20/2026,0.1.0.1
+CatalogFile = TeeDspApo.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = TeeDspFocusriteExtensions,NTamd64.10.0...22621
+
+[TeeDspFocusriteExtensions.NTamd64.10.0...22621]
+%ExtensionDesc% = TeeDspFocusrite_Install,FOCUSRITEUSB\AUDIO&ADAPTER
+
+[TeeDspFocusrite_Install]
+
+[TeeDspFocusrite_Install.Components]
+AddComponent = TeeDspApo,,TeeDspApo_AddComponent
+
+[TeeDspApo_AddComponent]
+ComponentIDs = VEN_TEEDSP&CID_APO
+Description  = "TeeDSP Audio Processing Object"
+
+[TeeDspFocusrite_Install.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,    %FocusriteRender441%, TeeDspFocusrite.I.APO
+AddInterface = %KSCATEGORY_AUDIO%,    %FocusriteRender480%, TeeDspFocusrite.I.APO
+AddInterface = %KSCATEGORY_TOPOLOGY%, %FocusriteTopology441%, TeeDspFocusrite.I.APO
+AddInterface = %KSCATEGORY_TOPOLOGY%, %FocusriteTopology480%, TeeDspFocusrite.I.APO
+
+[TeeDspFocusrite.I.APO]
+AddReg = TeeDspFocusrite.I.APO.AddReg
+
+[TeeDspFocusrite.I.APO.AddReg]
+; Attach a single MFX APO to the post-mix render graph.
+HKR,FX\0,%PKEY_FX_Association%,,%KSNODETYPE_ANY%
+HKR,FX\0,%PKEY_FX_ModeEffectClsid%,,%ApoClsid%
+HKR,FX\0,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,0x00010000,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+
+[Strings]
+MfgName         = "TeeDSP"
+ProviderName    = "TeeDSP"
+ExtensionDesc   = "TeeDSP Focusrite Audio Extension"
+ApoClsid        = "{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"
+
+KSCATEGORY_AUDIO    = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_TOPOLOGY = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+KSNODETYPE_ANY      = "{00000000-0000-0000-0000-000000000000}"
+
+; These are the Focusrite Audio adapter's registered render interface
+; reference strings, verified from its local DeviceClasses registry entries.
+FocusriteRender441 = "wr4400_8210"
+FocusriteRender480 = "wr4800_8210"
+FocusriteTopology441 = "tr4400_8210"
+FocusriteTopology480 = "tr4800_8210"
+
+PKEY_FX_Association = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},0"
+PKEY_FX_ModeEffectClsid = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},6"
+PKEY_MFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6"
+AUDIO_SIGNALPROCESSINGMODE_DEFAULT = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"

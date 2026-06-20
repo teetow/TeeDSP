@@ -42,6 +42,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+throw @'
+Install.ps1 is retired. A loose System32 DLL and direct endpoint-registry
+editing do not meet the supported APO deployment model. Build and stage the
+componentized driver package with apo/driver/New-TeeDspApoDriverPackage.ps1,
+then install its signed package through the Windows driver stack.
+'@
+
 # Must match Guids.h / DllMain.cpp.
 $ApoClsid = '{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}'
 
@@ -113,5 +120,5 @@ Restart-Service -Name 'Audiosrv' -Force
 
 Write-Host ""
 Write-Host "Done. Play audio to verify pass-through."
-Write-Host "If no sound, check Event Viewer → Applications and Services Logs"
-Write-Host "  → Microsoft → Windows → Audio. Most APO load failures show up there."
+Write-Host "If no sound, check Event Viewer > Applications and Services Logs"
+Write-Host "  > Microsoft > Windows > Audio. Most APO load failures show up there."

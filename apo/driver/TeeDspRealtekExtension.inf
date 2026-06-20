@@ -1,0 +1,57 @@
+;
+; Controlled system-APO test target: the non-critical Realtek analogue
+; endpoint on this machine. This follows the installed Realtek UAD driver's
+; InterfaceSetting/composite-MFX binding pattern.
+;
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Extension
+ClassGuid   = {E2F84CE7-8EFA-411C-AA69-97454CA4CB57}
+Provider    = %ProviderName%
+ExtensionId = {12E6BBE2-E965-4148-A618-29C16916C21A}
+DriverVer   = 06/20/2026,0.2.0.0
+CatalogFile = TeeDspApo.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = TeeDspRealtekExtensions,NTamd64.10.0...22621
+
+[TeeDspRealtekExtensions.NTamd64.10.0...22621]
+%ExtensionDesc% = TeeDspRealtek_Install,HDAUDIO\FUNC_01&VEN_10EC&DEV_0897&SUBSYS_104387FB
+
+[TeeDspRealtek_Install]
+AddReg = TeeDspRealtek.AddReg
+
+[TeeDspRealtek_Install.HW]
+AddReg = TeeDspRealtek.FriendlyName.AddReg
+
+[TeeDspRealtek.FriendlyName.AddReg]
+HKR,,FriendlyName,,%ExtendedFriendlyName%
+
+[TeeDspRealtek.AddReg]
+; The Realtek UAD extension uses this table to bind an FX property set to a
+; topology interface. We use only its active analogue-render topology.
+HKR,InterfaceSetting,ForceDuplicateInterfaceKey,0x00010001,1
+HKR,InterfaceSetting,SingleLineOutTopo,0x00010008,"TeeDspMfx"
+HKR,InterfaceSetting\TeeDspMfx\FX\0,%PKEY_FX_Association%,,%KSNODETYPE_ANY%
+HKR,InterfaceSetting\TeeDspMfx\FX\0,%PKEY_CompositeFX_ModeEffectClsid%,0x00010000,%ApoClsid%
+HKR,InterfaceSetting\TeeDspMfx\FX\0,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,0x00010000,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+
+[TeeDspRealtek_Install.Components]
+AddComponent = TeeDspApo,,TeeDspApo_Install
+
+[TeeDspApo_Install]
+ComponentIDs = VEN_TEEDSP&AID_0001
+Description  = "TeeDSP Audio Effects Component"
+
+[Strings]
+MfgName         = "TeeDSP"
+ProviderName    = "TeeDSP"
+ExtensionDesc   = "TeeDSP Realtek Test Extension"
+ExtendedFriendlyName = "Realtek with TeeDSP Test APO"
+ApoClsid        = "{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"
+KSNODETYPE_ANY   = "{00000000-0000-0000-0000-000000000000}"
+PKEY_FX_Association = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},0"
+PKEY_CompositeFX_ModeEffectClsid = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},14"
+PKEY_MFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6"
+AUDIO_SIGNALPROCESSINGMODE_DEFAULT = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"

@@ -1,7 +1,11 @@
 #pragma once
 
+#include <windows.h>
 #include <audioenginebaseapo.h>
 #include <audioengineextensionapo.h>
+
+#include "dsp/ProcessorChain.h"
+#include "shared/TeeDspApoShared.h"
 
 #include <atomic>
 
@@ -33,16 +37,27 @@ class TeeDspApo final
     , public IAudioSystemEffects   // marker the engine QIs for to recognize an sAPO
 {
 public:
-    TeeDspApo();
+    explicit TeeDspApo(IUnknown *pUnkOuter);
     ~TeeDspApo();
 
     TeeDspApo(const TeeDspApo &) = delete;
     TeeDspApo &operator=(const TeeDspApo &) = delete;
 
-    // IUnknown
+    // IUnknown (delegating) — forwards to the controlling unknown so the audio
+    // engine can aggregate us. When not aggregated, the controlling unknown is
+    // our own inner IUnknown, so these still behave correctly.
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override;
     ULONG   STDMETHODCALLTYPE AddRef() override;
     ULONG   STDMETHODCALLTYPE Release() override;
+
+    // Non-delegating IUnknown — the real refcount/interface implementation.
+    // The aggregating outer object owns and drives these via the inner unknown.
+    HRESULT NonDelegatingQueryInterface(REFIID riid, void **ppv);
+    ULONG   NonDelegatingAddRef();
+    ULONG   NonDelegatingRelease();
+
+    // Inner IUnknown the class factory hands back to an aggregating creator.
+    IUnknown *innerUnknown() noexcept { return &m_inner; }
 
     // IAudioProcessingObject
     HRESULT STDMETHODCALLTYPE Initialize(UINT32 cbDataSize, BYTE *pbyData) override;
@@ -77,6 +92,18 @@ public:
     UINT32 STDMETHODCALLTYPE CalcOutputFrames(UINT32 u32InputFrameCount) override;
 
 private:
+    void openTelemetry();
+    void closeTelemetry();
+
+    // Inner non-delegating IUnknown handed to an aggregating outer object.
+    struct Inner final : IUnknown {
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) override;
+        ULONG   STDMETHODCALLTYPE AddRef() override;
+        ULONG   STDMETHODCALLTYPE Release() override;
+        TeeDspApo *owner = nullptr;
+    } m_inner;
+
+    IUnknown          *m_pOuter = nullptr;   // controlling unknown (==&m_inner if not aggregated)
     std::atomic<ULONG> m_refCount{1};
 
     // Format committed in LockForProcess. Read on the RT path.
@@ -84,6 +111,14 @@ private:
     UINT32      m_channels = 0;
     UINT32      m_sampleRate = 0;
     UINT32      m_bytesPerFrame = 0;
+
+    // The DSP chain. prepare() is called on the config thread in
+    // LockForProcess; process() runs on the RT thread in APOProcess.
+    dsp::ProcessorChain m_chain;
+
+    // Cross-process telemetry (APOProcess writes; external observers read).
+    HANDLE              m_shmHandle = nullptr;
+    teedsp::ApoShared  *m_shm = nullptr;
 };
 
 } // namespace teedsp::apo

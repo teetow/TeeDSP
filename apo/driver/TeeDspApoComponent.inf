@@ -1,0 +1,74 @@
+;
+; TeeDSP APO software component. The signed package keeps the DLL in the
+; Driver Store and registers its COM/APO metadata from that location.
+;
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = SoftwareComponent
+ClassGuid   = {5C4C3332-344D-483C-8739-259E934C9CC8}
+Provider    = %ProviderName%
+DriverVer   = 06/20/2026,0.1.0.0
+CatalogFile = TeeDspApo.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = TeeDspApoComponents,NTamd64
+
+[TeeDspApoComponents.NTamd64]
+%ComponentDesc% = TeeDspApoComponent_Install,SWC\VEN_TEEDSP&AID_0001
+
+[TeeDspApoComponent_Install]
+Include   = wdmaudio.inf
+Needs     = mssysfx.CopyFilesAndRegister
+CopyFiles = TeeDspApo.CopyFiles
+AddReg    = TeeDspApo.AddReg
+
+[TeeDspApoComponent_Install.Services]
+AddService = ,2
+
+[TeeDspApo.CopyFiles]
+teedspapo.dll
+
+[DestinationDirs]
+TeeDspApo.CopyFiles = 13
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+teedspapo.dll = 1
+
+[TeeDspApo.AddReg]
+; COM class registration. %13% resolves to the package Driver Store path.
+HKCR,CLSID\%ApoClsid%,,,%ApoFriendlyName%
+HKCR,CLSID\%ApoClsid%\InprocServer32,,0x00020000,%13%\teedspapo.dll
+HKCR,CLSID\%ApoClsid%\InprocServer32,ThreadingModel,,"Both"
+
+; Audio-engine APO registration. APOInterface0 is IAudioProcessingObject.
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,FriendlyName,,%ApoFriendlyName%
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,Copyright,,%Copyright%
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,MajorVersion,0x00010001,1
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,MinorVersion,0x00010001,0
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,Flags,0x00010001,0x0000000e
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,MinInputConnections,0x00010001,1
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,MaxInputConnections,0x00010001,1
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,MinOutputConnections,0x00010001,1
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,MaxOutputConnections,0x00010001,1
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,MaxInstances,0x00010001,0xffffffff
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,NumAPOInterfaces,0x00010001,1
+HKCR,AudioEngine\AudioProcessingObjects\%ApoClsid%,APOInterface0,,"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"
+
+[SignatureAttributes]
+teedspapo.dll = SignatureAttributes.PETrust
+
+[SignatureAttributes.PETrust]
+PETrust = true
+
+[Strings]
+MfgName         = "TeeDSP"
+ProviderName    = "TeeDSP"
+DiskName        = "TeeDSP APO Driver Package"
+ComponentDesc   = "TeeDSP Audio Processing Object"
+ApoFriendlyName = "TeeDSP Mode Effect APO"
+Copyright       = "TeeDSP"
+ApoClsid        = "{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"

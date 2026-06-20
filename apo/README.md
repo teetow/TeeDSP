@@ -28,51 +28,25 @@ hard part is done. Stage 2 adds the IPC bridge to the UI; Stage 3 plugs
 | [DllMain.cpp](DllMain.cpp) | DLL exports, class factory, `DllRegisterServer` |
 | [TeeDspApo.def](TeeDspApo.def) | Export names |
 | [CMakeLists.txt](CMakeLists.txt) | Build target — separate from the main app |
-| [install/Install.ps1](install/Install.ps1) | Copy + register + bind to endpoint |
-| [install/Uninstall.ps1](install/Uninstall.ps1) | Reverse |
-| [install/SignDev.ps1](install/SignDev.ps1) | Self-sign for test-signing mode |
-| [install/_Interop.ps1](install/_Interop.ps1) | Shared C# COM shim |
+| [driver/](driver/) | Component and Focusrite extension INFs, package staging and signing |
+| [tests/](tests/) | Direct-render and COM-registration probe |
+| [install/Uninstall.ps1](install/Uninstall.ps1) | Legacy loose-DLL cleanup only |
 
-## First-time setup
+## Deployment
 
-```powershell
-# 1. Build (top-level CMake, with TEEDSP_BUILD_APO=ON, the default)
-cmake --build out/build/vs2022-local --target TeeDspApo --config Release
+The supported path is a **componentized driver package**, not a loose DLL in
+`System32`. The package supplies an AudioProcessingObject software component
+and a device-extension INF which associates it with the target endpoint.
 
-# 2. Enable test signing (one-time, requires reboot)
-bcdedit /set testsigning on
+For the Focusrite development device, build and stage the package with the
+files in [`driver/`](driver/). The staging script validates both INFs with
+Inf2Cat; installation remains a separate, deliberate driver-stack change.
 
-# 3. Self-sign the DLL (elevated)
-.\apo\install\SignDev.ps1
+The old scripts in `install/` are retained only to remove an existing legacy
+installation. They are not the deployment mechanism for the componentized
+APO.
 
-# 4. Reboot
-
-# 5. Install — binds to current default render endpoint by default
-.\apo\install\Install.ps1
-
-# Or pick an endpoint explicitly
-.\apo\install\Install.ps1 -List
-.\apo\install\Install.ps1 -EndpointId "{0.0.0.00000000}.{...}"
-```
-
-After install, play audio. It should sound identical (pass-through). If
-it doesn't:
-
-1. Open Event Viewer → Applications and Services Logs → Microsoft →
-   Windows → Audio. APO load failures and format-rejection events show
-   up there with the full HRESULT.
-2. Run [Process Explorer](https://learn.microsoft.com/sysinternals/downloads/process-explorer)
-   and inspect `audiodg.exe`'s loaded modules. `TeeDspApo.dll` should be
-   listed.
-3. Confirm endpoint binding stuck:
-   ```powershell
-   . .\apo\install\_Interop.ps1
-   [TeeDsp.Apo.Helpers]::ListRender()
-   # then check the property store via certmgr-style tooling, or just
-   # re-run Install.ps1 and watch for "endpoint already bound" patterns
-   ```
-
-## Uninstall
+## Legacy cleanup
 
 ```powershell
 .\apo\install\Uninstall.ps1            # unbinds default endpoint
@@ -88,9 +62,6 @@ exactly once. SFX (per-stream pre-mix) would run TeeDSP separately for
 every Spotify+browser+Discord stream — wrong shape for a master-bus
 processor.
 
-If MFX doesn't load on a given Windows configuration, the legacy GFX
-slot (`PostMixCLSID`, PID 2) is the fallback and gets the same audio.
-
 ## Limitations (known, accepted at this stage)
 
 - **Exclusive-mode** and **ASIO** streams bypass the audio engine and
@@ -102,16 +73,9 @@ slot (`PostMixCLSID`, PID 2) is the fallback and gets the same audio.
   notes — user does not use HFP mode.
 - **No UI bridge yet.** Stage 2.
 
-## What I haven't verified
+## What remains to verify
 
-This branch was authored without the ability to actually load the DLL on
-the target machine. The first run on hardware is the test. Expect the
-first install to surface at least one issue — most likely either:
-
-- A signing-policy rejection in audiodg (visible in Event Viewer) →
-  re-run `SignDev.ps1`, confirm test signing is on
-- Format negotiation failure on a specific endpoint → check the
-  `IsXxxFormatSupported` path in [TeeDspApo.cpp](TeeDspApo.cpp)
-- Property-key value-type mismatch (`VT_LPWSTR` vs `VT_CLSID`) → if
-  `Install.ps1` reports `0x80070057` (E_INVALIDARG) from `SetValue`,
-  swap to a `VT_CLSID` payload
+The componentized package now passes Inf2Cat validation. It has not yet been
+test-signed and installed, so `audiodg.exe` load and processing remain the
+next hardware-validation gate. That installation is intentionally deferred
+until the package certificate and test-signing/reboot requirements are ready.

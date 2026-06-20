@@ -1,0 +1,147 @@
+#include <windows.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+#include <audioenginebaseapo.h>
+
+#include <wrl/client.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+
+using Microsoft::WRL::ComPtr;
+
+namespace {
+
+const CLSID kTeeDspApoMfx
+    = { 0xB7E1A0C0, 0x7E5D, 0x4D8B, { 0x9E, 0x2A, 0x1C, 0x4F, 0x8D, 0x3A, 0x2B, 0x11 } };
+
+bool isFloat32(const WAVEFORMATEX *format)
+{
+    if (!format || format->wBitsPerSample != 32) return false;
+    if (format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) return true;
+    if (format->wFormatTag != WAVE_FORMAT_EXTENSIBLE
+        || format->cbSize < sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
+        return false;
+    }
+    const auto *ext = reinterpret_cast<const WAVEFORMATEXTENSIBLE *>(format);
+    return ext->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+}
+
+int fail(const wchar_t *stage, HRESULT hr)
+{
+    std::fwprintf(stderr, L"%ls failed: 0x%08X\n", stage, static_cast<unsigned>(hr));
+    return 1;
+}
+
+} // namespace
+
+int wmain(int argc, wchar_t **argv)
+{
+    if (argc != 2) {
+        std::fwprintf(stderr, L"Usage: TeeDspApoProbe <render-endpoint-id>\n");
+        return 2;
+    }
+
+    const HRESULT coHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(coHr)) return fail(L"CoInitializeEx", coHr);
+
+    int result = 1;
+    WAVEFORMATEX *format = nullptr;
+    do {
+        // Confirm that the installed COM class reports the registration
+        // contract we compiled, independently of audiodg's protected loader.
+        ComPtr<IAudioProcessingObject> apo;
+        HRESULT hr = CoCreateInstance(kTeeDspApoMfx, nullptr,
+                                      CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&apo));
+        if (FAILED(hr)) { result = fail(L"CoCreateInstance(TeeDSP APO)", hr); break; }
+
+        APO_REG_PROPERTIES *properties = nullptr;
+        hr = apo->GetRegistrationProperties(&properties);
+        if (FAILED(hr)) { result = fail(L"GetRegistrationProperties", hr); break; }
+        wchar_t primaryIid[64] = {};
+        StringFromGUID2(properties->iidAPOInterfaceList[0], primaryIid,
+                        static_cast<int>(std::size(primaryIid)));
+        std::wprintf(L"APO primary interface: %ls\n", primaryIid);
+        CoTaskMemFree(properties);
+
+        ComPtr<IMMDeviceEnumerator> enumerator;
+        hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                              CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
+        if (FAILED(hr)) { result = fail(L"CoCreateInstance", hr); break; }
+
+        ComPtr<IMMDevice> device;
+        hr = enumerator->GetDevice(argv[1], &device);
+        if (FAILED(hr)) { result = fail(L"GetDevice", hr); break; }
+
+        ComPtr<IAudioClient> client;
+        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                              reinterpret_cast<void **>(client.GetAddressOf()));
+        if (FAILED(hr)) { result = fail(L"Activate", hr); break; }
+
+        hr = client->GetMixFormat(&format);
+        if (FAILED(hr)) { result = fail(L"GetMixFormat", hr); break; }
+
+        hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 200'000, 0, format, nullptr);
+        if (FAILED(hr)) { result = fail(L"Initialize", hr); break; }
+
+        UINT32 bufferFrames = 0;
+        hr = client->GetBufferSize(&bufferFrames);
+        if (FAILED(hr)) { result = fail(L"GetBufferSize", hr); break; }
+
+        ComPtr<IAudioRenderClient> render;
+        hr = client->GetService(IID_PPV_ARGS(&render));
+        if (FAILED(hr)) { result = fail(L"GetService", hr); break; }
+
+        const bool float32 = isFloat32(format);
+        const bool pcm16 = format->wFormatTag == WAVE_FORMAT_PCM && format->wBitsPerSample == 16;
+        if (!float32 && !pcm16) {
+            std::fwprintf(stderr, L"Unsupported mix format: tag %u, %u bits\n",
+                          format->wFormatTag, format->wBitsPerSample);
+            result = 1;
+            break;
+        }
+
+        hr = client->Start();
+        if (FAILED(hr)) { result = fail(L"Start", hr); break; }
+
+        const auto end = GetTickCount64() + 2000;
+        double phase = 0.0;
+        const double phaseStep = 2.0 * std::acos(-1.0) * 440.0 / format->nSamplesPerSec;
+        while (GetTickCount64() < end) {
+            UINT32 padding = 0;
+            hr = client->GetCurrentPadding(&padding);
+            if (FAILED(hr)) { result = fail(L"GetCurrentPadding", hr); break; }
+
+            const UINT32 frames = bufferFrames - padding;
+            if (frames != 0) {
+                BYTE *data = nullptr;
+                hr = render->GetBuffer(frames, &data);
+                if (FAILED(hr)) { result = fail(L"GetBuffer", hr); break; }
+
+                for (UINT32 frame = 0; frame < frames; ++frame) {
+                    const float sample = 0.05f * static_cast<float>(std::sin(phase));
+                    phase += phaseStep;
+                    if (phase >= 2.0 * std::acos(-1.0)) phase -= 2.0 * std::acos(-1.0);
+                    for (WORD channel = 0; channel < format->nChannels; ++channel) {
+                        const size_t index = static_cast<size_t>(frame) * format->nChannels + channel;
+                        if (float32) reinterpret_cast<float *>(data)[index] = sample;
+                        else reinterpret_cast<int16_t *>(data)[index] = static_cast<int16_t>(sample * 32767.0f);
+                    }
+                }
+                render->ReleaseBuffer(frames, 0);
+            }
+            Sleep(5);
+        }
+
+        client->Stop();
+        if (SUCCEEDED(hr)) {
+            std::wprintf(L"Rendered a 2-second probe tone.\n");
+            result = 0;
+        }
+    } while (false);
+
+    if (format) CoTaskMemFree(format);
+    CoUninitialize();
+    return result;
+}
