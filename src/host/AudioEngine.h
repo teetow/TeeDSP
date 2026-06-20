@@ -111,6 +111,17 @@ private:
     int m_resamplerChannels = 0;
     std::vector<float> m_resampleScratch;
 
+    // --- Render-ring drift handling (see onCapturePacket) ---
+    // The bridge corrects clock drift only while the program material is
+    // silent, where adding/removing samples is inaudible — never by resampling
+    // live audio (that would shift pitch). Primed once per render (re)start so
+    // the standing latency baseline is deterministic instead of whatever the
+    // startup transient left in the ring.
+    bool m_ringPrimed = false;
+    std::vector<float> m_silenceScratch;  // zero-filled pad buffer
+    // Throttles the periodic bridge-latency readout to ~once/sec.
+    int m_driftLogCounter = 0;
+
     std::atomic<float> m_recentHotDbfs{-120.0f};
     std::atomic<float> m_recentInputPeakDbfs{-120.0f};   // mono-mixed, kept for compat
     std::atomic<float> m_recentOutputPeakDbfs{-120.0f};  // mono-mixed, kept for compat

@@ -32,6 +32,12 @@ public:
     int sampleRate() const { return m_sampleRate.load(); }
     bool isFloat() const { return m_isFloat.load(); }
 
+    // Frames currently queued in the ring waiting to play. This is the bridge's
+    // standing latency in frames (divide by sampleRate() for seconds) and the
+    // process variable the engine's drift servo regulates. Lock-free read of a
+    // mirror kept in sync with m_available under m_mutex.
+    size_t queuedFrames() const { return m_queuedFrames.load(std::memory_order_relaxed); }
+
     // Returns true (and clears the flag) if the render thread exited on its
     // own — i.e. without an external stop() request. The audio service
     // invalidates shared-mode clients on device-topology storms (Bluetooth
@@ -66,6 +72,9 @@ private:
     size_t m_writePos = 0;
     size_t m_readPos = 0;
     size_t m_available = 0; // number of samples held
+    // Lock-free mirror of (m_available / channels) for the engine's servo.
+    // Written under m_mutex wherever m_available changes; read without the lock.
+    std::atomic<size_t> m_queuedFrames{0};
 };
 
 } // namespace host

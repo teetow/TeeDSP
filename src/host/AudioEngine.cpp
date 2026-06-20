@@ -7,7 +7,9 @@
 #include "shared/TeeDspParams.h"
 
 #include <QMetaObject>
+#include <QtGlobal>
 
+#include <algorithm>
 #include <cmath>
 
 namespace host {
@@ -181,6 +183,7 @@ QString AudioEngine::start(const QString &captureDeviceId,
         return m_lastError;
     }
     m_currentRenderId = renderId;
+    m_ringPrimed = false;  // fresh ring — re-prime to target on first packet
 
     const QString captureErr = m_capture.start(m_captureDeviceId,
         [this](const float *d, int nf, int nc, int sr) {
@@ -300,6 +303,7 @@ bool AudioEngine::switchRenderTo(const QString &deviceId)
     m_resamplerSrcSr = 0;
     m_resamplerDstSr = 0;
     m_resamplerChannels = 0;
+    m_ringPrimed = false;  // ring is rebuilt by start() — re-prime to target
     const QString err = m_render.start(deviceId);
     if (!err.isEmpty()) {
         m_lastError = QStringLiteral("Render switch failed: ") + err;
@@ -439,13 +443,35 @@ void AudioEngine::onCapturePacket(const float *interleaved,
     m_recentLufsChR.store(m_lufsMonitor ? m_lufsMonitor->lufsChR.load(std::memory_order_relaxed) : -70.0f,
                           std::memory_order_relaxed);
 
-    // Resample if capture and render disagree on sample rate (e.g., capturing
-    // VB-CABLE @ 48 kHz while rendering to a Focusrite negotiated at 44.1 kHz).
-    // Without this step the render side plays the buffer at its own clock,
-    // which sounds pitch-shifted. The render side may not know its rate yet
-    // immediately after start(), so guard on a positive value.
+    // --- Hand the processed audio to the render ring ---------------------- //
+    //
+    // Capture (VB-CABLE) and render (e.g. Focusrite) run on independent clocks,
+    // so the ring's fill level — which IS the bridge's latency — drifts over
+    // time and, left alone, climbs until the ring overflows. We refuse to
+    // correct that by resampling live audio, because retiming a signal shifts
+    // its pitch. Instead we correct ONLY while the program material is silent,
+    // where adding or removing samples is inaudible. Drift is tens of ppm
+    // (ms/min), and real content (track gaps, dialogue pauses, scene changes)
+    // offers silent windows far more often than that, so the fill stays pinned
+    // near target without ever touching audible samples.
+    //
+    // A true sample-rate mismatch (e.g. 48 kHz capture into a 44.1 kHz render)
+    // still goes through the resampler — but that's a fixed-ratio conversion
+    // for correctness, not a drift trim, so pitch is preserved.
+    //
+    // The render side may not know its rate yet right after start(); until then
+    // pass through untouched.
     const int renderSr = m_render.sampleRate();
-    if (renderSr > 0 && renderSr != sampleRate) {
+    if (renderSr <= 0) {
+        m_render.write(interleaved, numFrames, numChannels);
+        return;
+    }
+
+    // Resolve the buffer to push: resampled scratch on a rate mismatch,
+    // otherwise the live (bit-exact) capture buffer.
+    const float *outBuf = interleaved;
+    int outFrames = numFrames;
+    if (renderSr != sampleRate) {
         if (m_resamplerSrcSr != sampleRate
             || m_resamplerDstSr != renderSr
             || m_resamplerChannels != numChannels) {
@@ -458,12 +484,59 @@ void AudioEngine::onCapturePacket(const float *interleaved,
         }
         m_resampleScratch.clear();
         m_resampler.process(interleaved, numFrames, m_resampleScratch);
-        const int outFrames = static_cast<int>(m_resampleScratch.size() / numChannels);
-        if (outFrames > 0) {
-            m_render.write(m_resampleScratch.data(), outFrames, numChannels);
+        outBuf = m_resampleScratch.data();
+        outFrames = static_cast<int>(m_resampleScratch.size() / numChannels);
+    }
+
+    constexpr double kTargetLatencyMs = 50.0;   // > 20 ms render buffer + jitter
+    constexpr float  kSilenceThresh   = 1.0e-3f; // ~-60 dBFS: below this, drop/pad is inaudible
+    const auto targetFrames = static_cast<long long>(renderSr * (kTargetLatencyMs / 1000.0));
+
+    // Helper: push N frames of interleaved silence into the ring.
+    const auto writeSilence = [&](long long frames) {
+        if (frames <= 0) return;
+        const size_t need = static_cast<size_t>(frames) * numChannels;
+        if (m_silenceScratch.size() < need) m_silenceScratch.assign(need, 0.0f);
+        m_render.write(m_silenceScratch.data(), static_cast<int>(frames), numChannels);
+    };
+
+    // Prime the ring to target with silence on the first packet after a render
+    // (re)start, so the standing latency is a deterministic ~kTargetLatencyMs
+    // rather than whatever the capture/render startup race left behind. Silence
+    // in, silence out — inaudible, and no pitch glide.
+    if (!m_ringPrimed) {
+        writeSilence(targetFrames - static_cast<long long>(m_render.queuedFrames()));
+        m_ringPrimed = true;
+    }
+
+    // Silence-gated drift correction. peakL/peakR were measured above on the
+    // post-DSP signal that's about to be queued.
+    const bool silent = std::max(peakL, peakR) < kSilenceThresh;
+    long long pad = 0;
+    if (silent) {
+        const long long queued = static_cast<long long>(m_render.queuedFrames());
+        const long long error  = queued - targetFrames;
+        if (error > 0) {
+            // Overfull: drop leading (silent) frames so the consumer catches up.
+            const long long drop = std::min<long long>(error, outFrames);
+            outBuf += drop * numChannels;
+            outFrames -= static_cast<int>(drop);
+        } else if (error < 0) {
+            // Underfull: pad with silence after this packet.
+            pad = -error;
         }
-    } else {
-        m_render.write(interleaved, numFrames, numChannels);
+    }
+
+    if (outFrames > 0) m_render.write(outBuf, outFrames, numChannels);
+    if (pad > 0) writeSilence(pad);
+
+    // Bridge-latency readout (~once/sec) so the fill curve is observable and we
+    // can confirm it holds near target instead of climbing.
+    if (++m_driftLogCounter * numFrames >= sampleRate) {
+        m_driftLogCounter = 0;
+        const auto q = static_cast<double>(m_render.queuedFrames());
+        qInfo("TeeDSP bridge latency: %.1f ms (%.0f frames @ %d Hz)%s",
+              1000.0 * q / renderSr, q, renderSr, silent ? " [resync]" : "");
     }
 }
 

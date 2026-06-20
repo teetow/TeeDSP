@@ -49,6 +49,7 @@ QString WasapiRender::start(const QString &renderDeviceId)
         std::lock_guard<std::mutex> g(m_mutex);
         m_ring.clear();
         m_writePos = m_readPos = m_available = 0;
+        m_queuedFrames.store(0, std::memory_order_relaxed);
     }
 
     m_thread = std::thread(&WasapiRender::threadMain, this, renderDeviceId);
@@ -98,6 +99,8 @@ void WasapiRender::write(const float *interleaved, int numFrames, int numChannel
     for (int f = 0; f < numFrames; ++f) {
         if (m_available + static_cast<size_t>(deviceCh) > cap) {
             // Drop this frame — produce faster than consumer drains.
+            m_queuedFrames.store(m_available / static_cast<size_t>(deviceCh),
+                                 std::memory_order_relaxed);
             return;
         }
         if (numChannels == deviceCh) {
@@ -127,6 +130,8 @@ void WasapiRender::write(const float *interleaved, int numFrames, int numChannel
         }
         m_available += static_cast<size_t>(deviceCh);
     }
+    m_queuedFrames.store(m_available / static_cast<size_t>(deviceCh),
+                         std::memory_order_relaxed);
 }
 
 void WasapiRender::threadMain(QString deviceId)
@@ -182,6 +187,7 @@ void WasapiRender::threadMain(QString deviceId)
                 * 2; // 2 seconds of negotiated-format headroom.
             m_ring.assign(ringSamples, 0.0f);
             m_writePos = m_readPos = m_available = 0;
+            m_queuedFrames.store(0, std::memory_order_relaxed);
         }
 
         m_channels.store(channels);
@@ -243,6 +249,8 @@ void WasapiRender::threadMain(QString deviceId)
                     std::memset(buf, 0, static_cast<size_t>(framesToWrite) * mix->nBlockAlign);
                 }
                 m_available -= take;
+                m_queuedFrames.store(m_available / static_cast<size_t>(channels),
+                                     std::memory_order_relaxed);
                 samplesGiven = take;
             }
 
