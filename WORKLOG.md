@@ -5,15 +5,21 @@ Genuinely low-latency, system-wide processing via a system-effects APO: get
 `TeeDspApo.dll` loaded into `audiodg.exe`. This is the right architecture; the
 user-space bridge is a fallback, not a replacement.
 
-## STATE — POC complete on Realtek (2026-06-20)
-End-to-end works on the Realtek analog endpoint: APO loads + processes
-system-wide; the real `TeeDsp.exe` UI drives the chain live; full analysis
-(level/VU/GR meters, BS.1770 LUFS, pre/post spectrum + heatmap) is read from the
-APO's shared telemetry. UI is the APO-era control surface (Device picker, status
-line, master Bypass; bridge Start/Stop/Output-picker + capture→render engine
-retired). Shared block is now **V4** (`Global\TeeDspApoSharedV4`): telemetry +
-seqlock `ChainParams` + heartbeat + meters/LUFS + mono pre/post sample ring.
-New since the `POC` tag — NOT committed yet.
+## STATE — Realtek target fully working (2026-06-20)
+End-to-end on the **Realtek** speaker endpoint (a real shipping target, not just
+a testbed): APO loads + processes system-wide, **always-on** (loads `params.bin`
+at stream start, runs with the app closed); the lean `TeeDsp.exe` editor drives
+the chain live and shows full analysis (level/VU/GR meters, BS.1770 LUFS, pre/post
+spectrum + heatmap) from the APO's shared telemetry (`Global\TeeDspApoSharedV4`:
+telemetry + seqlock `ChainParams` + heartbeat + meters/LUFS + mono pre/post ring).
+Editor autostarts (installed to `%LOCALAPPDATA%\Programs\TeeDsp`) and close-to-trays;
+tray lights only when the APO is on the current default output. All committed on
+`feature/apo-hardware-bringup`, past the `POC` tag.
+
+**Device targeting** ([[project_device_targeting]]): the APO belongs on **Realtek**
+(speakers) and **AirPods** (voice comms). **Focusrite is reserved for music
+production and NEVER gets the APO** — a grey tray / "not active" on Focusrite is
+correct, permanent behavior, not a gap.
 
 **Next, in order:**
 1. ✅ DONE — **Always-on persistence**: APO loads `dsp::ChainParams` from
@@ -40,10 +46,10 @@ New since the `POC` tag — NOT committed yet.
    *installed* build; reinstall (copy exe+theme, windeployqt) to update it.
 5. Minor polish: meters/spectrum freeze on idle (feed silence when the status
    poll sees no processing — UI-only).
-5. **Real-output gate (off POC):** bind the APO to the endpoints actually used —
-   Focusrite, then AirPods/Bluetooth ([[project_airpods_priority]]). TeeDSP
-   currently only processes the Realtek endpoint.
-6. Production signing (WHQL/attestation) so it loads into a *protected* audiodg;
+6. **AirPods binding** — get the APO onto the Bluetooth endpoint (the hard,
+   high-value case: dynamic endpoints, A2DP↔HFP mic-switch;
+   [[project_airpods_priority]]). NOT Focusrite — see device targeting above.
+7. Production signing (WHQL/attestation) so it loads into a *protected* audiodg;
    `DisableProtectedAudioDG` is dev-only.
 
 ## ✅ PROVEN: APO PROCESSES audio in audiodg (2026-06-20, later)
