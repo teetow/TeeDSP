@@ -47,15 +47,12 @@ set(DSP_SOURCES
 	src/dsp/DspController.cpp
 )
 
+# APO-era editor: no capture/render engine, no in-app CLAP host. Only device
+# enumeration (for the picker), the FFT analyzer (fed from the APO sample ring),
+# and the APO shared-memory client remain.
 set(HOST_SOURCES
 	src/host/WasapiDevices.cpp
-	src/host/WasapiLoopbackCapture.cpp
-	src/host/WasapiRender.cpp
-	src/host/WasapiDeviceNotifier.cpp
-	src/host/AudioEngine.cpp
-	src/host/ClapHost.cpp
 	src/host/Fft.cpp
-	src/host/Resampler.cpp
 	src/host/SpectrumAnalyzer.cpp
 	src/host/ApoSharedClient.cpp
 )

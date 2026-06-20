@@ -9,8 +9,6 @@
 #include "widgets/WidgetMetrics.h"
 
 #include "../dsp/DspController.h"
-#include "../host/AudioEngine.h"
-#include "../host/ClapHost.h"
 #include "../host/SpectrumAnalyzer.h"
 #include "../host/WasapiDevices.h"
 
@@ -116,22 +114,14 @@ ui::Knob *makeKnob(const QString &label,
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    // The whole DSP chain now lives in teedsp.clap, loaded in-process. The app
-    // is a CLAP host: DspController drives the plugin's params, AudioEngine
-    // runs audio through it.
-    m_clapHost = new host::ClapHost();
-    if (!m_clapHost->load()) {
-        QMessageBox::warning(
-            this, QStringLiteral("TeeDSP"),
-            QStringLiteral("Failed to load the DSP plugin (teedsp.clap):\n%1\n\n"
-                           "Audio will pass through unprocessed.")
-                .arg(QString::fromStdString(m_clapHost->error())));
-    }
-
-    m_dspController = new dsp::DspController(m_clapHost, this);
+    // APO-era editor: the DSP runs system-wide in the APO (audiodg). This app
+    // only edits params and visualizes telemetry — there is no in-process audio
+    // engine or CLAP host. DspController talks to the APO over shared memory;
+    // the analyzer is fed from the APO's sample ring (see onSpectrumTick).
+    m_dspController = new dsp::DspController(this);
     m_dspController->loadFromSettings();
 
-    m_engine = new host::AudioEngine(m_clapHost, this);
+    m_analyzer = new host::SpectrumAnalyzer(this);
 
     // First-run defaults: register Start-with-Windows.
     {
@@ -187,7 +177,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Spectrum: drain the APO's pre/post sample ring (~60 Hz) and feed the
     // analyzer, whose spectraUpdated already drives the EqCurve overlay+heatmap.
-    m_analyzer = m_engine ? m_engine->analyzer() : nullptr;
     m_spectrumTimer.setInterval(16);
     connect(&m_spectrumTimer, &QTimer::timeout, this, &MainWindow::onSpectrumTick);
     m_spectrumTimer.start();
@@ -212,14 +201,10 @@ void MainWindow::onSpectrumTick()
 
 MainWindow::~MainWindow()
 {
-    if (m_engine) m_engine->stop();
     if (m_dspController) m_dspController->saveToSettings();
     saveSelectedDevices();
-    // Tear down in dependency order: engine (audio threads already stopped) and
-    // controller both reference the ClapHost, so the host outlives them.
-    delete m_engine; m_engine = nullptr;
-    delete m_dspController; m_dspController = nullptr;
-    delete m_clapHost; m_clapHost = nullptr;
+    // m_dspController, m_analyzer, m_tray are QObject children of this window
+    // and are destroyed with it; the APO keeps running regardless.
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -237,12 +222,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     if (m_quitting || !m_tray) {
-        stopEngineAndHealRouting();
         QMainWindow::closeEvent(event);
         return;
     }
 
-    // Hide to tray. Engine keeps running so audio flows uninterrupted.
+    // Hide to tray. The APO keeps processing system-wide regardless.
     event->ignore();
     hide();
 }
@@ -854,8 +838,8 @@ void MainWindow::connectSignals()
         QSettings().setValue(QString::fromLatin1(kShowHeatmapKey), on);
     });
 
-    if (auto *analyzer = m_engine->analyzer()) {
-        connect(analyzer, &host::SpectrumAnalyzer::spectraUpdated,
+    if (m_analyzer) {
+        connect(m_analyzer, &host::SpectrumAnalyzer::spectraUpdated,
                 this, [this](QVector<float> inDb, QVector<float> outDb,
                              double sr, int fftSize) {
             m_eqCurve->setInputSpectrum(inDb, sr, fftSize);
@@ -999,47 +983,6 @@ void MainWindow::connectSignals()
         saveSelectedDevices();
         refreshEngineStatus();
     });
-    connect(m_renderDevice, qOverload<int>(&QComboBox::currentIndexChanged),
-            this, [this](int){
-        if (m_syncingUi) return;
-        saveSelectedDevices();
-        // Push the new preference into the engine; if running, this triggers
-        // a hot render-side switch without dropping the capture stream.
-        m_engine->setPreferredRender(selectedRenderDeviceId());
-    });
-
-    connect(m_engine, &host::AudioEngine::currentRenderChanged,
-            this, [this](const QString &id) {
-        refreshEngineStatus();
-        // Snap the render combo to whatever the engine is actually playing
-        // through. Use QSignalBlocker so the index change doesn't trigger
-        // a setPreferredRender round-trip back into the engine.
-        if (m_renderDevice && !id.isEmpty()) {
-            const int idx = m_renderDevice->findData(id);
-            if (idx >= 0 && idx != m_renderDevice->currentIndex()) {
-                QSignalBlocker block(m_renderDevice);
-                m_renderDevice->setCurrentIndex(idx);
-            }
-        }
-        // Sync the tray Output submenu — it won't update on its own unless
-        // refreshDevices() runs, which only happens on a devicesChanged event.
-        if (m_tray && (!m_inputDevices.isEmpty() || !m_outputDevices.isEmpty())) {
-            QList<ui::TrayController::DeviceChoice> inputChoices;
-            inputChoices.reserve(m_captureDevice ? m_captureDevice->count() : 0);
-            for (int i = 0; m_captureDevice && i < m_captureDevice->count(); ++i)
-                inputChoices.push_back({m_captureDevice->itemData(i).toString(),
-                                        m_captureDevice->itemText(i)});
-
-            QList<ui::TrayController::DeviceChoice> outputChoices;
-            outputChoices.reserve(m_outputDevices.size());
-            for (const auto &d : m_outputDevices)
-                outputChoices.push_back({d.id, d.name});
-            m_tray->setRoutingOptions(inputChoices, selectedCaptureDeviceId(),
-                                      outputChoices, selectedRenderDeviceId());
-        }
-    });
-    connect(m_engine, &host::AudioEngine::captureFormatChanged,
-            this, [this](int, int) { refreshEngineStatus(); });
 
     if (m_tray) {
         // Start/Stop and "Set as active" are bridge-era actions that would
@@ -1060,8 +1003,6 @@ void MainWindow::connectSignals()
             m_captureDevice->setCurrentIndex(idx);
             m_syncingUi = wasSyncing;
             saveSelectedDevices();
-            if (m_engine)
-                m_engine->setPreferredCapture(selectedCaptureDeviceId());
             refreshEngineStatus();
         });
         connect(m_tray, &ui::TrayController::outputDeviceSelected,
@@ -1074,8 +1015,6 @@ void MainWindow::connectSignals()
             m_renderDevice->setCurrentIndex(idx);
             m_syncingUi = wasSyncing;
             saveSelectedDevices();
-            if (m_engine)
-                m_engine->setPreferredRender(selectedRenderDeviceId());
             refreshEngineStatus();
         });
         connect(m_tray, &ui::TrayController::quitRequested, this, [this]() {
@@ -1187,12 +1126,6 @@ void MainWindow::refreshDevices()
     const QString prefCapture = s.value(QString::fromLatin1(kCaptureDeviceKey)).toString();
     const QString prefRender   = s.value(QString::fromLatin1(kRenderDeviceKey)).toString();
 
-    // When running, the engine is the source of truth for which endpoints are
-    // actually active. We restore to those IDs after repopulating so the
-    // combo always matches what's really happening.
-    const QString engineRender = (m_engine && m_engine->isRunning())
-        ? m_engine->currentRender() : QString();
-
     m_outputDevices = host::WasapiDevices::enumerateRender();
     m_inputDevices = host::WasapiDevices::enumerateCapture();
 
@@ -1233,10 +1166,7 @@ void MainWindow::refreshDevices()
         migratedCapture = selectById(m_captureDevice, pairedCapture);
     }
 
-    // Render: prefer the engine's live endpoint (ground truth when running),
-    // fall back to the persisted user preference.
-    if (!selectById(m_renderDevice, engineRender))
-        selectById(m_renderDevice, prefRender);
+    selectById(m_renderDevice, prefRender);   // hidden mirror combo
 
     // First-run / no-pref fallbacks: pick something reasonable.
     if (m_captureDevice->currentIndex() < 0 && m_captureDevice->count() > 0) {
@@ -1314,86 +1244,6 @@ void MainWindow::restoreSelectedDevices()
         if (idx >= 0) m_renderDevice->setCurrentIndex(idx);
     }
     m_syncingUi = wasSyncing;
-}
-
-void MainWindow::onStartStopClicked()
-{
-    if (!m_engine) return;
-    if (m_engine->isRunning()) {
-        stopEngineAndHealRouting();
-        refreshEngineStatus();
-        return;
-    }
-    const QString err = m_engine->start(selectedCaptureDeviceId(), selectedRenderDeviceId());
-    if (!err.isEmpty()) m_statusLabel->setText(err);
-    refreshEngineStatus();
-}
-
-void MainWindow::setTeeDspAsActive()
-{
-    if (!m_engine) return;
-    const QString captureId = selectedCaptureDeviceId();
-    if (captureId.isEmpty()) return;
-
-    const QString routeRenderId = host::WasapiDevices::routeRenderForInput(captureId);
-    if (routeRenderId.isEmpty()) {
-        m_statusLabel->setText(QStringLiteral("Selected input cannot be made the Windows output route."));
-        return;
-    }
-
-    const QString previousDefaultRender = host::WasapiDevices::defaultRenderId();
-
-    // Point TeeDSP's render at whatever Windows was sending to, so audio
-    // continues flowing to that endpoint once we flip the default below.
-    if (!previousDefaultRender.isEmpty()
-        && previousDefaultRender != routeRenderId
-        && m_renderDevice) {
-        const int idx = m_renderDevice->findData(previousDefaultRender);
-        if (idx >= 0) {
-            const bool wasSyncing = m_syncingUi;
-            m_syncingUi = true;
-            m_renderDevice->setCurrentIndex(idx);
-            m_syncingUi = wasSyncing;
-            saveSelectedDevices();
-            if (m_engine->isRunning())
-                m_engine->setPreferredRender(previousDefaultRender);
-        }
-    }
-
-    if (!m_engine->isRunning()) {
-        const QString err = m_engine->start(captureId, selectedRenderDeviceId());
-        if (!err.isEmpty()) {
-            m_statusLabel->setText(err);
-            return;
-        }
-    }
-
-    if (previousDefaultRender != routeRenderId
-        && !host::WasapiDevices::setDefaultRender(routeRenderId)) {
-        m_statusLabel->setText(QStringLiteral("Failed to set Windows default output to TeeDSP route."));
-    }
-    refreshEngineStatus();
-}
-
-void MainWindow::stopEngineAndHealRouting()
-{
-    // Heal the gap: before stopping, point Windows default output at TeeDSP's
-    // render target so audio keeps flowing where the user expected — without
-    // this, the system would be left routed to TeeDSP's loopback source with
-    // no one consuming it.
-    if (m_engine && m_engine->isRunning()) {
-        const QString renderId = m_engine->currentRender();
-        if (!renderId.isEmpty())
-            host::WasapiDevices::setDefaultRender(renderId);
-    }
-    if (m_engine) m_engine->stop();
-}
-
-void MainWindow::onEngineError(const QString &message)
-{
-    m_statusLabel->setProperty("role", "statusError");
-    m_statusLabel->setText(message);
-    repolish(m_statusLabel);
 }
 
 void MainWindow::refreshEngineStatus()

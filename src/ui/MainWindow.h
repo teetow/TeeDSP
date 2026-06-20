@@ -19,8 +19,6 @@ class DspController;
 }
 
 namespace host {
-class AudioEngine;
-class ClapHost;
 class SpectrumAnalyzer;
 }
 
@@ -68,25 +66,9 @@ private:
     // selected band — used on band-selection changes to avoid a full UI sync.
     void syncSelectedBandDyn();
 
-    void onStartStopClicked();
-    void onEngineError(const QString &message);
-
     // Pauses/resumes the analyzer + meter timers based on whether the window
-    // is actually being looked at. The 60 Hz analyzer FFTs and 125 Hz meter
-    // updates drive the QOpenGLWidget EqCurve and meter widgets — useless
-    // work when hidden to tray or minimized, and a soak-time GPU-pin risk
-    // across display-sleep / DXGI device-reset transitions.
+    // is actually being looked at — no point burning FFTs/repaints when hidden.
     void updateUiTimerGate();
-
-    // Stops the audio engine and restores Windows default output to the
-    // engine's render target — same "heal the gap" routing fix-up the clean
-    // quit path performs.
-    void stopEngineAndHealRouting();
-
-    // Inserts TeeDSP into the current Windows playback chain: TeeDSP renders
-    // to whatever Windows was sending to, and Windows default is flipped to
-    // the render endpoint paired with TeeDSP's selected input.
-    void setTeeDspAsActive();
 
     QString selectedCaptureDeviceId() const;
     QString selectedRenderDeviceId() const;
@@ -156,9 +138,7 @@ private:
     int m_selectedEqBand = 0;
 
 
-    host::ClapHost *m_clapHost = nullptr;
     dsp::DspController *m_dspController = nullptr;
-    host::AudioEngine *m_engine = nullptr;
     ui::TrayController *m_tray = nullptr;
 
     QList<host::DeviceInfo> m_inputDevices;

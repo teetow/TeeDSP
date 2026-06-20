@@ -11,7 +11,6 @@
 #include "host/ApoSharedClient.h"
 #include "shared/TeeDspParams.h"   // teedsp::kBandCount
 
-namespace host { class ClapHost; }
 
 namespace dsp {
 
@@ -71,7 +70,7 @@ class DspController : public QObject
     Q_PROPERTY(QVariantList eqBands READ eqBands NOTIFY eqChanged FINAL)
 
 public:
-    explicit DspController(host::ClapHost *host, QObject *parent = nullptr);
+    explicit DspController(QObject *parent = nullptr);
 
     ChainParams buildSnapshot() const;
 
@@ -184,13 +183,13 @@ signals:
     void meterChanged();
 
 private:
-    void pushAllToHost();
     void applySnapshot(const ChainParams &params);
+    // Persist params for the always-on APO (atomic write to ProgramData).
+    void writeParamsFile(const ChainParams &p) const;
 
-    host::ClapHost   *m_host;
-    // Local source-of-truth for EQ band params. The chain lives behind the
-    // CLAP boundary now, so the controller caches params (pushing changes as
-    // events) and only pulls telemetry (gain reduction) back.
+    // Local source-of-truth for EQ band params. The DSP lives in the APO; the
+    // controller owns the canonical params, pushes changes to the APO (shared
+    // block + persisted file), and reads telemetry back from it.
     EqBandParams      m_eqBands[kEqBandCount];
     QTimer m_meterTimer;
     QTimer m_saveDebounceTimer;
