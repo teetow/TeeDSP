@@ -78,6 +78,8 @@ bool ApoSharedClient::readMeters(ApoMeters &out) const
     out.outRmsDbfs       = m_shm->outRmsDbfs;
     out.compGrDb         = m_shm->compGrDb;
     out.levelerGainDb    = m_shm->levelerGainDb;
+    for (int b = 0; b < 4; ++b)
+        out.spectralGainDb[b] = m_shm->spectralGainDb[b];
     out.outLevelerGainDb = m_shm->outLevelerGainDb;
     for (int b = 0; b < 5; ++b)
         out.bandGrDb[b] = m_shm->bandGrDb[b];

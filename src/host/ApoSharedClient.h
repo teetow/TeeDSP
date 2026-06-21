@@ -41,6 +41,7 @@ public:
         float outRmsDbfs     = -120.0f;
         float compGrDb       = 0.0f;
         float levelerGainDb  = 0.0f;
+        float spectralGainDb[4] = { 0, 0, 0, 0 };
         float outLevelerGainDb = 0.0f;
         float bandGrDb[5]    = { 0, 0, 0, 0, 0 };
         float outLufsCh[2]   = { -120.0f, -120.0f };

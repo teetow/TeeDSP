@@ -21,6 +21,7 @@ inline void applyChainParams(ProcessorChain &chain, const ChainParams &p)
 
     // "Enabled" toggles map to !bypass on the relevant stage (matches plugin).
     chain.leveler().setBypass(!p.levelerEnabled);
+    chain.spectralLeveler().setBypass(!p.spectralLevelerEnabled);
     chain.outputLeveler().setBypass(!p.outputLevelerEnabled);
     chain.eq().setBypass(!p.eqEnabled);
 

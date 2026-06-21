@@ -1,4 +1,4 @@
-// TeeDSP CLAP plugin — the entire TeeDSP signal chain (Leveler -> trim -> EQ ->
+// TeeDSP CLAP plugin — the entire TeeDSP signal chain (Leveler -> Spectral Leveler -> trim -> EQ ->
 // Exciter -> Compressor -> width -> output Leveler -> trim) packaged as a single
 // "make it sound better" master effect.
 //
@@ -52,16 +52,19 @@ const clap_plugin_descriptor_t kDescriptor = {
 };
 
 // O(1) map from param ID to its contiguous index in kParams / m_values.
-// Globals occupy indices 0..PID_GlobalCount-1 (id == index). Band params form
-// a contiguous block right after, in (band, field) order.
+// Existing globals occupy indices 0..17 (id == index); band params follow in
+// (band, field) order. Spectral Leveler was appended after that legacy layout
+// so saved plugin state remains value-for-value compatible with earlier builds.
 inline int paramIndexOf(uint32_t id)
 {
-    if (id < PID_GlobalCount)
+    if (id < PID_SpectralLevelerEnabled)
         return static_cast<int>(id);
+    if (id == PID_SpectralLevelerEnabled)
+        return kParamCount - 1;
     if (isBandParam(id)) {
         const int blockIdx = static_cast<int>(id - kBandParamBase);
         if (blockIdx >= 0 && blockIdx < kBandCount * BF_Count)
-            return PID_GlobalCount + blockIdx;
+            return kLegacyGlobalParamCount + blockIdx;
     }
     return -1;
 }
@@ -113,6 +116,7 @@ struct TeeDspPlugin {
         case PID_OutputTrim:           chain.setOutputTrimDb(static_cast<float>(v)); break;
         case PID_StereoWidth:          chain.setStereoWidth(static_cast<float>(v)); break;
         case PID_LevelerEnabled:       chain.leveler().setBypass(!on); break;
+        case PID_SpectralLevelerEnabled: chain.spectralLeveler().setBypass(!on); break;
         case PID_OutputLevelerEnabled: chain.outputLeveler().setBypass(!on); break;
         case PID_EqEnabled:            chain.eq().setBypass(!on); break;
         case PID_CompEnabled:          chain.compressor().setBypass(!on); break;
@@ -204,7 +208,7 @@ bool paramsValueToText(const clap_plugin_t *, clap_id id, double value,
     if (!d)
         return false;
 
-    if (id == PID_Bypass || id == PID_LevelerEnabled || id == PID_OutputLevelerEnabled ||
+    if (id == PID_Bypass || id == PID_LevelerEnabled || id == PID_SpectralLevelerEnabled || id == PID_OutputLevelerEnabled ||
         id == PID_EqEnabled || id == PID_CompEnabled || id == PID_ExciterEnabled ||
         (isBandParam(id) && fieldOf(id) == BF_Enabled)) {
         std::snprintf(out, cap, "%s", value >= 0.5 ? "On" : "Off");
@@ -324,6 +328,8 @@ void telemetryRead(const clap_plugin_t *p, teedsp_telemetry_data *out)
         out->bandGrDb[i] = eq.bandDynamicGainReductionDb(i);
     out->compGrDb = tp->chain.compressor().currentGainReductionDb();
     out->levelerGainDb = tp->chain.leveler().currentGainDb();
+    for (int i = 0; i < dsp::SpectralLeveler::kBandCount; ++i)
+        out->spectralGainDb[i] = tp->chain.spectralLeveler().currentGainDb(i);
     out->outputLevelerGainDb = tp->chain.outputLeveler().currentGainDb();
 }
 

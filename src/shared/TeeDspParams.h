@@ -35,7 +35,7 @@ enum BandField : uint32_t {
 
 inline constexpr int kBandCount = 5;
 
-// Global / non-band parameter IDs (0..17). Band params live at >= 100.
+// Global / non-band parameter IDs. Band params live at >= 100.
 enum ParamId : uint32_t {
     PID_Bypass = 0,
     PID_InputTrim,
@@ -56,7 +56,12 @@ enum ParamId : uint32_t {
     PID_ExciterMix,
     PID_ExciterTone,
 
-    PID_GlobalCount,    // = 18; not a real param
+    // Kept after every existing global ID. Its descriptor intentionally lives
+    // after the legacy band descriptors so older raw plugin-state blobs retain
+    // their original value ordering.
+    PID_SpectralLevelerEnabled,
+
+    PID_GlobalCount,    // = 19; not a real param
 };
 
 // Band params are encoded as a stable offset block. Band b, field f maps to
@@ -77,7 +82,8 @@ inline constexpr BandField fieldOf(uint32_t id)
     return static_cast<BandField>((id - kBandParamBase) % BF_Count);
 }
 
-inline constexpr int kParamCount = PID_GlobalCount + kBandCount * BF_Count; // 18 + 50 = 68
+inline constexpr int kLegacyGlobalParamCount = PID_SpectralLevelerEnabled; // 18
+inline constexpr int kParamCount = PID_GlobalCount + kBandCount * BF_Count; // 19 + 50 = 69
 
 // ---- Descriptor table -----------------------------------------------------
 // Ordered by CLAP param index (0..kParamCount-1). `id` is the stable ParamId;
@@ -131,6 +137,8 @@ inline constexpr ParamDescriptor kParams[] = {
     TEEDSP_BAND(3, kBandParamBase + 2 * BF_Count, 0.0,  1000.0),  // peaking
     TEEDSP_BAND(4, kBandParamBase + 3 * BF_Count, 0.0,  4000.0),  // peaking
     TEEDSP_BAND(5, kBandParamBase + 4 * BF_Count, 2.0, 10000.0),  // high shelf
+
+    { PID_SpectralLevelerEnabled, "Spectral Leveler", "Enabled", 0.0, 1.0, 0.0, true },
 };
 
 #undef TEEDSP_BAND

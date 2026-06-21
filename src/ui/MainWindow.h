@@ -25,6 +25,7 @@ class SpectrumAnalyzer;
 namespace ui {
 class Knob;
 class LevelMeter;
+class SpectralGainMeter;
 class EqCurve;
 class TrayController;
 }
@@ -54,6 +55,7 @@ private:
     QWidget *buildCompSection();
     QWidget *buildChannelMixerSection();
     QWidget *buildExciterSection();
+    QWidget *buildSpectralSection();
     QWidget *buildInputPane();
     QWidget *buildOutputPane();
 
@@ -88,6 +90,8 @@ private:
     QProgressBar *m_inputMeterBarR = nullptr;
     ui::Knob *m_inputTrim = nullptr;
     QCheckBox *m_levelerEnabled = nullptr;
+    QCheckBox *m_spectralLevelerEnabled = nullptr;
+    ui::SpectralGainMeter *m_spectralGainMeter = nullptr;
     QLabel *m_levelerGainLabel = nullptr;
 
     QProgressBar *m_outputMeterBarL = nullptr;

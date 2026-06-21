@@ -16,6 +16,7 @@ void ProcessorChain::prepare(double sampleRate, std::size_t channels)
     m_sampleRate = sampleRate;
     m_channels = channels;
     m_leveler.prepare(sampleRate, channels);
+    m_spectralLeveler.prepare(sampleRate, channels);
     // Output stage rides toward -12 LUFS with a symmetric ±12 dB window.
     // Tighter target than the input rider since by here the chain has
     // already roughly normalized; the output stage just trims residual
@@ -30,6 +31,7 @@ void ProcessorChain::prepare(double sampleRate, std::size_t channels)
 void ProcessorChain::reset()
 {
     m_leveler.reset();
+    m_spectralLeveler.reset();
     m_outputLeveler.reset();
     m_eq.reset();
     m_compressor.reset();
@@ -41,10 +43,11 @@ void ProcessorChain::process(float *interleaved, std::size_t frameCount)
     if (m_bypass.load(std::memory_order_relaxed) || interleaved == nullptr || frameCount == 0)
         return;
 
-    // Leveler runs ahead of input trim so the trim knob still rides on top
+    // Leveler runs ahead of the spectral stage and input trim so the trim knob still rides on top
     // of the auto-leveled signal — flick the rider off and the trim's effect
     // is unchanged.
     m_leveler.process(interleaved, frameCount);
+    m_spectralLeveler.process(interleaved, frameCount);
 
     const float inTrimLin = dbToLinear(m_inputTrimDb.load(std::memory_order_relaxed));
     const float outTrimLin = dbToLinear(m_outputTrimDb.load(std::memory_order_relaxed));

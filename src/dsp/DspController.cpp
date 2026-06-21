@@ -162,6 +162,22 @@ float DspController::levelerGainDb() const
     return m.levelerGainDb;
 }
 
+void DspController::spectralLevelerGainDb(
+    std::array<float, kSpectralLevelerBandCount> &out) const
+{
+    host::ApoSharedClient::ApoMeters m;
+    m_apo.readMeters(m);
+    for (int b = 0; b < kSpectralLevelerBandCount; ++b)
+        out[b] = m.spectralGainDb[b];
+}
+
+void DspController::setSpectralLevelerEnabled(bool b)
+{
+    if (m_spectralLevelerEnabled == b) return;
+    m_spectralLevelerEnabled = b;
+    emit levelerChanged();
+}
+
 void DspController::setOutputLevelerEnabled(bool b)
 {
     if (m_outputLevelerEnabled == b) return;
@@ -477,6 +493,7 @@ ChainParams DspController::buildSnapshot() const
     p.outputTrimDb    = m_outputTrimDb;
     p.stereoWidth     = m_stereoWidth;
     p.levelerEnabled  = m_levelerEnabled;
+    p.spectralLevelerEnabled = m_spectralLevelerEnabled;
     p.outputLevelerEnabled = m_outputLevelerEnabled;
     p.eqEnabled       = m_eqEnabled;
     p.compEnabled     = m_compressorEnabled;
@@ -503,6 +520,7 @@ void DspController::applySnapshot(const ChainParams &params)
     m_outputTrimDb = params.outputTrimDb;
     m_stereoWidth = params.stereoWidth;
     m_levelerEnabled = params.levelerEnabled;
+    m_spectralLevelerEnabled = params.spectralLevelerEnabled;
     m_outputLevelerEnabled = params.outputLevelerEnabled;
     m_compressorEnabled = params.compEnabled;
     m_compThresholdDb = params.compThreshDb;
@@ -543,6 +561,7 @@ void DspController::loadFromSettings()
     params.outputTrimDb = settings.value(QStringLiteral("outputTrimDb"), params.outputTrimDb).toFloat();
     params.stereoWidth = settings.value(QStringLiteral("channelMixer/width"), params.stereoWidth).toFloat();
     params.levelerEnabled = settings.value(QStringLiteral("leveler/enabled"), params.levelerEnabled).toBool();
+    params.spectralLevelerEnabled = settings.value(QStringLiteral("spectralLeveler/enabled"), params.spectralLevelerEnabled).toBool();
     params.outputLevelerEnabled = settings.value(QStringLiteral("leveler/outputEnabled"), params.outputLevelerEnabled).toBool();
     params.compEnabled = settings.value(QStringLiteral("comp/enabled"), params.compEnabled).toBool();
     params.compThreshDb = settings.value(QStringLiteral("comp/threshold"), params.compThreshDb).toFloat();
@@ -621,6 +640,7 @@ void DspController::saveToSettings() const
     settings.setValue(QStringLiteral("outputTrimDb"), m_outputTrimDb);
     settings.setValue(QStringLiteral("channelMixer/width"), m_stereoWidth);
     settings.setValue(QStringLiteral("leveler/enabled"), m_levelerEnabled);
+    settings.setValue(QStringLiteral("spectralLeveler/enabled"), m_spectralLevelerEnabled);
     settings.setValue(QStringLiteral("leveler/outputEnabled"), m_outputLevelerEnabled);
     settings.setValue(QStringLiteral("comp/enabled"), m_compressorEnabled);
     settings.setValue(QStringLiteral("comp/threshold"), m_compThresholdDb);

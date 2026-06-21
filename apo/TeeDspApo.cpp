@@ -271,6 +271,8 @@ void TeeDspApo::publishMeters(const float *inBuf, const float *outBuf, UINT32 fr
     // Chain telemetry (atomic getters — cheap, RT-safe).
     m_shm->compGrDb         = m_chain.compressor().currentGainReductionDb();
     m_shm->levelerGainDb    = m_chain.leveler().currentGainDb();
+    for (int b = 0; b < dsp::SpectralLeveler::kBandCount; ++b)
+        m_shm->spectralGainDb[b] = m_chain.spectralLeveler().currentGainDb(b);
     m_shm->outLevelerGainDb = m_chain.outputLeveler().currentGainDb();
     dsp::ParametricEQ &eq = m_chain.eq();
     for (int b = 0; b < 5; ++b)

@@ -33,6 +33,7 @@ add_library(teedsp_dsp STATIC
 	src/dsp/Compressor.cpp
 	src/dsp/Exciter.cpp
 	src/dsp/Leveler.cpp
+	src/dsp/SpectralLeveler.cpp
 	src/dsp/ParametricEQ.cpp
 	src/dsp/ProcessorChain.cpp
 )
@@ -65,6 +66,7 @@ set(UI_SOURCES
 	src/ui/TrayController.cpp
 	src/ui/widgets/Knob.cpp
 	src/ui/widgets/LevelMeter.cpp
+	src/ui/widgets/SpectralGainMeter.cpp
 	src/ui/widgets/EqCurve.cpp
 )
 

@@ -21,9 +21,9 @@
 
 namespace teedsp {
 
-inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV4";
+inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV6";
 inline constexpr uint32_t kApoSharedMagic   = 0x50534454u; // 'TDSP'
-inline constexpr uint32_t kApoSharedVersion = 4u;
+inline constexpr uint32_t kApoSharedVersion = 6u;
 
 // Mono pre/post sample ring for the UI spectrum analyzer. ~170 ms at 48 kHz —
 // far more than the UI's drain interval, so it never underruns between ticks.
@@ -66,6 +66,7 @@ struct ApoShared {
     float outRmsDbfs;         // post-chain RMS (drives VU)
     float compGrDb;           // compressor gain reduction (positive = pulling down)
     float levelerGainDb;      // input leveler applied gain
+    float spectralGainDb[4];  // body / low-mid / presence / high corrections
     float outLevelerGainDb;   // output leveler applied gain
     float bandGrDb[5];        // per-EQ-band dynamic gain reduction
     float outLufsCh[2];       // per-channel momentary LUFS (BS.1770, post-chain)

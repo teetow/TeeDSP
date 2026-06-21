@@ -6,6 +6,7 @@
 #include "widgets/EqCurve.h"
 #include "widgets/Knob.h"
 #include "widgets/LevelMeter.h"
+#include "widgets/SpectralGainMeter.h"
 #include "widgets/WidgetMetrics.h"
 
 #include "../dsp/DspController.h"
@@ -289,6 +290,7 @@ void MainWindow::buildUi()
 
     auto *fxCol = new QVBoxLayout();
     fxCol->setSpacing(UiMetrics::kRootSpacing);
+    fxCol->addWidget(buildSpectralSection(), 0);
     fxCol->addWidget(buildExciterSection(), 0);
     fxCol->addWidget(buildCompSection(), 0);
     fxCol->addWidget(buildChannelMixerSection(), 0);
@@ -535,6 +537,32 @@ QWidget *MainWindow::buildExciterSection()
     return section;
 }
 
+QWidget *MainWindow::buildSpectralSection()
+{
+    auto *section = createSection(QStringLiteral("Spectral"));
+    section->setMinimumWidth(128);
+    auto *col = new QVBoxLayout(section);
+    col->setContentsMargins(UiMetrics::kPanelPadLr, UiMetrics::kPanelPadTop,
+                            UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
+    col->setSpacing(UiMetrics::kCompactSpacing);
+
+    m_spectralLevelerEnabled = new QCheckBox(QStringLiteral("Enable"));
+    m_spectralLevelerEnabled->setToolTip(
+        QStringLiteral("Speech spectral leveler — a gentle four-band AGC that "
+                       "evens out voice timbre before the dynamic EQ. It helps "
+                       "muffled or unusually bright voices land in a consistent "
+                       "working range."));
+    col->addWidget(m_spectralLevelerEnabled, 0, Qt::AlignHCenter);
+
+    m_spectralGainMeter = new ui::SpectralGainMeter();
+    m_spectralGainMeter->setToolTip(
+        QStringLiteral("Live spectral correction in dB. B = body, M = low-mid, "
+                       "P = presence, H = high. Blue adds energy; orange reduces it."));
+    col->addWidget(m_spectralGainMeter, 0, Qt::AlignHCenter);
+
+    return section;
+}
+
 QWidget *MainWindow::buildChannelMixerSection()
 {
     auto *section = createSection(QStringLiteral("Channel Mixer"));
@@ -708,6 +736,9 @@ void MainWindow::connectSignals()
     });
     connect(m_levelerEnabled, &QCheckBox::toggled, this, [this](bool c) {
         if (!m_syncingUi) m_dspController->setLevelerEnabled(c);
+    });
+    connect(m_spectralLevelerEnabled, &QCheckBox::toggled, this, [this](bool c) {
+        if (!m_syncingUi) m_dspController->setSpectralLevelerEnabled(c);
     });
     connect(m_outputTrim, &ui::Knob::valueChanged, this, [this](double v) {
         if (!m_syncingUi) m_dspController->setOutputTrimDb(static_cast<float>(v));
@@ -940,6 +971,12 @@ void MainWindow::connectSignals()
                 .arg(sign).arg(std::fabs(g), 0, 'f', 1));
         }
 
+        if (m_spectralGainMeter) {
+            std::array<float, dsp::kSpectralLevelerBandCount> gains{};
+            m_dspController->spectralLevelerGainDb(gains);
+            m_spectralGainMeter->setGainsDb(gains, m_dspController->spectralLevelerEnabled());
+        }
+
         if (m_outputLevelerGainLabel) {
             const float g = m_dspController->outputLevelerGainDb();
             const QChar sign = g >= 0.0f ? QLatin1Char('+') : QLatin1Char('-');
@@ -1038,6 +1075,8 @@ void MainWindow::pullStateFromController()
     m_outputTrim->setValue(m_dspController->outputTrimDb());
     m_stereoWidth->setValue(m_dspController->stereoWidth() * 100.0f);
     m_levelerEnabled->setChecked(m_dspController->levelerEnabled());
+    if (m_spectralLevelerEnabled)
+        m_spectralLevelerEnabled->setChecked(m_dspController->spectralLevelerEnabled());
     if (m_outputLevelerEnabled)
         m_outputLevelerEnabled->setChecked(m_dspController->outputLevelerEnabled());
 

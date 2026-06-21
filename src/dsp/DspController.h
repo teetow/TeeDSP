@@ -17,6 +17,7 @@ namespace dsp {
 // Band count, mirrored from the shared param contract. Kept as a dsp:: name so
 // existing call sites read unchanged; the DSP itself now lives in the plugin.
 inline constexpr int kEqBandCount = teedsp::kBandCount;
+inline constexpr int kSpectralLevelerBandCount = 4;
 
 // Lightweight POD view of a single EQ band, for high-frequency UI reads
 // (paint loops). Intentionally NOT exposed via QVariant — direct field access
@@ -48,6 +49,7 @@ class DspController : public QObject
     Q_PROPERTY(float stereoWidth READ stereoWidth WRITE setStereoWidth NOTIFY bypassChanged FINAL)
     Q_PROPERTY(bool levelerEnabled READ levelerEnabled WRITE setLevelerEnabled NOTIFY levelerChanged FINAL)
     Q_PROPERTY(float levelerGainDb READ levelerGainDb NOTIFY meterChanged FINAL)
+    Q_PROPERTY(bool spectralLevelerEnabled READ spectralLevelerEnabled WRITE setSpectralLevelerEnabled NOTIFY levelerChanged FINAL)
     Q_PROPERTY(bool outputLevelerEnabled READ outputLevelerEnabled WRITE setOutputLevelerEnabled NOTIFY levelerChanged FINAL)
     Q_PROPERTY(float outputLevelerGainDb READ outputLevelerGainDb NOTIFY meterChanged FINAL)
 
@@ -99,6 +101,9 @@ public:
     bool levelerEnabled() const { return m_levelerEnabled; }
     void setLevelerEnabled(bool b);
     float levelerGainDb() const;
+    void spectralLevelerGainDb(std::array<float, kSpectralLevelerBandCount> &out) const;
+    bool spectralLevelerEnabled() const { return m_spectralLevelerEnabled; }
+    void setSpectralLevelerEnabled(bool b);
     bool outputLevelerEnabled() const { return m_outputLevelerEnabled; }
     void setOutputLevelerEnabled(bool b);
     float outputLevelerGainDb() const;
@@ -205,6 +210,7 @@ private:
     float m_outputTrimDb = 0.0f;
     float m_stereoWidth = 1.0f;
     bool m_levelerEnabled = false;
+    bool m_spectralLevelerEnabled = false;
     bool m_outputLevelerEnabled = false;
 
     bool m_compressorEnabled = true;

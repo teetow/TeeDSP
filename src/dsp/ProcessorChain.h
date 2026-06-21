@@ -4,13 +4,14 @@
 #include "Exciter.h"
 #include "Leveler.h"
 #include "ParametricEQ.h"
+#include "SpectralLeveler.h"
 
 #include <atomic>
 
 namespace dsp {
 
 // Ordered chain:
-//   Leveler -> [input trim] -> EQ -> Exciter -> Compressor -> [width]
+//   Leveler -> Spectral Leveler -> [input trim] -> EQ -> Exciter -> Compressor -> [width]
 //   -> Output Leveler -> [output trim].
 // Input leveler normalizes the source before tone-shape and dynamics see
 // it. Output leveler anchors the chain output near a fixed loudness
@@ -37,10 +38,12 @@ public:
     Compressor &compressor() { return m_compressor; }
     Exciter &exciter() { return m_exciter; }
     Leveler &leveler() { return m_leveler; }
+    SpectralLeveler &spectralLeveler() { return m_spectralLeveler; }
     Leveler &outputLeveler() { return m_outputLeveler; }
 
 private:
     Leveler m_leveler;
+    SpectralLeveler m_spectralLeveler;
     Leveler m_outputLeveler;
     ParametricEQ m_eq;
     Compressor m_compressor;
