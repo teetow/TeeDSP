@@ -133,7 +133,6 @@ private:
     ui::Knob *m_eqDynRatio = nullptr;
     ui::Knob *m_eqDynAttack = nullptr;
     ui::Knob *m_eqDynRelease = nullptr;
-    ui::Knob *m_eqDynRange = nullptr;
     QLabel *m_eqDynMeter = nullptr;
     ui::LevelMeter *m_eqDynInputMeter = nullptr;
     ui::LevelMeter *m_eqDynOutputMeter = nullptr;

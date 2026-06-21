@@ -27,6 +27,10 @@ constexpr double kArcMidDeg   = kArcStartDeg + kArcSweepDeg * 0.5; // = 90
 
 constexpr double kDragPixelsForFullRange = 220.0;
 constexpr double kFineDragMultiplier = 0.2;
+// For a logarithmic control whose useful minimum is exactly zero, use a
+// log1p curve. The lowest tenth of the numeric range gets roughly half the
+// travel, while zero remains a reachable, meaningful value.
+constexpr double kZeroLogCurve = 80.0;
 
 } // namespace
 
@@ -80,8 +84,13 @@ void Knob::setBipolarOrigin(double v)
 double Knob::normFromValue(double v) const
 {
     if (m_max <= m_min) return 0.0;
-    if (m_scale == Scale::Log && m_min > 0.0) {
-        return (std::log(v) - std::log(m_min)) / (std::log(m_max) - std::log(m_min));
+    if (m_scale == Scale::Log) {
+        if (m_min > 0.0)
+            return (std::log(v) - std::log(m_min)) / (std::log(m_max) - std::log(m_min));
+        const double span = m_max - m_min;
+        return span > 0.0
+            ? std::log1p((v - m_min) * kZeroLogCurve / span) / std::log1p(kZeroLogCurve)
+            : 0.0;
     }
     return (v - m_min) / (m_max - m_min);
 }
@@ -89,8 +98,11 @@ double Knob::normFromValue(double v) const
 double Knob::valueFromNorm(double n) const
 {
     n = std::max(0.0, std::min(1.0, n));
-    if (m_scale == Scale::Log && m_min > 0.0) {
-        return std::exp(std::log(m_min) + n * (std::log(m_max) - std::log(m_min)));
+    if (m_scale == Scale::Log) {
+        if (m_min > 0.0)
+            return std::exp(std::log(m_min) + n * (std::log(m_max) - std::log(m_min)));
+        const double span = m_max - m_min;
+        return m_min + span * std::expm1(n * std::log1p(kZeroLogCurve)) / kZeroLogCurve;
     }
     return m_min + n * (m_max - m_min);
 }

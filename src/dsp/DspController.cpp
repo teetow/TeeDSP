@@ -306,6 +306,7 @@ void DspController::setExciterEnabled(bool b)
 void DspController::setExciterDrive(float v)
 {
     if (v < 0.0f) v = 0.0f;
+    if (v > 20.0f) v = 20.0f;
     if (m_exciterDrive == v) return;
     m_exciterDrive = v;
     emit exciterChanged();

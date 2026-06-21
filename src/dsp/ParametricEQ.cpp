@@ -7,6 +7,7 @@ namespace dsp {
 
 namespace {
 constexpr float kMinDb = -120.0f;
+constexpr float kFixedDynamicRangeDb = 12.0f;
 
 Biquad::Type toBiquadType(ParametricEQ::BandType t)
 {
@@ -150,7 +151,9 @@ void ParametricEQ::process(float *interleaved, std::size_t frameCount)
         const float ratio = std::max(1.0f, m_bands[b].dynRatio.load(std::memory_order_relaxed));
         const float attackCoeff = onePoleCoeff(m_bands[b].dynAttackMs.load(std::memory_order_relaxed), m_sampleRate);
         const float releaseCoeff = onePoleCoeff(m_bands[b].dynReleaseMs.load(std::memory_order_relaxed), m_sampleRate);
-        const float maxRangeDb = std::max(0.0f, m_bands[b].dynRangeDb.load(std::memory_order_relaxed));
+        // Fixed internal cap: Ratio shapes the response, while this prevents
+        // any band from being pulled into an unnatural hole.
+        const float maxRangeDb = kFixedDynamicRangeDb;
         const float invRatio = 1.0f / ratio;
 
         float grDb = 0.0f;
@@ -291,8 +294,8 @@ void ParametricEQ::setBandDynamicReleaseMs(int band, float releaseMs)
 void ParametricEQ::setBandDynamicRangeDb(int band, float rangeDb)
 {
     if (band < 0 || band >= kEqBandCount) return;
-    if (rangeDb < 0.0f) rangeDb = 0.0f;
-    m_bands[band].dynRangeDb.store(rangeDb, std::memory_order_relaxed);
+    (void)rangeDb;
+    m_bands[band].dynRangeDb.store(kFixedDynamicRangeDb, std::memory_order_relaxed);
 }
 
 float ParametricEQ::bandDynamicThresholdDb(int band) const
@@ -322,7 +325,7 @@ float ParametricEQ::bandDynamicReleaseMs(int band) const
 float ParametricEQ::bandDynamicRangeDb(int band) const
 {
     if (band < 0 || band >= kEqBandCount) return 12.0f;
-    return m_bands[band].dynRangeDb.load(std::memory_order_relaxed);
+    return kFixedDynamicRangeDb;
 }
 
 float ParametricEQ::bandDynamicGainReductionDb(int band) const

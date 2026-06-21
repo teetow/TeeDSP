@@ -414,12 +414,10 @@ QWidget *MainWindow::buildEqSection()
     m_eqDynRatio = makeKnob(QStringLiteral("Ratio"), 1.0, 20.0, 2.0, 2);
     m_eqDynAttack = makeKnob(QStringLiteral("Attack"), 0.1, 200.0, 10.0, 1, QStringLiteral("ms"), ui::Knob::Scale::Log);
     m_eqDynRelease = makeKnob(QStringLiteral("Release"), 1.0, 3000.0, 120.0, 0, QStringLiteral("ms"), ui::Knob::Scale::Log);
-    m_eqDynRange = makeKnob(QStringLiteral("Range"), 0.0, 24.0, 12.0, 1, QStringLiteral("dB"));
     dynRow->addWidget(m_eqDynThreshold);
     dynRow->addWidget(m_eqDynRatio);
     dynRow->addWidget(m_eqDynAttack);
     dynRow->addWidget(m_eqDynRelease);
-    dynRow->addWidget(m_eqDynRange);
     dynCol->addLayout(dynRow);
 
     // Mini signal / GR meters
@@ -523,7 +521,8 @@ QWidget *MainWindow::buildExciterSection()
     auto *row = new QHBoxLayout();
     row->setSpacing(UiMetrics::kCompactSpacing);
 
-    m_exciterDrive = makeKnob(QStringLiteral("Drive"),    0.0,    20.0,    2.0, 1);
+    m_exciterDrive = makeKnob(QStringLiteral("Drive"),    0.0,    20.0,    2.0, 1,
+                              QString(), ui::Knob::Scale::Log);
     m_exciterMix   = makeKnob(QStringLiteral("Mix"),      0.0,     1.0,    0.25, 2);
     m_exciterTone  = makeKnob(QStringLiteral("Tone"),   200.0, 12000.0, 3500.0, 0,
                               QStringLiteral("Hz"), ui::Knob::Scale::Log);
@@ -851,9 +850,6 @@ void MainWindow::connectSignals()
     connect(m_eqDynRelease, &ui::Knob::valueChanged, this, [this](double v) {
         if (!m_syncingUi) m_dspController->setEqBandDynamicReleaseMs(m_selectedEqBand, static_cast<float>(v));
     });
-    connect(m_eqDynRange, &ui::Knob::valueChanged, this, [this](double v) {
-        if (!m_syncingUi) m_dspController->setEqBandDynamicRangeDb(m_selectedEqBand, static_cast<float>(v));
-    });
 
     connect(m_showInputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
         m_eqCurve->setShowInputSpectrum(on);
@@ -1108,7 +1104,6 @@ void MainWindow::pullStateFromController()
     m_eqDynRatio->setValue(selected.dynRatio);
     m_eqDynAttack->setValue(selected.dynAttackMs);
     m_eqDynRelease->setValue(selected.dynReleaseMs);
-    m_eqDynRange->setValue(selected.dynRangeDb);
     m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(selected.dynGainReductionDb, 0, 'f', 1));
 
     m_syncingUi = false;
@@ -1152,7 +1147,6 @@ void MainWindow::syncSelectedBandDyn()
     m_eqDynRatio->setValue(v.dynRatio);
     m_eqDynAttack->setValue(v.dynAttackMs);
     m_eqDynRelease->setValue(v.dynReleaseMs);
-    m_eqDynRange->setValue(v.dynRangeDb);
     m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(v.dynGainReductionDb, 0, 'f', 1));
     m_syncingUi = was;
 }

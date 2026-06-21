@@ -128,7 +128,7 @@ inline constexpr ParamDescriptor kParams[] = {
     { PID_CompRelease,          "Compressor", "Release",         1.0, 3000.0, 120.0, false },
     { PID_CompMakeup,           "Compressor", "Makeup",          0.0,   12.0,   0.0, false },
     { PID_ExciterEnabled,       "Exciter",    "Enabled",         0.0,    1.0,   1.0, true  },
-    { PID_ExciterDrive,         "Exciter",    "Drive",           0.0,   10.0,   2.0, false },
+    { PID_ExciterDrive,         "Exciter",    "Drive",           0.0,   20.0,   2.0, false },
     { PID_ExciterMix,           "Exciter",    "Mix",             0.0,    1.0,  0.25, false },
     { PID_ExciterTone,          "Exciter",    "Tone",          200.0, 16000.0, 3500.0, false },
 

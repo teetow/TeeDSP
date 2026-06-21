@@ -18,7 +18,12 @@ public:
     void reset() override;
     void process(float *interleaved, std::size_t frameCount) override;
 
-    void setDrive(float v) { m_drive.store(v < 0.0f ? 0.0f : v, std::memory_order_relaxed); }
+    void setDrive(float v)
+    {
+        if (v < 0.0f) v = 0.0f;
+        if (v > 20.0f) v = 20.0f;
+        m_drive.store(v, std::memory_order_relaxed);
+    }
     void setMix(float v)
     {
         if (v < 0.0f) v = 0.0f;

@@ -31,6 +31,8 @@ public:
         std::atomic<float> dynRatio{2.0f};
         std::atomic<float> dynAttackMs{10.0f};
         std::atomic<float> dynReleaseMs{120.0f};
+        // Retained for old presets / CLAP state. Dynamic EQ caps reduction at
+        // 12 dB internally; Ratio remains the user-facing control.
         std::atomic<float> dynRangeDb{12.0f};
     };
 
@@ -50,6 +52,7 @@ public:
     void setBandDynamicRatio(int band, float ratio);
     void setBandDynamicAttackMs(int band, float attackMs);
     void setBandDynamicReleaseMs(int band, float releaseMs);
+    // Legacy compatibility setter. The processing range is fixed at 12 dB.
     void setBandDynamicRangeDb(int band, float rangeDb);
 
     bool bandEnabled(int band) const;

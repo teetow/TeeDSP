@@ -182,6 +182,11 @@ bool paramsGetInfo(const clap_plugin_t *, uint32_t index, clap_param_info_t *inf
     info->flags = CLAP_PARAM_IS_AUTOMATABLE;
     if (d.stepped)
         info->flags |= CLAP_PARAM_IS_STEPPED;
+    // Dynamic EQ uses a fixed 12 dB safety cap now. Keep the old parameter addressable
+    // for saved state, but do not advertise a control that no longer changes
+    // the processor.
+    if (isBandParam(d.id) && fieldOf(d.id) == BF_DynRange)
+        info->flags |= CLAP_PARAM_IS_HIDDEN;
     if (d.id == PID_Bypass)
         info->flags |= CLAP_PARAM_IS_BYPASS;
     info->min_value = d.minVal;
