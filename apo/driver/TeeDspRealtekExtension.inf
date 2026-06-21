@@ -9,7 +9,7 @@ Class       = Extension
 ClassGuid   = {E2F84CE7-8EFA-411C-AA69-97454CA4CB57}
 Provider    = %ProviderName%
 ExtensionId = {12E6BBE2-E965-4148-A618-29C16916C21A}
-DriverVer   = 06/20/2026,0.2.0.0
+DriverVer   = 06/21/2026,0.2.3.0
 CatalogFile = TeeDspApo.cat
 PnpLockDown = 1
 
