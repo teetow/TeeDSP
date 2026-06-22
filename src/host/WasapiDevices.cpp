@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
 
 #include <wrl/client.h>
@@ -277,6 +278,29 @@ bool WasapiDevices::queryMixFormat(const QString &deviceId, StreamFormat &out)
     const bool ok = waveFormatToStreamFormat(mix, out);
     CoTaskMemFree(mix);
     return ok;
+}
+
+float WasapiDevices::endpointPeak(const QString &deviceId)
+{
+    if (deviceId.isEmpty()) return -1.0f;
+    CoInitScope co;
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator))))
+        return -1.0f;
+
+    ComPtr<IMMDevice> dev;
+    if (FAILED(enumerator->GetDevice(reinterpret_cast<LPCWSTR>(deviceId.utf16()), &dev)))
+        return -1.0f;
+
+    ComPtr<IAudioMeterInformation> meter;
+    if (FAILED(dev->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr, &meter)))
+        return -1.0f;
+
+    float peak = 0.0f;
+    if (FAILED(meter->GetPeakValue(&peak)))
+        return -1.0f;
+    return peak;
 }
 
 bool WasapiDevices::setDefaultRender(const QString &deviceId)

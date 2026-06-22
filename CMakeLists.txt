@@ -63,6 +63,7 @@ set(UI_SOURCES
 	src/ui/MainWindow.cpp
 	src/ui/Theme.cpp
 	src/ui/StartupRegistration.cpp
+	src/ui/AudioServiceRecovery.cpp
 	src/ui/TrayController.cpp
 	src/ui/widgets/Knob.cpp
 	src/ui/widgets/LevelMeter.cpp
@@ -100,6 +101,7 @@ target_link_libraries(TeeDsp PRIVATE
 	Mmdevapi
 	Ole32
 	Propsys
+	Shell32
 	Uuid
 	Winmm
 )

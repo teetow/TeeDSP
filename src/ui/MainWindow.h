@@ -64,6 +64,7 @@ private:
     void refreshDevices();
     void syncDevicePickerToDefaultOutput(const QString &deviceId);
     void refreshEngineStatus();
+    void onRestartEngineRequested();
     void refreshEqCurve();
     // Lightweight refresh of just the dynamic knobs/labels for the currently
     // selected band — used on band-selection changes to avoid a full UI sync.
@@ -85,6 +86,10 @@ private:
     QPushButton *m_refreshDevicesButton = nullptr;
     QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
+    // Shown in the status bar only when the audio engine looks dead (the APO is
+    // bound to the current output and audio is playing, yet no processing) —
+    // clicking it elevates and restarts Audiosrv to reload the APO.
+    QPushButton *m_restartEngineButton = nullptr;
 
     QProgressBar *m_inputMeterBarL = nullptr;
     QProgressBar *m_inputMeterBarR = nullptr;
@@ -172,6 +177,14 @@ private:
     // independent of the engine — the engine is retired from the APO path.
     QTimer m_apoStatusTimer;
     unsigned long long m_lastApoProcessCalls = 0;
+    // Consecutive refreshEngineStatus ticks the engine has looked dead; the
+    // recovery prompt only appears once it's been sustained (~2 s), to ride out
+    // normal stream-start/format-change gaps. Reset whenever audio is flowing
+    // and the APO is processing again.
+    int m_engineDeadTicks = 0;
+    // After a restart is triggered, suppress detection until this wall-clock ms
+    // so we don't re-accuse the engine during the service-restart gap.
+    qint64 m_recoverySuppressUntilMs = 0;
 
     // Spectrum: drain the APO's pre/post sample ring and feed the analyzer
     // (whose spectraUpdated drives the EqCurve overlay + heatmap).

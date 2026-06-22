@@ -51,6 +51,12 @@ public:
     // Used to confirm the capture and render sides can be wired up.
     static bool queryMixFormat(const QString &deviceId, StreamFormat &out);
 
+    // Instantaneous output peak (0..1) on a render endpoint, read straight from
+    // the endpoint meter — independent of the TeeDSP APO. Lets the UI tell
+    // "engine dead" (audio is playing but the APO isn't processing) apart from
+    // "idle" (nothing playing). Returns -1.0 if the meter is unavailable.
+    static float endpointPeak(const QString &deviceId);
+
     // Sets the Windows default render endpoint for all roles (Console,
     // Multimedia, Communications). Uses the private IPolicyConfig COM interface
     // that every Windows audio utility relies on for this purpose.

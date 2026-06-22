@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 #include "StartupRegistration.h"
+#include "AudioServiceRecovery.h"
 #include "TrayController.h"
 #include "widgets/EqCurve.h"
 #include "widgets/Knob.h"
@@ -339,6 +340,16 @@ QWidget *MainWindow::buildIoSection()
     m_statusLabel = new QLabel(QStringLiteral("Idle."));
     m_statusLabel->setProperty("role", "status");
     statusBar()->addWidget(m_statusLabel, 1);
+
+    m_restartEngineButton = new QPushButton(QStringLiteral("Restart audio engine"));
+    m_restartEngineButton->setProperty("role", "recover");
+    m_restartEngineButton->setToolTip(
+        QStringLiteral("The audio engine stopped processing. Restart Windows Audio "
+                       "(requires elevation) to reload TeeDSP."));
+    m_restartEngineButton->hide();
+    connect(m_restartEngineButton, &QPushButton::clicked,
+            this, &MainWindow::onRestartEngineRequested);
+    statusBar()->addPermanentWidget(m_restartEngineButton);
 
     return section;
 }
@@ -1359,9 +1370,35 @@ void MainWindow::refreshEngineStatus()
 
     const bool activeOnOutput = out.hasApo && !bypassed;
 
+    // Dead-engine detection: the APO is bound to the current output and not
+    // bypassed, yet it isn't processing *while audio is actually flowing on the
+    // endpoint*. The endpoint meter is read independently of the APO, so it
+    // distinguishes a stalled engine (audiodg relaunched protected -> APO
+    // unloaded) from a simply-idle one (nothing playing). Require it sustained
+    // to ride out the brief gap at stream start / format change.
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    bool engineStalled = false;
+    if (out.hasApo && !bypassed && !processing) {
+        const float peak = host::WasapiDevices::endpointPeak(out.id);
+        if (peak > 0.0003f) {
+            if (++m_engineDeadTicks >= 5)   // ~5 * 400 ms ≈ 2 s
+                engineStalled = true;
+        } else {
+            m_engineDeadTicks = 0;          // idle, not broken
+        }
+    } else {
+        m_engineDeadTicks = 0;
+    }
+    if (nowMs < m_recoverySuppressUntilMs)  // just kicked off a restart
+        engineStalled = false;
+
     QString text;
     const char *role = "status";
-    if (!out.hasApo) {
+    if (engineStalled) {
+        text = QStringLiteral("TeeDSP stopped processing on %1 — audio engine may need a restart")
+                   .arg(out.name);
+        role = "statusError";
+    } else if (!out.hasApo) {
         text = QStringLiteral("TeeDSP not active on current output (%1)").arg(out.name);
     } else if (bypassed) {
         text = QStringLiteral("TeeDSP — bypassed (%1)").arg(out.name);
@@ -1373,6 +1410,8 @@ void MainWindow::refreshEngineStatus()
     } else {
         text = QStringLiteral("TeeDSP ready on %1 — no audio").arg(out.name);
     }
+    if (m_restartEngineButton)
+        m_restartEngineButton->setVisible(engineStalled);
     m_statusLabel->setText(text);
     m_statusLabel->setProperty("role", role);
     m_statusLabel->style()->unpolish(m_statusLabel);
@@ -1381,8 +1420,31 @@ void MainWindow::refreshEngineStatus()
     if (m_tray) {
         m_tray->setRunning(activeOnOutput);
         m_tray->setStatusText(
-            !out.hasApo ? QStringLiteral("TeeDSP — not on %1").arg(out.name)
-            : bypassed  ? QStringLiteral("TeeDSP — bypassed")
-                        : QStringLiteral("TeeDSP — active on %1").arg(out.name));
+            engineStalled ? QStringLiteral("TeeDSP — engine stopped (needs restart)")
+            : !out.hasApo ? QStringLiteral("TeeDSP — not on %1").arg(out.name)
+            : bypassed    ? QStringLiteral("TeeDSP — bypassed")
+                          : QStringLiteral("TeeDSP — active on %1").arg(out.name));
     }
+}
+
+void MainWindow::onRestartEngineRequested()
+{
+    // audiodg can relaunch in protected mode (e.g. after a device switch or a
+    // crash) and silently refuse the dev-signed APO; restarting Windows Audio
+    // forces it to respawn and reload the APO. Needs elevation, so this throws
+    // a UAC prompt. Fire-and-forget — refreshEngineStatus clears the banner on
+    // its own once telemetry resumes.
+    if (!ui::recovery::restartAudioService()) {
+        // Launch failed or the user dismissed UAC — leave the banner up so they
+        // can try again. No modal nag.
+        return;
+    }
+    // Hide the prompt and stop accusing the engine while the service cycles and
+    // the APO reloads (~a few seconds).
+    m_engineDeadTicks = 0;
+    m_recoverySuppressUntilMs = QDateTime::currentMSecsSinceEpoch() + 10'000;
+    if (m_restartEngineButton)
+        m_restartEngineButton->hide();
+    if (m_statusLabel)
+        m_statusLabel->setText(QStringLiteral("Restarting audio engine…"));
 }

@@ -61,6 +61,19 @@ QLabel[role="statusError"] {
     color: #E67E22;
 }
 
+/* Recovery call-to-action in the status bar — amber, matching statusError. */
+QPushButton[role="recover"] {
+    background-color: #E67E22;
+    color: #16171B;
+    border: 1px solid #E67E22;
+    font-weight: 600;
+    padding: 3px 12px;
+}
+QPushButton[role="recover"]:hover {
+    background-color: #F08C35;
+    border-color: #F08C35;
+}
+
 QLabel[role="hotIndicator"][hotState="ok"] {
     color: #9AA0AE;
 }
