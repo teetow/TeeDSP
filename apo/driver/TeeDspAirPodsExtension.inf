@@ -23,7 +23,7 @@ Class       = Extension
 ClassGuid   = {e2f84ce7-8efa-411c-aa69-97454ca4cb57}
 Provider    = %ProviderName%
 ExtensionId = {2f9b6e11-4c3a-4e7d-9f21-a1b2c3d4e5f6}
-DriverVer   = 06/20/2026,1.0.1.0
+DriverVer   = 06/23/2026,1.0.2.0
 CatalogFile = TeeDspAirPods.cat
 PnpLockDown = 1
 
@@ -46,13 +46,17 @@ AddReg = TeeDspAirPods_SysFx_AddReg
 DelReg = TeeDspAirPods_RemoveOldMfx
 
 ; The inbox package owns MSFX\0 and its MFX. Add TeeDSP as the third-party SFX
-; instead; that graph survives a Bluetooth disconnect/reconnect. DEFAULT mode only.
+; instead; that graph survives a Bluetooth disconnect/reconnect. Registered for
+; DEFAULT *and* COMMUNICATIONS modes: voice-comms apps (Zoom/Teams/Meet) open
+; their render stream in the Communications signal-processing mode, so without
+; the COMMUNICATIONS entry they bypass the APO entirely and TeeDSP goes silent
+; on calls (the endpoint is still A2DP stereo, so the format is unchanged).
 [TeeDspAirPods_SysFx_AddReg]
 HKR,"FX\\0",%PKEY_ItemNameDisplay%,,%FX_FriendlyName%
 HKR,"FX\\0",%PKEY_FX_StreamEffectClsid%,,%TEEDSP_SFX_CLSID%
 HKR,"FX\\0\\%TeeDsp_Context%",%PKEY_FX_Association%,,%KSNODETYPE_ANY%
 HKR,"FX\\0\\%TeeDsp_Context%\\User",,,
-HKR,"FX\\0",%PKEY_SFX_ProcessingModes_Supported_For_Streaming%,%FLG_ADDREG_TYPE_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\\0",%PKEY_SFX_ProcessingModes_Supported_For_Streaming%,%FLG_ADDREG_TYPE_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%,%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%
 
 ; Upgrade cleanup: v1.0.0.0 installed TeeDSP as an MFX.  Remove its two
 ; properties explicitly so updating the extension cannot leave both bindings
@@ -77,6 +81,7 @@ PKEY_SFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92
 
 KSNODETYPE_ANY                     = "{00000000-0000-0000-0000-000000000000}"
 AUDIO_SIGNALPROCESSINGMODE_DEFAULT = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"
+AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS = "{98951333-B9CD-48B1-A0A3-FF40682D73F7}"
 TEEDSP_SFX_CLSID                   = "{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}"
 FX_FriendlyName                    = "TeeDSP Stream Effect"
 
