@@ -1357,7 +1357,8 @@ void MainWindow::refreshEngineStatus()
 {
     // The tray lights only when TeeDSP is shaping the *current* output device —
     // i.e. the APO is bound to the default render endpoint and not bypassed.
-    // The shared-block telemetry (single APO) tells us whether audio is flowing.
+    // The shared-block telemetry tells us whether audio is flowing. processCalls
+    // is cumulative across all concurrent APO instances (one SFX per stream).
     if (!m_dspController) return;
     const host::ApoSharedClient::ApoStatus st = m_dspController->apoStatus();
     const bool bypassed = m_dspController->bypass();
@@ -1366,7 +1367,12 @@ void MainWindow::refreshEngineStatus()
 
     const bool advancing = st.open && (st.processCalls != m_lastApoProcessCalls);
     m_lastApoProcessCalls = st.processCalls;
-    const bool processing = st.open && st.locked && advancing && !bypassed;
+    // Key off the cumulative counter advancing, not the per-instance `locked`
+    // flag: with several streams at once (e.g. a Zoom call + media) a co-stream
+    // ending would clear `locked` spuriously and fake a stall. processCalls keeps
+    // climbing while ANY instance processes, and genuinely stops if the APO is
+    // unloaded — so this still catches a real dead engine.
+    const bool processing = st.open && advancing && !bypassed;
 
     const bool activeOnOutput = out.hasApo && !bypassed;
 

@@ -57,7 +57,7 @@ bool ApoSharedClient::readStatus(ApoStatus &out) const
     if (!m_shm)
         return false;
     out.open       = true;
-    out.locked     = m_shm->locked;
+    out.locked     = (m_shm->activeStreams > 0) ? 1u : 0u;
     out.channels   = m_shm->channels;
     out.sampleRate = m_shm->sampleRate;
     out.uiAlive    = m_shm->uiAlive;

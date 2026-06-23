@@ -21,9 +21,9 @@
 
 namespace teedsp {
 
-inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV6";
+inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV7";
 inline constexpr uint32_t kApoSharedMagic   = 0x50534454u; // 'TDSP'
-inline constexpr uint32_t kApoSharedVersion = 6u;
+inline constexpr uint32_t kApoSharedVersion = 7u;
 
 // Mono pre/post sample ring for the UI spectrum analyzer. ~170 ms at 48 kHz —
 // far more than the UI's drain interval, so it never underruns between ticks.
@@ -46,12 +46,16 @@ struct ApoShared {
     uint32_t channels;
     uint32_t sampleRate;
     uint32_t bytesPerFrame;
-    uint32_t locked;          // 1 between LockForProcess / UnlockForProcess
-    uint64_t processCalls;    // ++ each APOProcess
+    uint32_t activeStreams;   // count of live instances (Lock..Unlock); >0 = active.
+                              // An SFX is per-stream, so concurrent streams (e.g. a
+                              // Zoom call + media) each get their own APO instance.
+    uint64_t processCalls;    // ++ each APOProcess — cumulative across all instances
     uint64_t framesProcessed; // += valid frames each APOProcess
     uint64_t lastBufferFlags; // most recent APO_CONNECTION_PROPERTY flags
     uint32_t appliedGen;      // paramGen the APO has consumed (loop-closure proof)
     uint32_t uiAlive;         // APO's view: 1 if the UI heartbeat is fresh
+    uint32_t meterOwner;      // instance id elected to write meters/ring (0 = none),
+                              // so concurrent instances don't interleave the meters
 
     // --- control: UI -> APO ---
     uint32_t paramSeq;        // seqlock: even = stable, odd = write in progress
@@ -59,8 +63,8 @@ struct ApoShared {
     uint64_t uiHeartbeat;     // UI bumps periodically; APO bypasses if stale
 
     // --- meters: APO -> observers (dBFS / dB) ---
-    // Written by the APO RT thread each block; read without a lock (single
-    // writer, float granularity — slight tearing is fine for metering).
+    // Written each block by the single elected `meterOwner` instance; read
+    // without a lock (single writer, float granularity — slight tearing is fine).
     float inPeakDbfs[2];      // pre-chain peak, per channel
     float outPeakDbfs[2];     // post-chain peak, per channel
     float outRmsDbfs;         // post-chain RMS (drives VU)

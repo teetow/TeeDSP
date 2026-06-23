@@ -96,6 +96,9 @@ public:
 private:
     void openTelemetry();
     void closeTelemetry();
+    // Release this instance's meter ownership (if held) and drop its
+    // active-stream refcount. Idempotent via m_locked.
+    void leaveSharedProcessing();
     // RT path: compute in/out peak + RMS and read chain GR/leveler into the
     // shared block. inBuf/outBuf may be null (silence).
     void publishMeters(const float *inBuf, const float *outBuf, UINT32 frames);
@@ -128,6 +131,13 @@ private:
     HANDLE              m_shmHandle = nullptr;
     teedsp::ApoShared  *m_shm = nullptr;
     bool                m_createdShared = false;
+
+    // Concurrent-stream coordination: each render stream gets its own SFX
+    // instance, so the shared block has many writers. A process-unique id elects
+    // exactly one instance to publish meters/ring; the rest update only the
+    // cumulative counters.
+    uint32_t            m_instanceId = 0;
+    bool                m_ownsMeters = false;
 
     // Live-control state (RT thread).
     uint32_t            m_lastAppliedGen = 0;       // last paramGen applied

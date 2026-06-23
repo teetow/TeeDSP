@@ -68,9 +68,15 @@ bool loadParamsFile(dsp::ChainParams &out)
 
 } // namespace
 
+// Process-unique id per APO instance. Concurrent render streams each get their
+// own SFX instance inside audiodg; this id elects one of them to own the shared
+// meters/ring so they don't interleave.
+static std::atomic<uint32_t> g_nextInstanceId{ 1u };
+
 TeeDspApo::TeeDspApo(IUnknown *pUnkOuter)
 {
     m_inner.owner = this;
+    m_instanceId = g_nextInstanceId.fetch_add(1u, std::memory_order_relaxed);
     // When aggregated, delegate the public IUnknown to the engine's controlling
     // unknown; otherwise to our own inner (non-delegating) unknown.
     m_pOuter = pUnkOuter ? pUnkOuter : static_cast<IUnknown *>(&m_inner);
@@ -217,7 +223,7 @@ void TeeDspApo::openTelemetry()
 void TeeDspApo::closeTelemetry()
 {
     if (m_shm) {
-        m_shm->locked = 0;
+        leaveSharedProcessing();   // if torn down while still locked, stay balanced
         UnmapViewOfFile(m_shm);
         m_shm = nullptr;
     }
@@ -227,9 +233,25 @@ void TeeDspApo::closeTelemetry()
     }
 }
 
+// Drop this instance's contribution to the shared block: release meter
+// ownership if we hold it and decrement the active-stream refcount. Guarded by
+// m_locked so Unlock + teardown can't double-count.
+void TeeDspApo::leaveSharedProcessing()
+{
+    if (!m_shm || !m_locked)
+        return;
+    uint32_t expected = m_instanceId;
+    std::atomic_ref<uint32_t>(m_shm->meterOwner)
+        .compare_exchange_strong(expected, 0u, std::memory_order_acq_rel);
+    m_ownsMeters = false;
+    std::atomic_ref<uint32_t>(m_shm->activeStreams)
+        .fetch_sub(1u, std::memory_order_acq_rel);
+    m_locked = false;
+}
+
 void TeeDspApo::publishMeters(const float *inBuf, const float *outBuf, UINT32 frames)
 {
-    if (!m_shm) return;
+    if (!m_shm || !m_ownsMeters) return;   // only the elected owner writes meters/ring
     const UINT32 ch = m_channels ? m_channels : 1;
 
     // Single pass: peaks, output power (for RMS), and the mono pre/post sample
@@ -454,10 +476,12 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
         m_shm->channels        = m_channels;
         m_shm->sampleRate      = m_sampleRate;
         m_shm->bytesPerFrame   = m_bytesPerFrame;
-        m_shm->processCalls    = 0;
-        m_shm->framesProcessed = 0;
-        m_shm->lastBufferFlags = 0;
-        m_shm->locked          = 1;
+        // processCalls/framesProcessed are cumulative across ALL concurrent
+        // instances now — never reset here (that would zero the counter mid-
+        // stream for another instance). They're initialised once on creation.
+        std::atomic_ref<uint32_t>(m_shm->activeStreams)
+            .fetch_add(1u, std::memory_order_acq_rel);
+        m_ownsMeters = false;   // claimed lazily by the first APOProcess to win
 
         std::atomic_ref<uint64_t> hb(m_shm->uiHeartbeat);
         m_lastHeartbeat = hb.load(std::memory_order_acquire);
@@ -480,8 +504,7 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
 
 HRESULT STDMETHODCALLTYPE TeeDspApo::UnlockForProcess()
 {
-    if (m_shm) m_shm->locked = 0;
-    m_locked = false;
+    leaveSharedProcessing();   // release meter ownership + drop active-stream refcount
     m_channels = 0;
     m_sampleRate = 0;
     m_bytesPerFrame = 0;
@@ -519,6 +542,17 @@ void STDMETHODCALLTYPE TeeDspApo::APOProcess(
         if (in->u32BufferFlags == BUFFER_VALID)
             InterlockedExchangeAdd64(reinterpret_cast<volatile LONG64 *>(&m_shm->framesProcessed),
                                      static_cast<LONG64>(frames));
+
+        // Elect a single meter/ring writer among concurrent instances (one SFX
+        // instance per stream) so the shared meters & spectrum reflect one
+        // stream instead of interleaving silence from a bursty co-stream.
+        std::atomic_ref<uint32_t> owner(m_shm->meterOwner);
+        if (owner.load(std::memory_order_relaxed) == 0u) {
+            uint32_t expected = 0u;
+            owner.compare_exchange_strong(expected, m_instanceId,
+                                          std::memory_order_acq_rel);
+        }
+        m_ownsMeters = (owner.load(std::memory_order_relaxed) == m_instanceId);
 
         // UI liveness: stale if the heartbeat hasn't advanced within ~1s of audio.
         std::atomic_ref<uint64_t> hb(m_shm->uiHeartbeat);
