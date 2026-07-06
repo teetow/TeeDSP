@@ -7,6 +7,7 @@
 #include <sddl.h>
 #include <new>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace teedsp::apo {
@@ -218,6 +219,16 @@ void TeeDspApo::openTelemetry()
         m_shm->outLufsCh[0]   = m_shm->outLufsCh[1]   = -120.0f;
         m_shm->outLufsM       = -120.0f;
     }
+
+    // Stamp with *this instance's* compiled build time unconditionally — not
+    // gated on m_createdShared. The section can outlive any single APO
+    // instance (the UI keeps it mapped across stream gaps), so if we only
+    // stamped it on creation, a rebuilt DLL loading into a fresh audiodg.exe
+    // would leave whatever an older instance wrote in place. Writing it every
+    // time an instance attaches means the field always reflects the code
+    // that's actually running right now.
+    std::snprintf(m_shm->dspBuildStamp, sizeof(m_shm->dspBuildStamp),
+                  "%s %s", __DATE__, __TIME__);
 }
 
 void TeeDspApo::closeTelemetry()

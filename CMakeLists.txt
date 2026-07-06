@@ -10,7 +10,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC OFF)
 set(CMAKE_AUTORCC OFF)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets OpenGL OpenGLWidgets)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Widgets)
 
 # ---------------------------------------------------------------------------
 # CLAP SDK (header-only). Fetched at configure time, pinned to a tag so the
@@ -69,6 +69,7 @@ set(UI_SOURCES
 	src/ui/widgets/LevelMeter.cpp
 	src/ui/widgets/SpectralGainMeter.cpp
 	src/ui/widgets/EqCurve.cpp
+	src/ui/widgets/BipolarGainMeter.cpp
 )
 
 add_executable(TeeDsp WIN32
@@ -95,8 +96,6 @@ target_link_libraries(TeeDsp PRIVATE
 	Qt6::Core
 	Qt6::Gui
 	Qt6::Widgets
-	Qt6::OpenGL
-	Qt6::OpenGLWidgets
 	Avrt
 	Mmdevapi
 	Ole32

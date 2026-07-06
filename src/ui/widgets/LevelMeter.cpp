@@ -44,7 +44,7 @@ void LevelMeter::setReductionDb(double db)
     // Global meter feel: instant attack, exponential release.
     double dtMs = (m_lastUpdateMs > 0)
         ? static_cast<double>(now - m_lastUpdateMs)
-        : 8.0;
+        : widget_metrics::meter_runtime::kInitialDtMs;
     if (dtMs <= 0.0) dtMs = 1.0;
     m_lastUpdateMs = now;
     const double alpha = 1.0 - std::exp(-dtMs / widget_metrics::level_meter::kReleaseTauMs);

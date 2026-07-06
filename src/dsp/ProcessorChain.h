@@ -14,9 +14,12 @@ namespace dsp {
 //   Leveler -> Spectral Leveler -> [input trim] -> EQ -> Exciter -> Compressor -> [width]
 //   -> Output Leveler -> [output trim].
 // Input leveler normalizes the source before tone-shape and dynamics see
-// it. Output leveler anchors the chain output near a fixed loudness
-// regardless of internal gain choices; output trim then rides on top so
-// the trim knob is always audibly functional, mirroring the input side.
+// it, so it's tuned to react a bit more readily to genuine source-loudness
+// differences. Output leveler anchors the chain output near a fixed
+// loudness regardless of internal gain choices and is tuned to be as
+// close to inaudible as possible — slower ballistics, wider deadband; output
+// trim then rides on top so the trim knob is always audibly functional,
+// mirroring the input side.
 class ProcessorChain
 {
 public:

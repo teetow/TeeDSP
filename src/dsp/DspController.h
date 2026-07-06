@@ -147,6 +147,7 @@ public:
     Q_INVOKABLE void setEqBandFrequency(int band, float hz);
     Q_INVOKABLE void setEqBandQ(int band, float q);
     Q_INVOKABLE void setEqBandGainDb(int band, float gainDb);
+    void setEqBandShape(int band, float hz, float gainDb);
     Q_INVOKABLE void setEqBandDynamicThresholdDb(int band, float thresholdDb);
     Q_INVOKABLE void setEqBandDynamicRatio(int band, float ratio);
     Q_INVOKABLE void setEqBandDynamicAttackMs(int band, float attackMs);
@@ -163,11 +164,16 @@ public:
     void loadFromSettings();
     void saveToSettings() const;
 
-    // Pauses/resumes the meter tick. Used by the UI to silence the 125 Hz
+    // Pauses/resumes the meter tick. Used by the UI to silence the ~60 Hz
     // meter→widget repaint chain while the window is hidden or minimized.
     // Audio processing and parameter state are unaffected; meters resume from
     // current atomic state on the next tick after resume.
     void setMeterTimerActive(bool active);
+
+    // Switches editor-side polling between foreground and tray cadences.
+    // The APO heartbeat remains alive in the background so tray parameter
+    // changes still apply, but it does not need foreground-rate wakeups.
+    void setEditorVisible(bool visible);
 
 private slots:
     // Coalesces rapid changes (knob drags, etc.) into a single write a short
@@ -202,6 +208,7 @@ private:
 
     // System-wide APO bridge (shared memory to audiodg).
     host::ApoSharedClient m_apo;
+    host::ApoSharedClient::ApoMeters m_meterSnapshot;
     QTimer m_apoTimer;
     bool m_apoDirty = true;   // force an initial push once the section opens
 

@@ -21,9 +21,9 @@
 
 namespace teedsp {
 
-inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV7";
+inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV8";
 inline constexpr uint32_t kApoSharedMagic   = 0x50534454u; // 'TDSP'
-inline constexpr uint32_t kApoSharedVersion = 7u;
+inline constexpr uint32_t kApoSharedVersion = 8u;
 
 // Mono pre/post sample ring for the UI spectrum analyzer. ~170 ms at 48 kHz —
 // far more than the UI's drain interval, so it never underruns between ticks.
@@ -75,6 +75,14 @@ struct ApoShared {
     float bandGrDb[5];        // per-EQ-band dynamic gain reduction
     float outLufsCh[2];       // per-channel momentary LUFS (BS.1770, post-chain)
     float outLufsM;           // combined momentary LUFS
+
+    // Compile-time stamp ('__DATE__ __TIME__') of whichever APO instance most
+    // recently (re)initialized this section — written unconditionally by every
+    // instance, not just the section's original creator, so a rebuilt DLL
+    // loading into a fresh audiodg.exe always overwrites a stale value left
+    // behind by an older one. Lets observers prove which code is actually
+    // running right now, not just what's on disk.
+    char dspBuildStamp[32];
 
     dsp::ChainParams params;  // the snapshot (guarded by paramSeq)
 

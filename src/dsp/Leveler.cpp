@@ -25,11 +25,19 @@ inline float clampf(float x, float lo, float hi)
 }
 } // namespace
 
-void Leveler::configure(float targetLufs, float maxBoostDb, float maxCutDb)
+void Leveler::configure(float targetLufs, float maxBoostDb, float maxCutDb,
+                         float longTermTauSec, float relativeGateLu, float deadbandLu,
+                         float maxDownRateDbPerSec, float maxUpRateDbPerSec)
 {
     m_targetLufs = targetLufs;
     m_maxBoostDb = std::max(0.0f, maxBoostDb);
     m_maxCutDb   = std::max(0.0f, maxCutDb);
+
+    m_longTermTauSec      = std::max(0.001f, longTermTauSec);
+    m_relativeGateLu      = std::max(0.0f, relativeGateLu);
+    m_deadbandLu          = std::max(0.0f, deadbandLu);
+    m_maxDownRateDbPerSec = std::max(0.0f, maxDownRateDbPerSec);
+    m_maxUpRateDbPerSec   = std::max(0.0f, maxUpRateDbPerSec);
 }
 
 void Leveler::prepare(double sampleRate, std::size_t channels)
@@ -71,10 +79,12 @@ void Leveler::prepare(double sampleRate, std::size_t channels)
     m_writePos    = 0;
     m_accumulated = 0;
 
-    m_attackCoef     = onePoleCoef(kAttackMs,    sampleRate);
-    m_releaseCoef    = onePoleCoef(kReleaseMs,   sampleRate);
-    m_enableMixCoef  = onePoleCoef(kEnableMixMs, sampleRate);
+    m_longTermCoef          = onePoleCoef(m_longTermTauSec * 1000.0f, sampleRate);
+    m_enableMixCoef         = onePoleCoef(kEnableMixMs, sampleRate);
+    m_maxDeltaDownPerSample = static_cast<float>(m_maxDownRateDbPerSec / sampleRate);
+    m_maxDeltaUpPerSample   = static_cast<float>(m_maxUpRateDbPerSec / sampleRate);
 
+    m_longTermLufs   = m_targetLufs;
     m_smoothedGainDb = 0.0f;
     m_enableMix      = m_bypass ? 0.0f : 1.0f;
     m_currentGainDb.store(0.0f, std::memory_order_relaxed);
@@ -90,6 +100,7 @@ void Leveler::reset()
     }
     m_writePos       = 0;
     m_accumulated    = 0;
+    m_longTermLufs   = m_targetLufs;
     m_smoothedGainDb = 0.0f;
     m_enableMix      = m_bypass ? 0.0f : 1.0f;
     m_currentGainDb.store(0.0f, std::memory_order_relaxed);
@@ -137,13 +148,41 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
                 power += m_ch[c].sumSq / static_cast<double>(m_accumulated);
             if (power > 1e-10) {
                 const float lufs = static_cast<float>(-0.691 + 10.0 * std::log10(power));
-                const float targetGainDb =
-                    clampf(m_targetLufs - lufs, -m_maxCutDb, m_maxBoostDb);
-                // Asymmetric one-pole: faster down-ride than up-ride.
-                const float coef = (targetGainDb < m_smoothedGainDb)
-                                       ? m_attackCoef : m_releaseCoef;
-                m_smoothedGainDb = coef * m_smoothedGainDb
-                                 + (1.0f - coef) * targetGainDb;
+
+                // Relative gate (EBU R128 style): a short-term dip more than
+                // m_relativeGateLu below the running long-term estimate is
+                // treated as musical dynamics (a quiet verse), not a genuine
+                // source-level change, so it's excluded from the estimate.
+                // This is what stops the rider from chasing a song's own
+                // arrangement instead of just leveling between sources.
+                if (lufs >= m_longTermLufs - m_relativeGateLu) {
+                    m_longTermLufs = m_longTermCoef * m_longTermLufs
+                                   + (1.0f - m_longTermCoef) * lufs;
+                }
+
+                // Deadband: ignore small errors outright so the gain sits
+                // dead still on ordinary program material instead of
+                // jittering around target.
+                float err = m_targetLufs - m_longTermLufs;
+                if (err > m_deadbandLu) err -= m_deadbandLu;
+                else if (err < -m_deadbandLu) err += m_deadbandLu;
+                else err = 0.0f;
+
+                const float desiredGainDb = clampf(err, -m_maxCutDb, m_maxBoostDb);
+
+                // Slew-rate limited actuator (not exponential): a fixed
+                // dB/sec cap has no "biggest jump right when the error
+                // appears" signature, so a correction of a given size is far
+                // less noticeable than the same excursion done via one-pole
+                // smoothing. Faster down-ride than up-ride still protects
+                // the downstream limiter from hot phrases while avoiding
+                // pumping on the way back up.
+                if (desiredGainDb < m_smoothedGainDb)
+                    m_smoothedGainDb = std::max(desiredGainDb,
+                        m_smoothedGainDb - m_maxDeltaDownPerSample);
+                else if (desiredGainDb > m_smoothedGainDb)
+                    m_smoothedGainDb = std::min(desiredGainDb,
+                        m_smoothedGainDb + m_maxDeltaUpPerSample);
             }
         }
         // While silent or warming, freeze m_smoothedGainDb (no update).

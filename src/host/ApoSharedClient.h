@@ -31,6 +31,9 @@ public:
         uint32_t sampleRate = 0;
         uint32_t uiAlive = 0;         // APO sees our heartbeat
         unsigned long long processCalls = 0; // climbing => actively processing
+        // Compile-time stamp of the DSP code the currently-loaded APO instance
+        // was built from (see TeeDspApoShared.h); empty until the APO writes it.
+        char dspBuildStamp[32] = {};
     };
     bool readStatus(ApoStatus &out) const;  // returns out.open
 

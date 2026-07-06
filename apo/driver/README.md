@@ -17,3 +17,5 @@ Stage an unsigned package for validation:
 ```
 
 Pass `-CertThumbprint <thumbprint>` to sign both the DLL and catalog. Package installation is deliberately separate from staging: it requires a test/production signing decision and changes the audio driver stack.
+
+For local dev, don't run the steps above by hand — use `scripts\deploy-apo.ps1` from the repo root. It builds, bumps this INF's `DriverVer` so Windows actually treats the result as newer, stages + signs the package with the existing dev cert, installs it, retires previously-installed `TeeDspApoComponent` packages, and restarts Windows Audio, all behind a single UAC prompt. Rebuilding the project (or `scripts\publish.ps1`) alone never touches the Driver Store — the running APO will silently stay on whatever was last installed here until `deploy-apo.ps1` (or the manual steps it wraps) is run.

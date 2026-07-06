@@ -9,8 +9,6 @@
 namespace host {
 
 namespace {
-constexpr int kTickIntervalMs = 16;          // ~60 Hz spectrum updates
-
 constexpr int kBins = SpectrumAnalyzer::kFftSize / 2 + 1;
 } // namespace
 
@@ -23,14 +21,12 @@ SpectrumAnalyzer::SpectrumAnalyzer(QObject *parent)
     m_outDb.resize(kBins);
     m_inDb.fill(-120.0f);
     m_outDb.fill(-120.0f);
-
-    m_timer.setInterval(kTickIntervalMs);
-    m_timer.setTimerType(Qt::PreciseTimer);
-    connect(&m_timer, &QTimer::timeout, this, &SpectrumAnalyzer::tick);
-    // Always-on: tick() short-circuits if !m_running. start()/stop() can be
-    // called from the WASAPI capture thread, and QTimer::start() across threads
-    // is undefined — keeping the timer alive sidesteps the issue.
-    m_timer.start();
+    m_preFrame.resize(kFftSize);
+    m_postFrame.resize(kFftSize);
+    m_preSpec.resize(kFftSize);
+    m_postSpec.resize(kFftSize);
+    m_hannWindow.assign(kFftSize, 1.0f);
+    Fft::hannWindow(m_hannWindow.data(), kFftSize);
 }
 
 void SpectrumAnalyzer::start(double sampleRate, int /*channels*/)
@@ -38,18 +34,18 @@ void SpectrumAnalyzer::start(double sampleRate, int /*channels*/)
     m_sampleRate.store(sampleRate);
     m_preWriteIdx.store(0);
     m_postWriteIdx.store(0);
+    m_processClock.invalidate();
     m_running.store(true);
 }
 
 void SpectrumAnalyzer::setUiActive(bool active)
 {
-    if (active) {
-        if (!m_timer.isActive()) m_timer.start();
-    } else {
-        m_timer.stop();
-        // Drop a "no data" frame so any consumers (EqCurve overlay) clear
-        // immediately rather than freezing on the last spectrum until the
-        // window is shown again.
+    if (m_uiActive == active) return;
+    m_uiActive = active;
+    m_processClock.invalidate();
+    if (!active) {
+        // Drop a "no data" frame so consumers clear immediately rather than
+        // freezing on the last spectrum until the window is shown again.
         emit spectraUpdated(QVector<float>(), QVector<float>(),
                             m_sampleRate.load(), kFftSize);
     }
@@ -114,31 +110,41 @@ bool SpectrumAnalyzer::snapshot(std::vector<float> &dst,
     return true;
 }
 
-void SpectrumAnalyzer::tick()
+void SpectrumAnalyzer::processPending()
 {
-    if (!m_running.load()) return;
+    if (!m_running.load() || !m_uiActive) return;
 
-    // 1-pole release coefficient: y += a * (target - y).
+    // 1-pole release coefficient: y += a * (target - y). Use measured elapsed
+    // time so the visual release remains stable across timer jitter.
+    float elapsedMs = 1000.0f / 60.0f;
+    if (m_processClock.isValid()) {
+        elapsedMs = std::clamp(
+            static_cast<float>(m_processClock.nsecsElapsed()) / 1'000'000.0f,
+            1.0f, 100.0f);
+        m_processClock.restart();
+    } else {
+        m_processClock.start();
+    }
     constexpr float kFalloffTauMs = ui::widget_metrics::meter_runtime::kSpectrumFalloffTauMs;
-    const float releaseAlpha = 1.0f - std::exp(-static_cast<float>(kTickIntervalMs) / kFalloffTauMs);
+    const float releaseAlpha = 1.0f - std::exp(-elapsedMs / kFalloffTauMs);
 
-    std::vector<float> preFrame;
     bool havePre = false;
     {
         std::lock_guard<std::mutex> g(m_preMutex);
-        havePre = snapshot(preFrame, m_preRing, m_preWriteIdx);
+        havePre = snapshot(m_preFrame, m_preRing, m_preWriteIdx);
     }
-    std::vector<float> postFrame;
     bool havePost = false;
     {
         std::lock_guard<std::mutex> g(m_postMutex);
-        havePost = snapshot(postFrame, m_postRing, m_postWriteIdx);
+        havePost = snapshot(m_postFrame, m_postRing, m_postWriteIdx);
     }
     if (!havePre && !havePost) return;
 
-    auto runFft = [releaseAlpha](std::vector<float> &frame, QVector<float> &outDb) {
-        Fft::hannWindow(frame.data(), static_cast<int>(frame.size()));
-        std::vector<std::complex<float>> spec;
+    auto runFft = [this, releaseAlpha](std::vector<float> &frame,
+                                       std::vector<std::complex<float>> &spec,
+                                       QVector<float> &outDb) {
+        for (int i = 0; i < kFftSize; ++i)
+            frame[i] *= m_hannWindow[i];
         Fft::realToComplex(frame.data(), static_cast<int>(frame.size()), spec);
         Fft::forward(spec);
 
@@ -158,8 +164,8 @@ void SpectrumAnalyzer::tick()
         }
     };
 
-    if (havePre)  runFft(preFrame,  m_inDb);
-    if (havePost) runFft(postFrame, m_outDb);
+    if (havePre)  runFft(m_preFrame,  m_preSpec,  m_inDb);
+    if (havePost) runFft(m_postFrame, m_postSpec, m_outDb);
 
     emit spectraUpdated(m_inDb, m_outDb, m_sampleRate.load(), kFftSize);
 }

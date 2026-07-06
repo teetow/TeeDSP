@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QIcon>
 #include <QObject>
 #include <QList>
 #include <QString>
@@ -63,6 +64,11 @@ private:
     QAction *m_bypassAction = nullptr;
     QAction *m_startWithWindowsAction = nullptr;
     QAction *m_quitAction = nullptr;
+    QIcon m_runningIcon;
+    QIcon m_stoppedIcon;
+    QString m_statusText;
+    bool m_running = false;
+    bool m_runningKnown = false;
 };
 
 } // namespace ui

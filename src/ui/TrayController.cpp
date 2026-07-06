@@ -64,8 +64,13 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
     }
 
     m_tray = new QSystemTrayIcon(this);
-    m_tray->setIcon(trayIconForState(resolveBaseTrayIcon(m_window), false));
-    m_tray->setToolTip(QStringLiteral("TeeDSP"));
+    const QIcon baseIcon = resolveBaseTrayIcon(m_window);
+    m_runningIcon = trayIconForState(baseIcon, true);
+    m_stoppedIcon = trayIconForState(baseIcon, false);
+    m_tray->setIcon(m_stoppedIcon);
+    m_statusText = QStringLiteral("TeeDSP");
+    m_tray->setToolTip(m_statusText);
+    m_runningKnown = true;
 
     m_menu = new QMenu();
 
@@ -120,15 +125,20 @@ m_menu->addSeparator();
 
 void TrayController::setStatusText(const QString &text)
 {
-    if (m_tray) m_tray->setToolTip(text);
+    if (m_statusText == text) return;
+    m_statusText = text;
+    if (m_tray) m_tray->setToolTip(m_statusText);
 }
 
 void TrayController::setRunning(bool running)
 {
+    if (m_runningKnown && m_running == running) return;
+    m_running = running;
+    m_runningKnown = true;
     if (m_startStopAction) {
         m_startStopAction->setText(running ? QStringLiteral("Sto&p") : QStringLiteral("&Start"));
     }
-    if (m_tray) m_tray->setIcon(trayIconForState(resolveBaseTrayIcon(m_window), running));
+    if (m_tray) m_tray->setIcon(running ? m_runningIcon : m_stoppedIcon);
 }
 
 void TrayController::setBypass(bool bypass)

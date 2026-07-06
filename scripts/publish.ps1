@@ -9,12 +9,16 @@
 .PARAMETER InstallDir
     Override the default %LOCALAPPDATA%\Programs\TeeDsp destination.
 
+.PARAMETER Restart
+    Stop TeeDSP before building and always launch the newly published build.
+
 .NOTES
     Does not require administrator privileges. Safe to re-run; the install
     directory is wiped and refilled each time so stale files don't accumulate.
 #>
 param(
     [switch]$SkipBuild,
+    [switch]$Restart,
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\TeeDsp')
 )
 
@@ -35,6 +39,21 @@ if (Test-Path (Join-Path $repoRoot 'CMakeUserPresets.json')) {
 
 $buildDir = Join-Path $repoRoot "out\build\$configPreset\Release"
 $exePath  = Join-Path $buildDir $exeName
+
+function Stop-RunningTeeDsp {
+    $running = Get-Process -Name TeeDsp -ErrorAction SilentlyContinue
+    if (-not $running) { return $false }
+
+    Write-Host "Stopping running TeeDsp instance(s)..."
+    $running | Stop-Process -Force
+    $running | Wait-Process -Timeout 5 -ErrorAction SilentlyContinue
+    return $true
+}
+
+$wasRunning = $false
+if ($Restart) {
+    $wasRunning = Stop-RunningTeeDsp
+}
 
 if (-not $SkipBuild) {
     Write-Host "Configuring..."
@@ -91,13 +110,8 @@ Write-Host "Running windeployqt..."
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
 
 # ---- Stage to install dir -----------------------------------------------------
-$wasRunning = $false
-$running = Get-Process -Name TeeDsp -ErrorAction SilentlyContinue
-if ($running) {
-    $wasRunning = $true
-    Write-Host "Stopping running TeeDsp instance(s)..."
-    $running | Stop-Process -Force
-    Start-Sleep -Milliseconds 500
+if (-not $Restart) {
+    $wasRunning = Stop-RunningTeeDsp
 }
 if (Test-Path $InstallDir) {
     Write-Host "Clearing $InstallDir"
@@ -136,7 +150,7 @@ Write-Host "  Install dir:    $InstallDir"
 Write-Host "  Executable:     $installedExe"
 Write-Host "  Desktop link:   $shortcutPath"
 
-if ($wasRunning) {
+if ($Restart -or $wasRunning) {
     Write-Host "Relaunching TeeDsp..."
     Start-Process -FilePath $installedExe -WorkingDirectory $InstallDir | Out-Null
 }

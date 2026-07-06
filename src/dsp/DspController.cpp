@@ -11,10 +11,11 @@
 namespace dsp {
 
 namespace {
-// ~125 Hz polling — drives both the meter readouts and the EQ-curve repaint.
-// With the EqCurve on QOpenGLWidget, update() requests are coalesced to
-// vsync, so this rate doesn't burn extra GPU above the display refresh.
-constexpr int kMeterIntervalMs = 8;
+// One telemetry snapshot per display-scale tick is enough for smooth meters.
+// Keeping this at ~60 Hz avoids driving the widget tree at 125 Hz.
+constexpr int kMeterIntervalMs = 16;
+constexpr int kApoForegroundIntervalMs = 50;
+constexpr int kApoBackgroundIntervalMs = 200;
 constexpr const char *kSettingsGroup = "dsp";
 
 ChainParams defaultParams()
@@ -34,8 +35,11 @@ DspController::DspController(QObject *parent)
     // (m_apoDirty starts true), which writes the snapshot + persisted file.
 
     m_meterTimer.setInterval(kMeterIntervalMs);
-    m_meterTimer.setTimerType(Qt::PreciseTimer);
-    connect(&m_meterTimer, &QTimer::timeout, this, &DspController::meterChanged);
+    m_meterTimer.setTimerType(Qt::CoarseTimer);
+    connect(&m_meterTimer, &QTimer::timeout, this, [this]() {
+        m_apo.readMeters(m_meterSnapshot);
+        emit meterChanged();
+    });
     m_meterTimer.start();
 
     // Save-on-change: every parameter mutation emits a *Changed signal, which
@@ -60,7 +64,7 @@ DspController::DspController(QObject *parent)
     connect(this, &DspController::exciterChanged,    this, [this]{ m_apoDirty = true; });
     connect(this, &DspController::eqChanged,         this, [this]{ m_apoDirty = true; });
     connect(this, &DspController::levelerChanged,    this, [this]{ m_apoDirty = true; });
-    m_apoTimer.setInterval(50);
+    m_apoTimer.setInterval(kApoForegroundIntervalMs);
     connect(&m_apoTimer, &QTimer::timeout, this, &DspController::syncApo);
     m_apoTimer.start();
 }
@@ -106,6 +110,17 @@ void DspController::setMeterTimerActive(bool active)
     } else {
         m_meterTimer.stop();
     }
+}
+
+void DspController::setEditorVisible(bool visible)
+{
+    setMeterTimerActive(visible);
+
+    const int interval = visible
+        ? kApoForegroundIntervalMs
+        : kApoBackgroundIntervalMs;
+    if (m_apoTimer.interval() != interval)
+        m_apoTimer.setInterval(interval);
 }
 
 void DspController::scheduleSave()
@@ -157,18 +172,14 @@ void DspController::setLevelerEnabled(bool b)
 
 float DspController::levelerGainDb() const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.levelerGainDb;
+    return m_meterSnapshot.levelerGainDb;
 }
 
 void DspController::spectralLevelerGainDb(
     std::array<float, kSpectralLevelerBandCount> &out) const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
     for (int b = 0; b < kSpectralLevelerBandCount; ++b)
-        out[b] = m.spectralGainDb[b];
+        out[b] = m_meterSnapshot.spectralGainDb[b];
 }
 
 void DspController::setSpectralLevelerEnabled(bool b)
@@ -187,9 +198,7 @@ void DspController::setOutputLevelerEnabled(bool b)
 
 float DspController::outputLevelerGainDb() const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.outLevelerGainDb;
+    return m_meterSnapshot.outLevelerGainDb;
 }
 
 bool DspController::compressorEnabled() const { return m_compressorEnabled; }
@@ -249,44 +258,32 @@ void DspController::setCompMakeupDb(float v)
 
 float DspController::compGainReductionDb() const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.compGrDb;
+    return m_meterSnapshot.compGrDb;
 }
 
 float DspController::apoInPeakDbfs(int ch) const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.inPeakDbfs[(ch == 1) ? 1 : 0];
+    return m_meterSnapshot.inPeakDbfs[(ch == 1) ? 1 : 0];
 }
 
 float DspController::apoOutPeakDbfs(int ch) const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.outPeakDbfs[(ch == 1) ? 1 : 0];
+    return m_meterSnapshot.outPeakDbfs[(ch == 1) ? 1 : 0];
 }
 
 float DspController::apoOutRmsDbfs() const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.outRmsDbfs;
+    return m_meterSnapshot.outRmsDbfs;
 }
 
 float DspController::apoOutLufs(int ch) const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.outLufsCh[(ch == 1) ? 1 : 0];
+    return m_meterSnapshot.outLufsCh[(ch == 1) ? 1 : 0];
 }
 
 float DspController::apoOutLufsM() const
 {
-    host::ApoSharedClient::ApoMeters m;
-    m_apo.readMeters(m);
-    return m.outLufsM;
+    return m_meterSnapshot.outLufsM;
 }
 
 void DspController::drainApoAudio(std::vector<float> &pre, std::vector<float> &post)
@@ -342,8 +339,6 @@ void DspController::setEqEnabled(bool b)
 
 QVariantList DspController::eqBands() const
 {
-    host::ApoSharedClient::ApoMeters t;
-    m_apo.readMeters(t);
     QVariantList list;
     for (int i = 0; i < kEqBandCount; ++i) {
         const EqBandParams &b = m_eqBands[i];
@@ -358,7 +353,7 @@ QVariantList DspController::eqBands() const
         map.insert(QStringLiteral("dynAttackMs"), b.dynAttackMs);
         map.insert(QStringLiteral("dynReleaseMs"), b.dynReleaseMs);
         map.insert(QStringLiteral("dynRangeDb"), b.dynRangeDb);
-        map.insert(QStringLiteral("dynGainReductionDb"), t.bandGrDb[i]);
+        map.insert(QStringLiteral("dynGainReductionDb"), m_meterSnapshot.bandGrDb[i]);
         list.append(map);
     }
     return list;
@@ -366,8 +361,6 @@ QVariantList DspController::eqBands() const
 
 void DspController::eqBandViews(std::array<EqBandView, kEqBandCount> &out) const
 {
-    host::ApoSharedClient::ApoMeters t;
-    m_apo.readMeters(t);
     for (int i = 0; i < kEqBandCount; ++i) {
         const EqBandParams &b = m_eqBands[i];
         EqBandView &v = out[i];
@@ -381,7 +374,7 @@ void DspController::eqBandViews(std::array<EqBandView, kEqBandCount> &out) const
         v.dynAttackMs        = b.dynAttackMs;
         v.dynReleaseMs       = b.dynReleaseMs;
         v.dynRangeDb         = b.dynRangeDb;
-        v.dynGainReductionDb = t.bandGrDb[i];
+        v.dynGainReductionDb = m_meterSnapshot.bandGrDb[i];
     }
 }
 
@@ -389,8 +382,6 @@ EqBandView DspController::eqBandView(int band) const
 {
     EqBandView v{};
     if (band < 0 || band >= kEqBandCount) return v;
-    host::ApoSharedClient::ApoMeters t;
-    m_apo.readMeters(t);
     const EqBandParams &b = m_eqBands[band];
     v.enabled            = b.enabled;
     v.type               = b.type;
@@ -402,7 +393,7 @@ EqBandView DspController::eqBandView(int band) const
     v.dynAttackMs        = b.dynAttackMs;
     v.dynReleaseMs       = b.dynReleaseMs;
     v.dynRangeDb         = b.dynRangeDb;
-    v.dynGainReductionDb = t.bandGrDb[band];
+    v.dynGainReductionDb = m_meterSnapshot.bandGrDb[band];
     return v;
 }
 
@@ -426,6 +417,7 @@ void DspController::setEqBandFrequency(int band, float hz)
 {
     if (band < 0 || band >= kEqBandCount) return;
     if (hz < 10.0f) hz = 10.0f;
+    if (m_eqBands[band].freqHz == hz) return;
     m_eqBands[band].freqHz = hz;
     emit eqChanged();
 }
@@ -434,6 +426,7 @@ void DspController::setEqBandQ(int band, float q)
 {
     if (band < 0 || band >= kEqBandCount) return;
     if (q < 0.05f) q = 0.05f;
+    if (m_eqBands[band].q == q) return;
     m_eqBands[band].q = q;
     emit eqChanged();
 }
@@ -441,7 +434,19 @@ void DspController::setEqBandQ(int band, float q)
 void DspController::setEqBandGainDb(int band, float gainDb)
 {
     if (band < 0 || band >= kEqBandCount) return;
+    if (m_eqBands[band].gainDb == gainDb) return;
     m_eqBands[band].gainDb = gainDb;
+    emit eqChanged();
+}
+
+void DspController::setEqBandShape(int band, float hz, float gainDb)
+{
+    if (band < 0 || band >= kEqBandCount) return;
+    if (hz < 10.0f) hz = 10.0f;
+    EqBandParams &b = m_eqBands[band];
+    if (b.freqHz == hz && b.gainDb == gainDb) return;
+    b.freqHz = hz;
+    b.gainDb = gainDb;
     emit eqChanged();
 }
 

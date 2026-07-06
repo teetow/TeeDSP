@@ -35,7 +35,7 @@ constexpr double kReleaseTauMs = 60.0;
 
 namespace meter_runtime {
 constexpr float kReleaseTauMs = 60.0f;
-constexpr float kInitialDtMs = 8.0f;
+constexpr float kInitialDtMs = 16.0f;
 
 constexpr float kDbMeterMin = -90.0f;
 constexpr float kDbMeterMax = 0.0f;

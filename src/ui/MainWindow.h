@@ -28,6 +28,7 @@ class LevelMeter;
 class SpectralGainMeter;
 class EqCurve;
 class TrayController;
+class BipolarGainMeter;
 }
 
 class MainWindow : public QMainWindow
@@ -70,8 +71,8 @@ private:
     // selected band — used on band-selection changes to avoid a full UI sync.
     void syncSelectedBandDyn();
 
-    // Pauses/resumes the analyzer + meter timers based on whether the window
-    // is actually being looked at — no point burning FFTs/repaints when hidden.
+    // Switches analyzer, meter, status, and APO-control polling between visible
+    // and tray behavior.
     void updateUiTimerGate();
 
     QString selectedCaptureDeviceId() const;
@@ -90,9 +91,11 @@ private:
     // bound to the current output and audio is playing, yet no processing) —
     // clicking it elevates and restarts Audiosrv to reload the APO.
     QPushButton *m_restartEngineButton = nullptr;
+    QLabel *m_dspBuildLabel = nullptr;
 
     QProgressBar *m_inputMeterBarL = nullptr;
     QProgressBar *m_inputMeterBarR = nullptr;
+    ui::BipolarGainMeter *m_inputGainMeter = nullptr;
     ui::Knob *m_inputTrim = nullptr;
     QCheckBox *m_levelerEnabled = nullptr;
     QCheckBox *m_spectralLevelerEnabled = nullptr;
@@ -101,6 +104,7 @@ private:
 
     QProgressBar *m_outputMeterBarL = nullptr;
     QProgressBar *m_outputMeterBarR = nullptr;
+    ui::BipolarGainMeter *m_outputGainMeter = nullptr;
     QProgressBar *m_outputLufsBarL  = nullptr;
     QProgressBar *m_outputLufsBarR  = nullptr;
     QLabel *m_outputVuLabel = nullptr;
@@ -172,6 +176,7 @@ private:
     float m_dispOutLufsPctL = 0.0f;
     float m_dispOutLufsPctR = 0.0f;
     qint64 m_lastMeterTickMs = 0;
+    int m_outputHotState = -1;
 
     // Polls the APO's shared telemetry to drive the status line (and tray text),
     // independent of the engine — the engine is retired from the APO path.

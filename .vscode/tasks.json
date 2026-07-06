@@ -2,40 +2,8 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Configure TeeDSP (vs2022)",
-      "type": "shell",
-      "command": "cmake",
-      "args": [
-        "--preset",
-        "vs2022"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "Build TeeDSP Release",
-      "type": "shell",
-      "command": "cmake",
-      "args": [
-        "--build",
-        "--preset",
-        "vs2022-release",
-        "--parallel"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "group": "build",
-      "dependsOn": [
-        "Configure TeeDSP (vs2022)"
-      ],
-      "problemMatcher": []
-    },
-    {
-      "label": "Deploy TeeDSP Release",
-      "type": "shell",
+      "label": "Rebuild + Restart TeeDSP",
+      "type": "process",
       "command": "powershell.exe",
       "args": [
         "-NoProfile",
@@ -43,23 +11,7 @@
         "Bypass",
         "-File",
         "${workspaceFolder}\\scripts\\publish.ps1",
-        "-SkipBuild"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "Build + Deploy TeeDSP Release",
-      "type": "shell",
-      "command": "powershell.exe",
-      "args": [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}\\scripts\\publish.ps1"
+        "-Restart"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
@@ -68,7 +20,12 @@
         "kind": "build",
         "isDefault": true
       },
-      "problemMatcher": []
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     }
   ]
 }

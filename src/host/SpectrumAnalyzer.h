@@ -1,7 +1,7 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QObject>
-#include <QTimer>
 #include <QVector>
 
 #include <atomic>
@@ -11,14 +11,13 @@
 
 namespace host {
 
-// Captures pre-DSP and post-DSP audio packets, runs a windowed FFT on a Qt
-// timer, and emits magnitude (in dB) for both signals so the UI can draw an
-// input-vs-output spectrum overlay.
+// Collects pre-DSP and post-DSP audio packets and emits windowed FFT magnitudes
+// for the input-vs-output spectrum overlay.
 //
 // Producer side (capture thread): pushPre / pushPost — non-blocking, mono-mixes
 // and drops into a small staging buffer.
-// Consumer side (UI thread): a QTimer pulls a frame, windows it, FFTs it,
-// converts to dB, and emits spectraUpdated.
+// Consumer side (UI thread): processPending() pulls the newest frame, windows
+// it, FFTs it, converts to dB, and emits spectraUpdated.
 class SpectrumAnalyzer : public QObject
 {
     Q_OBJECT
@@ -32,26 +31,24 @@ public:
     void stop();
     bool isRunning() const { return m_running.load(); }
 
-    // Pauses/resumes the FFT tick timer. Used by the UI to silence the 60 Hz
-    // analyzer→EqCurve repaint chain while the window is hidden or minimized:
-    // there is no point burning CPU on FFTs whose output nothing draws, and
-    // a continuously refreshing QOpenGLWidget across a display-sleep / GPU
-    // power transition is the most likely path to a runaway repaint loop.
-    // Must be called from the timer's owning thread (the main thread).
+    // Pauses/resumes analyzer output while the UI is hidden or both spectra are
+    // disabled. Disabling also clears the last frame from consumers.
     void setUiActive(bool active);
 
     // Called from the capture thread.
     void pushPre(const float *interleaved, int frames, int channels);
     void pushPost(const float *interleaved, int frames, int channels);
 
+    // Runs at most one analysis pass for the samples pushed since the previous
+    // UI drain. Keeping this on the drain cadence avoids an independent timer
+    // repeatedly transforming the same stale frame.
+    void processPending();
+
 signals:
     void spectraUpdated(QVector<float> inMagDb,
                         QVector<float> outMagDb,
                         double sampleRate,
                         int fftSize);
-
-private slots:
-    void tick();
 
 private:
     void pushImpl(const float *interleaved, int frames, int channels,
@@ -75,8 +72,13 @@ private:
 
     QVector<float> m_inDb;
     QVector<float> m_outDb;
-
-    QTimer m_timer;
+    std::vector<float> m_preFrame;
+    std::vector<float> m_postFrame;
+    std::vector<float> m_hannWindow;
+    std::vector<std::complex<float>> m_preSpec;
+    std::vector<std::complex<float>> m_postSpec;
+    QElapsedTimer m_processClock;
+    bool m_uiActive = true;
 };
 
 } // namespace host

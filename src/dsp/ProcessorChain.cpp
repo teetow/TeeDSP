@@ -15,13 +15,24 @@ void ProcessorChain::prepare(double sampleRate, std::size_t channels)
 {
     m_sampleRate = sampleRate;
     m_channels = channels;
+    // Input stage: normalizes wildly different source loudness (music vs.
+    // voice calls) before EQ/dynamics see it, so it reacts a bit more
+    // readily than the output stage — still gated/deadbanded/slew-limited
+    // (see Leveler::configure defaults), just not as glacially gentle.
+    m_leveler.configure(-18.0f, 18.0f, 9.0f);
     m_leveler.prepare(sampleRate, channels);
     m_spectralLeveler.prepare(sampleRate, channels);
     // Output stage rides toward -12 LUFS with a symmetric ±12 dB window.
     // Tighter target than the input rider since by here the chain has
     // already roughly normalized; the output stage just trims residual
-    // loudness drift caused by internal gain changes (EQ, makeup, etc.).
-    m_outputLeveler.configure(-12.0f, 12.0f, 12.0f);
+    // loudness drift caused by internal gain changes (EQ, makeup, etc.), so
+    // its ballistics are slower and its deadband wider than the input
+    // stage's — it should be the last thing the listener can ever perceive
+    // moving.
+    m_outputLeveler.configure(-12.0f, 12.0f, 12.0f,
+                               /*longTermTauSec=*/20.0f, /*relativeGateLu=*/10.0f,
+                               /*deadbandLu=*/2.5f,
+                               /*maxDownRateDbPerSec=*/0.6f, /*maxUpRateDbPerSec=*/0.15f);
     m_outputLeveler.prepare(sampleRate, channels);
     m_eq.prepare(sampleRate, channels);
     m_compressor.prepare(sampleRate, channels);

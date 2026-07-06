@@ -5,6 +5,7 @@
 #include "AudioServiceRecovery.h"
 #include "TrayController.h"
 #include "widgets/EqCurve.h"
+#include "widgets/BipolarGainMeter.h"
 #include "widgets/Knob.h"
 #include "widgets/LevelMeter.h"
 #include "widgets/SpectralGainMeter.h"
@@ -46,6 +47,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 
@@ -175,13 +177,12 @@ MainWindow::MainWindow(QWidget *parent)
     // the APO's shared telemetry to show what it's actually doing.
     m_apoStatusTimer.setInterval(400);
     connect(&m_apoStatusTimer, &QTimer::timeout, this, &MainWindow::refreshEngineStatus);
-    m_apoStatusTimer.start();
 
     // Spectrum: drain the APO's pre/post sample ring (~60 Hz) and feed the
     // analyzer, whose spectraUpdated already drives the EqCurve overlay+heatmap.
-    m_spectrumTimer.setInterval(16);
+    m_spectrumTimer.setInterval(17); // ~60 Hz FFT targets
     connect(&m_spectrumTimer, &QTimer::timeout, this, &MainWindow::onSpectrumTick);
-    m_spectrumTimer.start();
+    updateUiTimerGate();
 }
 
 void MainWindow::onSpectrumTick()
@@ -199,6 +200,7 @@ void MainWindow::onSpectrumTick()
     }
     m_analyzer->pushPre(m_specPre.data(), static_cast<int>(m_specPre.size()), 1);
     m_analyzer->pushPost(m_specPost.data(), static_cast<int>(m_specPost.size()), 1);
+    m_analyzer->processPending();
 }
 
 MainWindow::~MainWindow()
@@ -266,9 +268,24 @@ void MainWindow::changeEvent(QEvent *event)
 void MainWindow::updateUiTimerGate()
 {
     const bool active = isVisible() && !isMinimized();
-    if (m_dspController) m_dspController->setMeterTimerActive(active);
-    if (m_analyzer) m_analyzer->setUiActive(active);
-    if (active) m_spectrumTimer.start(); else m_spectrumTimer.stop();
+    const bool spectraEnabled = m_showInputSpectrum && m_showOutputSpectrum
+        && (m_showInputSpectrum->isChecked() || m_showOutputSpectrum->isChecked());
+    const bool analyze = active && spectraEnabled;
+    if (m_dspController) m_dspController->setEditorVisible(active);
+    if (m_analyzer) m_analyzer->setUiActive(analyze);
+    if (analyze) m_spectrumTimer.start(); else m_spectrumTimer.stop();
+
+    // Endpoint probing is only useful while its status label can be seen.
+    // Refresh immediately on return, rather than continuing COM/registry polls
+    // for a hidden widget tree.
+    if (active) {
+        if (!m_apoStatusTimer.isActive()) {
+            refreshEngineStatus();
+            m_apoStatusTimer.start();
+        }
+    } else {
+        m_apoStatusTimer.stop();
+    }
 }
 
 void MainWindow::buildUi()
@@ -350,6 +367,16 @@ QWidget *MainWindow::buildIoSection()
     connect(m_restartEngineButton, &QPushButton::clicked,
             this, &MainWindow::onRestartEngineRequested);
     statusBar()->addPermanentWidget(m_restartEngineButton);
+
+    m_dspBuildLabel = new QLabel(QStringLiteral("DSP build: \u2014"));
+    m_dspBuildLabel->setProperty("role", "status");
+    m_dspBuildLabel->setToolTip(
+        QStringLiteral("Compile timestamp reported live by the APO instance "
+                       "currently loaded in audiodg.exe \u2014 proves which DSP "
+                       "code is actually processing your audio right now, as "
+                       "opposed to a stale copy the audio engine hasn't "
+                       "reloaded yet."));
+    statusBar()->addPermanentWidget(m_dspBuildLabel);
 
     return section;
 }
@@ -621,9 +648,19 @@ QWidget *MainWindow::buildInputPane()
     m_inputMeterBarL->setMinimumHeight(UiMetrics::kMeterTallHeight);
     m_inputMeterBarR->setMinimumHeight(UiMetrics::kMeterTallHeight);
 
+    m_inputGainMeter = new ui::BipolarGainMeter();
+    m_inputGainMeter->setRangeDb(18.0);
+    m_inputGainMeter->setMinimumHeight(UiMetrics::kMeterTallHeight);
+    m_inputGainMeter->setFixedWidth(10);
+    m_inputGainMeter->setToolTip(
+        QStringLiteral("Auto-Level's live gain: gray = neutral, green = "
+                       "boosting, red = cutting."));
+
     auto *meterWrap = new QHBoxLayout();
     meterWrap->setSpacing(3);
     meterWrap->addStretch();
+    meterWrap->addWidget(m_inputGainMeter);
+    meterWrap->addSpacing(3);
     meterWrap->addWidget(m_inputMeterBarL);
     meterWrap->addWidget(m_inputMeterBarR);
     meterWrap->addStretch();
@@ -691,9 +728,19 @@ QWidget *MainWindow::buildOutputPane()
     stereoRow->addWidget(m_outputMeterBarL);
     stereoRow->addWidget(m_outputMeterBarR);
 
+    m_outputGainMeter = new ui::BipolarGainMeter();
+    m_outputGainMeter->setRangeDb(12.0);
+    m_outputGainMeter->setMinimumHeight(UiMetrics::kMeterHeight);
+    m_outputGainMeter->setFixedWidth(10);
+    m_outputGainMeter->setToolTip(
+        QStringLiteral("Auto-Level's live gain: gray = neutral, green = "
+                       "boosting, red = cutting."));
+
     auto *meterWrap = new QHBoxLayout();
     meterWrap->setSpacing(UiMetrics::kCompactSpacing);
     meterWrap->addStretch();
+    meterWrap->addWidget(m_outputGainMeter);
+    meterWrap->addSpacing(3);
     meterWrap->addWidget(m_outputLufsBarL);
     meterWrap->addSpacing(3);
     meterWrap->addWidget(stereoFrame);
@@ -817,8 +864,7 @@ void MainWindow::connectSignals()
     connect(m_eqCurve, &ui::EqCurve::bandDragged, this,
             [this](int band, float freqHz, float gainDb) {
         if (band < 0 || band >= m_eqBands.size()) return;
-        m_dspController->setEqBandFrequency(band, freqHz);
-        m_dspController->setEqBandGainDb(band, gainDb);
+        m_dspController->setEqBandShape(band, freqHz, gainDb);
     });
 
     connect(m_eqCurve, &ui::EqCurve::bandReset, this, [this](int band) {
@@ -864,10 +910,12 @@ void MainWindow::connectSignals()
 
     connect(m_showInputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
         m_eqCurve->setShowInputSpectrum(on);
+        updateUiTimerGate();
         QSettings().setValue(QString::fromLatin1(kShowInputSpecKey), on);
     });
     connect(m_showOutputSpectrum, &QCheckBox::toggled, this, [this](bool on) {
         m_eqCurve->setShowOutputSpectrum(on);
+        updateUiTimerGate();
         QSettings().setValue(QString::fromLatin1(kShowOutputSpecKey), on);
     });
 
@@ -880,8 +928,7 @@ void MainWindow::connectSignals()
         connect(m_analyzer, &host::SpectrumAnalyzer::spectraUpdated,
                 this, [this](QVector<float> inDb, QVector<float> outDb,
                              double sr, int fftSize) {
-            m_eqCurve->setInputSpectrum(inDb, sr, fftSize);
-            m_eqCurve->setOutputSpectrum(outDb, sr, fftSize);
+            m_eqCurve->setSpectra(inDb, outDb, sr, fftSize);
         });
     }
 
@@ -890,9 +937,15 @@ void MainWindow::connectSignals()
     connect(m_dspController, &dsp::DspController::exciterChanged,    this, &MainWindow::pullStateFromController);
     connect(m_dspController, &dsp::DspController::eqChanged,         this, &MainWindow::pullStateFromController);
     connect(m_dspController, &dsp::DspController::meterChanged, this, [this]() {
+        const auto setLabelText = [](QLabel *label, QString text) {
+            if (label && label->text() != text)
+                label->setText(std::move(text));
+        };
+
         const double db = m_dspController->compGainReductionDb();
         m_compMeter->setReductionDb(std::abs(db));
-        m_compMeterValue->setText(QString::number(db, 'f', 1) + QStringLiteral(" dB"));
+        setLabelText(m_compMeterValue,
+                     QString::number(db, 'f', 1) + QStringLiteral(" dB"));
 
         const auto dbToMeterPct = [](float dbfs) {
             using namespace ui::widget_metrics::meter_runtime;
@@ -908,7 +961,7 @@ void MainWindow::connectSignals()
         };
 
         // Tick delta drives the smoothing alpha. Skew a missing first sample
-        // toward the nominal 8 ms timer interval so initial transitions don't
+        // toward the nominal 16 ms timer interval so initial transitions don't
         // snap.
         constexpr float kMeterReleaseTauMs = ui::widget_metrics::meter_runtime::kReleaseTauMs;
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
@@ -957,24 +1010,37 @@ void MainWindow::connectSignals()
         m_outputLufsBarL->setValue(static_cast<int>(m_dispOutLufsPctL));
         m_outputLufsBarR->setValue(static_cast<int>(m_dispOutLufsPctR));
 
+        // Dedicated bipolar meters for each leveler's live gain — a standalone
+        // bar (not an overlay) so there's never any ambiguity about whether
+        // it's showing something: gray/centered = neutral, green = boosting,
+        // red = cutting. Forced to neutral while the leveler is off.
+        if (m_inputGainMeter) {
+            m_inputGainMeter->setGainDb(
+                m_dspController->levelerEnabled() ? m_dspController->levelerGainDb() : 0.0);
+        }
+        if (m_outputGainMeter) {
+            m_outputGainMeter->setGainDb(
+                m_dspController->outputLevelerEnabled() ? m_dspController->outputLevelerGainDb() : 0.0);
+        }
+
         // Treat anything below -100 dBFS as silence — exponential decay would
         // otherwise asymptote toward -120 forever and never display "-inf".
         if (m_dispOutRmsDbfs > ui::widget_metrics::meter_runtime::kSilenceDisplayDbfs) {
             const float vu = m_dispOutRmsDbfs + 18.0f;       // 0 VU ~= -18 dBFS reference
-            m_outputVuLabel->setText(QStringLiteral("VU: %1").arg(vu, 0, 'f', 1));
+            setLabelText(m_outputVuLabel, QStringLiteral("VU: %1").arg(vu, 0, 'f', 1));
         } else {
-            m_outputVuLabel->setText(QStringLiteral("VU: -inf"));
+            setLabelText(m_outputVuLabel, QStringLiteral("VU: -inf"));
         }
         const float lufsM = m_dspController->apoOutLufsM();
         if (lufsM > ui::widget_metrics::meter_runtime::kLufsDisplayFloor)
-            m_outputLufsLabel->setText(QStringLiteral("LUFS-M: %1").arg(lufsM, 0, 'f', 1));
+            setLabelText(m_outputLufsLabel, QStringLiteral("LUFS-M: %1").arg(lufsM, 0, 'f', 1));
         else
-            m_outputLufsLabel->setText(QStringLiteral("LUFS-M: -inf"));
+            setLabelText(m_outputLufsLabel, QStringLiteral("LUFS-M: -inf"));
 
         if (m_levelerGainLabel) {
             const float g = m_dspController->levelerGainDb();
             const QChar sign = g >= 0.0f ? QLatin1Char('+') : QLatin1Char('-');
-            m_levelerGainLabel->setText(QStringLiteral("%1%2 dB")
+            setLabelText(m_levelerGainLabel, QStringLiteral("%1%2 dB")
                 .arg(sign).arg(std::fabs(g), 0, 'f', 1));
         }
 
@@ -987,34 +1053,42 @@ void MainWindow::connectSignals()
         if (m_outputLevelerGainLabel) {
             const float g = m_dspController->outputLevelerGainDb();
             const QChar sign = g >= 0.0f ? QLatin1Char('+') : QLatin1Char('-');
-            m_outputLevelerGainLabel->setText(QStringLiteral("%1%2 dB")
+            setLabelText(m_outputLevelerGainLabel, QStringLiteral("%1%2 dB")
                 .arg(sign).arg(std::fabs(g), 0, 'f', 1));
         }
 
         const float hotDbfs = m_dispOutHotDbfs;
+        int hotState = 0;
+        QString hotText;
         if (hotDbfs > -0.2f) {
-            m_outputHotIndicator->setText(QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
-            m_outputHotIndicator->setProperty("hotState", "hot");
+            hotState = 2;
+            hotText = QStringLiteral("Output HOT: %1 dBFS").arg(hotDbfs, 0, 'f', 2);
         } else if (hotDbfs > -1.0f) {
-            m_outputHotIndicator->setText(QStringLiteral("Output near limit: %1 dBFS").arg(hotDbfs, 0, 'f', 2));
-            m_outputHotIndicator->setProperty("hotState", "warn");
+            hotState = 1;
+            hotText = QStringLiteral("Output near limit: %1 dBFS").arg(hotDbfs, 0, 'f', 2);
         } else {
-            m_outputHotIndicator->setText(QStringLiteral("Output headroom: OK"));
-            m_outputHotIndicator->setProperty("hotState", "ok");
+            hotText = QStringLiteral("Output headroom: OK");
         }
-        repolish(m_outputHotIndicator);
+        setLabelText(m_outputHotIndicator, std::move(hotText));
+        if (hotState != m_outputHotState) {
+            static constexpr const char *kHotStateNames[] = {"ok", "warn", "hot"};
+            m_outputHotState = hotState;
+            m_outputHotIndicator->setProperty("hotState", kHotStateNames[hotState]);
+            repolish(m_outputHotIndicator);
+        }
 
         if (m_selectedEqBand >= 0 && m_selectedEqBand < dsp::kEqBandCount) {
             const dsp::EqBandView v = m_dspController->eqBandView(m_selectedEqBand);
-            m_eqDynMeter->setText(QStringLiteral("GR %1 dB").arg(v.dynGainReductionDb, 0, 'f', 1));
+            setLabelText(m_eqDynMeter,
+                         QStringLiteral("GR %1 dB").arg(v.dynGainReductionDb, 0, 'f', 1));
             m_eqDynInputMeter->setLevelDbfs(m_dispInPeakDbfs);
             m_eqDynOutputMeter->setLevelDbfs(m_dispOutPeakDbfs);
             m_eqDynGrMeter->setReductionDb(std::abs(v.dynGainReductionDb));
         }
 
         // Dynamic gain reduction changes continuously even when controls are
-        // static, so refresh the EQ response from meter ticks. update() on the
-        // (QOpenGLWidget) curve is coalesced to vsync, so this is cheap.
+        // static. EqCurve ignores unchanged snapshots and caches response
+        // geometry, so spectrum-only paints do not repeat the filter math.
         refreshEqCurve();
     });
 
@@ -1418,10 +1492,24 @@ void MainWindow::refreshEngineStatus()
     }
     if (m_restartEngineButton)
         m_restartEngineButton->setVisible(engineStalled);
-    m_statusLabel->setText(text);
-    m_statusLabel->setProperty("role", role);
-    m_statusLabel->style()->unpolish(m_statusLabel);
-    m_statusLabel->style()->polish(m_statusLabel);
+    if (m_statusLabel->text() != text)
+        m_statusLabel->setText(text);
+    const QString roleName = QString::fromLatin1(role);
+    if (m_statusLabel->property("role").toString() != roleName) {
+        m_statusLabel->setProperty("role", roleName);
+        m_statusLabel->style()->unpolish(m_statusLabel);
+        m_statusLabel->style()->polish(m_statusLabel);
+    }
+
+    if (m_dspBuildLabel) {
+        QString buildText;
+        if (st.open && st.dspBuildStamp[0] != '\0')
+            buildText = QStringLiteral("DSP build: %1").arg(QString::fromLatin1(st.dspBuildStamp));
+        else
+            buildText = QStringLiteral("DSP build: \u2014");
+        if (m_dspBuildLabel->text() != buildText)
+            m_dspBuildLabel->setText(buildText);
+    }
 
     if (m_tray) {
         m_tray->setRunning(activeOnOutput);

@@ -14,7 +14,6 @@
 #include <QPalette>
 #include <QPixmap>
 #include <QStandardPaths>
-#include <QSurfaceFormat>
 
 #include <memory>
 
@@ -68,17 +67,6 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationName(QStringLiteral("TeeDSP"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("local.teedsp"));
     QCoreApplication::setApplicationName(QStringLiteral("TeeDSP"));
-
-    // Configure the GL surface used by every QOpenGLWidget in the app.
-    // SwapInterval 1 = present on vsync, which is what gates EqCurve's repaint
-    // rate to the display refresh. 4× MSAA keeps curves smooth without a
-    // separate antialiasing pass.
-    {
-        QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
-        fmt.setSwapInterval(1);
-        fmt.setSamples(4);
-        QSurfaceFormat::setDefaultFormat(fmt);
-    }
 
     QApplication app(argc, argv);
 

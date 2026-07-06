@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstring>
 
 namespace host {
 
@@ -63,6 +64,8 @@ bool ApoSharedClient::readStatus(ApoStatus &out) const
     out.uiAlive    = m_shm->uiAlive;
     std::atomic_ref<uint64_t> pc(m_shm->processCalls);
     out.processCalls = pc.load(std::memory_order_relaxed);
+    std::memcpy(out.dspBuildStamp, m_shm->dspBuildStamp, sizeof(out.dspBuildStamp));
+    out.dspBuildStamp[sizeof(out.dspBuildStamp) - 1] = '\0';
     return true;
 }
 

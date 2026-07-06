@@ -1,8 +1,11 @@
 #pragma once
 
+#include <QChronoTimer>
+#include <QElapsedTimer>
 #include <QImage>
-#include <QOpenGLWidget>
+#include <QPixmap>
 #include <QVector>
+#include <QWidget>
 
 namespace ui {
 
@@ -21,10 +24,11 @@ struct EqBandData {
 // Double-clicking a handle resets that band's gain to 0 dB.
 // Optional pre/post-DSP magnitude spectra can be drawn behind the EQ curve.
 //
-// Implemented as a QOpenGLWidget so update() requests are coalesced to the
-// display refresh rate by the platform compositor — repaints can be triggered
-// freely from data sources without burning CPU above vsync.
-class EqCurve : public QOpenGLWidget
+// FFT targets arrive at ~60 Hz; lightweight curve interpolation runs at the
+// current screen refresh rate without rerunning analysis or rebuilding static
+// layers. This remains a raster QWidget so it does not force the entire
+// top-level window through QOpenGLWidget composition.
+class EqCurve : public QWidget
 {
     Q_OBJECT
 
@@ -37,6 +41,8 @@ public:
 
     // Spectrum overlay. magDb arrays are linear-frequency bins from DC to Nyquist
     // (length = N/2 + 1). Bin spacing is sampleRate / N.
+    void setSpectra(const QVector<float> &inMagDb, const QVector<float> &outMagDb,
+                    double sampleRate, int fftSize);
     void setInputSpectrum(const QVector<float> &magDb, double sampleRate, int fftSize);
     void setOutputSpectrum(const QVector<float> &magDb, double sampleRate, int fftSize);
     void clearSpectra();
@@ -80,14 +86,26 @@ private:
     // Builds column-indexed frequency table + clears heatmap cache for the
     // current plot width. Called from resizeEvent.
     void rebuildColumnTables();
+    void rebuildAngularTables();
+    void rebuildResponseCurves();
+    void rebuildStaticLayers();
+    void rebuildSpectrumTargets(bool animate);
+    void updateAnimationTimer();
+    void rebuildHeatmapCache();
+    void projectSpectrum(const QVector<float> &mag, double specSr,
+                         QVector<float> &outY) const;
+    double spectrumInterpolationAlpha() const;
+    void buildSpectrumPolyline(const QVector<float> &fromY,
+                               const QVector<float> &targetY,
+                               double alpha, QVector<QPointF> &out) const;
     void renderHeatmapImage(const QVector<float> &mag, double specSr,
                             QImage &out) const;
 
-    void drawSpectrumOutline(class QPainter &p, const QVector<float> &mag,
-                             double specSampleRate, const QColor &fill,
+    void drawSpectrumOutline(class QPainter &p, const QVector<QPointF> &poly,
+                             const QColor &fill,
                              const QColor &stroke);
-    void drawSpectrumHeatmap(class QPainter &p, const QVector<float> &mag,
-                             double specSampleRate, QImage &cache);
+    void drawSpectrumHeatmap(class QPainter &p, const QVector<QPointF> &poly,
+                             QImage &cache);
 
     QVector<EqBandData> m_bands;
     double m_sampleRate = 48000.0;
@@ -108,6 +126,10 @@ private:
     // --- Per-resize caches ---
     // m_colFreq[i] = frequency at pixel-column i (i=0..plotWidth-1).
     QVector<double> m_colFreq;
+    QVector<double> m_colCosW;
+    QVector<double> m_colCos2W;
+    QVector<double> m_colSinW;
+    QVector<double> m_colSin2W;
     int m_cachedPlotWidth = 0;
     int m_cachedPlotHeight = 0;
     // Pre-rendered heatmap stripes for input/output. Re-rasterized when the
@@ -115,16 +137,44 @@ private:
     // per-column setPen + drawLine).
     QImage m_heatInImage;
     QImage m_heatOutImage;
+    QElapsedTimer m_heatmapClock;
+
+    // FFT targets arrive at ~60 Hz. The display curves interpolate between
+    // them on a screen-refresh-paced timer without repeating FFT or
+    // spectrum-projection work.
+    QVector<float> m_inSpectrumFromY;
+    QVector<float> m_inSpectrumTargetY;
+    QVector<float> m_outSpectrumFromY;
+    QVector<float> m_outSpectrumTargetY;
+    QElapsedTimer m_spectrumInterpolationClock;
+    QChronoTimer m_animationTimer;
+    bool m_spectrumAnimating = false;
 
     // Reusable scratch buffers for line strokes — avoids allocation per paint.
     QVector<QPointF> m_scratchPolyA;
     QVector<QPointF> m_scratchPolyB;
+
+    // EQ response geometry changes only when parameters, sample rate, or size
+    // changes. Spectrum-only repaints reuse these polylines.
+    QVector<QVector<QPointF>> m_liveBandPolys;
+    QVector<QPointF> m_staticCombinedPoly;
+    QVector<QPointF> m_liveCombinedPoly;
+    bool m_responseCurvesDirty = true;
+
+    // Background chrome and grid text never change between resizes. Keeping
+    // them in pixmaps makes high-refresh animation frames mostly texture blits
+    // plus dynamic polylines.
+    QPixmap m_backgroundLayer;
+    QPixmap m_gridLayer;
+    bool m_staticLayersDirty = true;
 
     static constexpr double kFreqMin = 20.0;
     static constexpr double kFreqMax = 20000.0;
     static constexpr double kDbRange = 24.0;
     static constexpr double kSpecDbMin = -90.0;
     static constexpr double kSpecDbMax = 0.0;
+    static constexpr int kSpectrumInterpolationMs = 17;
+    static constexpr int kHeatmapIntervalMs = 33;
 };
 
 } // namespace ui
