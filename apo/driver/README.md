@@ -3,10 +3,13 @@
 This folder contains the supported deployment shape for the low-latency APO:
 
 - `TeeDspApoComponent.inf` installs the trusted APO software component from the Driver Store.
-- `TeeDspRealtekExtension.inf` is the controlled test extension. It follows the installed Realtek UAD package's `InterfaceSetting` pattern and binds TeeDSP to the non-critical analogue output's `SingleLineOutTopo` interface.
-- `New-TeeDspApoDriverPackage.ps1` stages the DLL and both INFs, runs Inf2Cat, signs the DLL before catalog generation, and signs the resulting catalog.
+- `TeeDspRealtekExtension.inf` binds TeeDSP to the Realtek analogue output's `SingleLineOutTopo` interface as a composite MFX, following the installed Realtek UAD package's `InterfaceSetting` pattern.
+- `TeeDspAirPodsExtension.inf` binds TeeDSP as an `FX\0` stream effect (DEFAULT mode only) on the AirPods Pro A2DP render endpoint. It carries its own catalog (`TeeDspAirPods.cat`) and is staged, signed and installed as its own package, separately from the component package below — installed device extensions persist in the Driver Store and re-associate by ComponentID whenever the component is refreshed, so routine DSP deploys never touch it. Re-stage it (same Inf2Cat + signtool steps) only when the binding itself changes, and bump its `DriverVer` when you do.
+- `New-TeeDspApoDriverPackage.ps1` stages the DLL plus the component and Realtek INFs, runs Inf2Cat, signs the DLL before catalog generation, and signs the resulting catalog.
 
-The component and extension must be catalog-signed as one driver package. Test deployment requires a trusted test certificate and test-signing mode; production deployment requires a production-signed driver package. Do not use the legacy `apo/install/Install.ps1` script for this deployment path. The Realtek extension is deliberately a test target; it does not bind to AirPods.
+Device targeting is deliberate (see WORKLOG): Realtek and AirPods get the APO; the Focusrite is reserved for music production and never does.
+
+The component and Realtek extension must be catalog-signed as one driver package. Test deployment requires a trusted test certificate and test-signing mode; production deployment requires a production-signed driver package. Do not use the legacy `apo/install/Install.ps1` script for this deployment path.
 
 Stage an unsigned package for validation:
 

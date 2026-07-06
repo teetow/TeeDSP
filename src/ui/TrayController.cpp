@@ -77,18 +77,6 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
     m_showAction = m_menu->addAction(QStringLiteral("&Show TeeDSP"));
     connect(m_showAction, &QAction::triggered, this, &TrayController::onShowToggle);
 
-    m_startStopAction = m_menu->addAction(QStringLiteral("&Start"));
-    connect(m_startStopAction, &QAction::triggered, this, [this]() {
-        emit startStopRequested();
-    });
-
-    m_setAsActiveAction = m_menu->addAction(QStringLiteral("Set as &active"));
-    connect(m_setAsActiveAction, &QAction::triggered, this, [this]() {
-        emit setAsActiveRequested();
-    });
-
-    m_menu->addSeparator();
-
     m_inputMenu = m_menu->addMenu(QStringLiteral("&Input"));
     m_outputMenu = m_menu->addMenu(QStringLiteral("&Output"));
 
@@ -135,9 +123,6 @@ void TrayController::setRunning(bool running)
     if (m_runningKnown && m_running == running) return;
     m_running = running;
     m_runningKnown = true;
-    if (m_startStopAction) {
-        m_startStopAction->setText(running ? QStringLiteral("Sto&p") : QStringLiteral("&Start"));
-    }
     if (m_tray) m_tray->setIcon(running ? m_runningIcon : m_stoppedIcon);
 }
 

@@ -37,8 +37,6 @@ public:
                            const QString &selectedOutputId);
 
 signals:
-    void startStopRequested();
-    void setAsActiveRequested();
     void bypassToggled(bool on);
     void startWithWindowsToggled(bool on);
     void inputDeviceSelected(const QString &id);
@@ -57,8 +55,6 @@ private:
     QSystemTrayIcon *m_tray = nullptr;
     QMenu *m_menu = nullptr;
     QAction *m_showAction = nullptr;
-    QAction *m_startStopAction = nullptr;
-    QAction *m_setAsActiveAction = nullptr;
     QMenu *m_inputMenu = nullptr;
     QMenu *m_outputMenu = nullptr;
     QAction *m_bypassAction = nullptr;

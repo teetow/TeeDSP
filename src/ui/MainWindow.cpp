@@ -1103,9 +1103,6 @@ void MainWindow::connectSignals()
     });
 
     if (m_tray) {
-        // Start/Stop and "Set as active" are bridge-era actions that would
-        // re-route Windows audio and spin up the capture engine — retired, so
-        // the tray can't fight the APO.
         connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
             m_dspController->setBypass(b);
         });
@@ -1400,9 +1397,26 @@ struct DefaultOutInfo { bool hasApo = false; QString name; QString id; };
 // stack keeps its own MFX and hosts TeeDSP in the third-party SFX slot (pid 5).
 DefaultOutInfo queryDefaultOut()
 {
+    // defaultRenderId() alone is a COM round trip (cheap); the two
+    // FxProperties/Properties registry reads below are not, and the default
+    // device changes only on rare user action — so skip them on most 400ms
+    // status-poll ticks where the device hasn't changed. Bounded to ~10s
+    // (not cached indefinitely) so re-registering the FX binding mid-session
+    // — e.g. deploy-apo.ps1 installing a new device-extension package while
+    // developing — still shows up without an app restart.
+    constexpr int kRecheckEveryTicks = 25;
+    static QString s_lastId;
+    static DefaultOutInfo s_lastInfo;
+    static bool s_hasCache = false;
+    static int s_ticksSinceRecheck = 0;
+
     DefaultOutInfo info;
     const QString def = host::WasapiDevices::defaultRenderId();   // {0.0.0...}.{guid}
-    if (def.isEmpty()) return info;
+    if (def.isEmpty()) { s_hasCache = false; return info; }
+    if (s_hasCache && def == s_lastId && ++s_ticksSinceRecheck < kRecheckEveryTicks)
+        return s_lastInfo;
+    s_ticksSinceRecheck = 0;
+
     info.id = def;
     const int dot = def.lastIndexOf(QLatin1Char('.'));
     const QString guid = (dot >= 0) ? def.mid(dot + 1) : def;
@@ -1423,6 +1437,10 @@ DefaultOutInfo queryDefaultOut()
     QSettings pr(base + QStringLiteral("\\Properties"), QSettings::NativeFormat);
     info.name = pr.value(QStringLiteral("{a45c254e-df1c-4efd-8020-67d146a850e0},2")).toString();
     if (info.name.isEmpty()) info.name = QStringLiteral("current output");
+
+    s_lastId = def;
+    s_lastInfo = info;
+    s_hasCache = true;
     return info;
 }
 } // namespace

@@ -1,23 +1,16 @@
 # TeeDSP APO
 
-Stage 1 of moving TeeDSP off the virtual-cable architecture and into the
-Windows audio engine itself, as an [Audio Processing Object](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/windows-audio-processing-objects).
+TeeDSP's audio path. The full DSP chain runs system-wide as an
+[Audio Processing Object](https://learn.microsoft.com/en-us/windows-hardware/drivers/audio/windows-audio-processing-objects)
+inside `audiodg.exe` — there is no in-app audio engine. Processing is
+always-on: the APO loads the persisted `dsp::ChainParams` baseline at stream
+start, and the UI (when running) provides live control and metering over a
+shared-memory block (`Global\TeeDspApoSharedV8`, see
+[src/shared/TeeDspApoShared.h](../src/shared/TeeDspApoShared.h)) with a
+heartbeat so the APO can tell whether a UI is alive.
 
-## What this stage delivers
-
-A pass-through APO. No DSP. Audio plays through unchanged. The point of
-this stage is to validate the COM/registration plumbing on real hardware
-before we touch any DSP code:
-
-- COM CLSID registration
-- APO discovery by the Windows audio engine
-- Endpoint binding via `PKEY_FX_ModeEffectClsid`
-- Format negotiation succeeds for whatever the endpoint hands us
-- Buffers flow through `APOProcess` without dropouts
-
-If audio plays through cleanly with TeeDSP bound to your AirPods, the
-hard part is done. Stage 2 adds the IPC bridge to the UI; Stage 3 plugs
-[`ProcessorChain`](../src/dsp/ProcessorChain.h) into `APOProcess`.
+Loaded and processing in `audiodg` since 2026-06-20; bound to AirPods since
+2026-06-22.
 
 ## Files
 
@@ -28,23 +21,25 @@ hard part is done. Stage 2 adds the IPC bridge to the UI; Stage 3 plugs
 | [DllMain.cpp](DllMain.cpp) | DLL exports, class factory, `DllRegisterServer` |
 | [TeeDspApo.def](TeeDspApo.def) | Export names |
 | [CMakeLists.txt](CMakeLists.txt) | Build target — separate from the main app |
-| [driver/](driver/) | Component and Focusrite extension INFs, package staging and signing |
+| [driver/](driver/) | Component, Realtek and AirPods extension INFs; package staging and signing |
 | [tests/](tests/) | Direct-render and COM-registration probe |
 | [install/Uninstall.ps1](install/Uninstall.ps1) | Legacy loose-DLL cleanup only |
 
 ## Deployment
 
 The supported path is a **componentized driver package**, not a loose DLL in
-`System32`. The package supplies an AudioProcessingObject software component
-and a device-extension INF which associates it with the target endpoint.
+`System32` — see [driver/README.md](driver/README.md). For routine dev
+iteration use `scripts\deploy-apo.ps1` from the repo root; rebuilding the
+project alone never updates the Driver Store copy that `audiodg` actually
+loads.
 
-For the Focusrite development device, build and stage the package with the
-files in [`driver/`](driver/). The staging script validates both INFs with
-Inf2Cat; installation remains a separate, deliberate driver-stack change.
+Device targeting is deliberate (see WORKLOG): the APO belongs on **Realtek**
+(speakers) and **AirPods** (voice/media — the killer use case). The
+**Focusrite is reserved for music production and never gets the APO**; a grey
+tray on Focusrite is correct, permanent behavior.
 
 The old scripts in `install/` are retained only to remove an existing legacy
-installation. They are not the deployment mechanism for the componentized
-APO.
+installation. They are not the deployment mechanism for the componentized APO.
 
 ## Legacy cleanup
 
@@ -55,27 +50,39 @@ APO.
 
 ## Slot choice
 
-We bind to the **MFX (Mode Effect)** slot — `PKEY_FX_ModeEffectClsid`,
-PID 6 of `{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D}`. That puts us
-**post-mix**: every stream into the endpoint hits us mixed together,
-exactly once. SFX (per-stream pre-mix) would run TeeDSP separately for
-every Spotify+browser+Discord stream — wrong shape for a master-bus
-processor.
+The two endpoints bind differently, by necessity:
 
-## Limitations (known, accepted at this stage)
+- **Realtek** — composite **MFX** (`PKEY_CompositeFX_ModeEffectClsid`, PID 14),
+  following the Realtek UAD package's `InterfaceSetting` pattern. Post-mix:
+  every stream into the endpoint hits us mixed together, exactly once — the
+  right shape for a master-bus processor.
+- **AirPods** — **SFX stream effect** (`FX\0`, `PKEY_FX_StreamEffectClsid`),
+  because the inbox Bluetooth A2DP driver owns the `MSFX` slots and adding a
+  second MFX breaks the graph on reconnect (see
+  [driver/TeeDspAirPodsExtension.inf](driver/TeeDspAirPodsExtension.inf)).
+  SFX is per-stream pre-mix, so concurrent streams each get their own APO
+  instance — the shared telemetry block handles this (refcounted lock,
+  meter-owner election).
+
+## Limitations (known, accepted)
 
 - **Exclusive-mode** and **ASIO** streams bypass the audio engine and
-  therefore bypass the APO. There is no fix for this — it's
-  architectural.
+  therefore bypass the APO. There is no fix for this — it's architectural.
+- **AirPods Communications-mode streams** (Zoom/Teams playback) currently
+  bypass the APO: the v1.0.2 COMMUNICATIONS-mode SFX registration broke
+  endpoint reuse on Bluetooth reconnect and was removed in v1.0.3. Comms
+  processing needs a different mechanism.
 - **AirPods Hands-Free mode** (HFP, 16k mono) is a separate endpoint
   from A2DP stereo. You'll see TeeDSP "stop working" when an app opens
   the mic and Windows switches endpoints. Not a concern per project
   notes — user does not use HFP mode.
-- **No UI bridge yet.** Stage 2.
+- **Dev-signed only.** The package uses a self-signed dev cert; production
+  needs a properly signed driver package. Known recurrence: `audiodg` can
+  relaunch protected, which silently unloads the APO on every endpoint —
+  recover with `scripts\Restart-AudioEngine.ps1` (elevated Audiosrv restart).
 
-## What remains to verify
+## Open investigation
 
-The componentized package now passes Inf2Cat validation. It has not yet been
-test-signed and installed, so `audiodg.exe` load and processing remain the
-next hardware-validation gate. That installation is intentionally deferred
-until the package certificate and test-signing/reboot requirements are ready.
+AirPods can wedge silently on Bluetooth reconnect (plays a few seconds, then
+nothing) with the endpoint GUID reused and active; endpoint churn was fixed by
+extension v1.0.3 but the wedge was not. See WORKLOG for the current playbook.

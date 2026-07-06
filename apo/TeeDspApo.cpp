@@ -252,8 +252,17 @@ void TeeDspApo::leaveSharedProcessing()
     if (!m_shm || !m_locked)
         return;
     uint32_t expected = m_instanceId;
-    std::atomic_ref<uint32_t>(m_shm->meterOwner)
+    const bool wasOwner = std::atomic_ref<uint32_t>(m_shm->meterOwner)
         .compare_exchange_strong(expected, 0u, std::memory_order_acq_rel);
+    if (wasOwner) {
+        // The format fields describe whichever stream owns the meters. Clear
+        // them so observers don't keep showing a torn-down stream's format;
+        // whichever instance is next elected owner republishes its own from
+        // publishMeters().
+        m_shm->channels = 0;
+        m_shm->sampleRate = 0;
+        m_shm->bytesPerFrame = 0;
+    }
     m_ownsMeters = false;
     std::atomic_ref<uint32_t>(m_shm->activeStreams)
         .fetch_sub(1u, std::memory_order_acq_rel);
@@ -264,6 +273,13 @@ void TeeDspApo::publishMeters(const float *inBuf, const float *outBuf, UINT32 fr
 {
     if (!m_shm || !m_ownsMeters) return;   // only the elected owner writes meters/ring
     const UINT32 ch = m_channels ? m_channels : 1;
+
+    // Format follows the elected owner, refreshed every block so a change of
+    // ownership (e.g. the previous owner's stream ended) self-corrects within
+    // one process call instead of showing whichever instance last locked.
+    m_shm->channels      = m_channels;
+    m_shm->sampleRate    = m_sampleRate;
+    m_shm->bytesPerFrame = m_bytesPerFrame;
 
     // Single pass: peaks, output power (for RMS), and the mono pre/post sample
     // ring for the UI spectrum analyzer.
@@ -301,14 +317,23 @@ void TeeDspApo::publishMeters(const float *inBuf, const float *outBuf, UINT32 fr
     m_shm->outRmsDbfs = (n > 0.0 && sumSq > 1e-12)
         ? static_cast<float>(10.0 * std::log10(sumSq / n)) : -120.0f;
 
-    // Chain telemetry (atomic getters — cheap, RT-safe).
+    // Chain telemetry (atomic getters — cheap, RT-safe). The shared struct's
+    // spectralGainDb/bandGrDb are fixed-size arrays sized to match these band
+    // counts today (see static_asserts below); a mismatch would overrun into
+    // the neighbouring shared-memory field, so the write loops always derive
+    // their bound from the same named constants the arrays are asserted against.
+    static_assert(sizeof(teedsp::ApoShared::spectralGainDb) / sizeof(float)
+                  == dsp::SpectralLeveler::kBandCount,
+                  "ApoShared::spectralGainDb size must match dsp::SpectralLeveler::kBandCount");
+    static_assert(sizeof(teedsp::ApoShared::bandGrDb) / sizeof(float) == dsp::kEqBandCount,
+                  "ApoShared::bandGrDb size must match dsp::kEqBandCount");
     m_shm->compGrDb         = m_chain.compressor().currentGainReductionDb();
     m_shm->levelerGainDb    = m_chain.leveler().currentGainDb();
     for (int b = 0; b < dsp::SpectralLeveler::kBandCount; ++b)
         m_shm->spectralGainDb[b] = m_chain.spectralLeveler().currentGainDb(b);
     m_shm->outLevelerGainDb = m_chain.outputLeveler().currentGainDb();
     dsp::ParametricEQ &eq = m_chain.eq();
-    for (int b = 0; b < 5; ++b)
+    for (int b = 0; b < dsp::kEqBandCount; ++b)
         m_shm->bandGrDb[b] = eq.bandDynamicGainReductionDb(b);
 
     // Momentary LUFS on the post-chain output (decays toward silence when
@@ -484,9 +509,13 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
     m_lastAppliedGen = 0;
     m_framesSinceHeartbeat = 0;
     if (m_shm) {
-        m_shm->channels        = m_channels;
-        m_shm->sampleRate      = m_sampleRate;
-        m_shm->bytesPerFrame   = m_bytesPerFrame;
+        // channels/sampleRate/bytesPerFrame are NOT written here: with 2+
+        // concurrent instances (e.g. a Communications-mode stream + a media
+        // stream), whichever locked most recently would clobber the format
+        // the other is actively running at. They're published only by the
+        // elected meterOwner, in publishMeters(), and cleared by
+        // leaveSharedProcessing() when that owner unlocks — so they always
+        // describe whichever stream's meters are currently shown.
         // processCalls/framesProcessed are cumulative across ALL concurrent
         // instances now — never reset here (that would zero the counter mid-
         // stream for another instance). They're initialised once on creation.
@@ -549,7 +578,8 @@ void STDMETHODCALLTYPE TeeDspApo::APOProcess(
     if (m_shm) {
         const UINT32 frames = in->u32ValidFrameCount;
         InterlockedIncrement64(reinterpret_cast<volatile LONG64 *>(&m_shm->processCalls));
-        m_shm->lastBufferFlags = in->u32BufferFlags;
+        std::atomic_ref<uint64_t>(m_shm->lastBufferFlags)
+            .store(in->u32BufferFlags, std::memory_order_relaxed);
         if (in->u32BufferFlags == BUFFER_VALID)
             InterlockedExchangeAdd64(reinterpret_cast<volatile LONG64 *>(&m_shm->framesProcessed),
                                      static_cast<LONG64>(frames));

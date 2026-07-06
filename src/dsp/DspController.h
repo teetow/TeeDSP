@@ -15,7 +15,7 @@
 namespace dsp {
 
 // Band count, mirrored from the shared param contract. Kept as a dsp:: name so
-// existing call sites read unchanged; the DSP itself now lives in the plugin.
+// existing call sites read unchanged; the DSP itself now runs in the system APO.
 inline constexpr int kEqBandCount = teedsp::kBandCount;
 inline constexpr int kSpectralLevelerBandCount = 4;
 
@@ -37,9 +37,10 @@ struct EqBandView {
 };
 
 // QObject param model for the UI. Owns the canonical copy of every parameter,
-// pushes changes to the CLAP plugin via ClapHost (lock-free SPSC queue), and
-// pulls live metering back through the plugin's telemetry extension. The DSP
-// itself runs inside teedsp.clap, not here.
+// persists every change to the params file (the always-on baseline the APO
+// loads at stream start), pushes it live through the APO shared block when one
+// is open, and pulls status/metering back the same way (ApoSharedClient). The
+// DSP itself runs inside the system APO in audiodg, not here.
 class DspController : public QObject
 {
     Q_OBJECT
