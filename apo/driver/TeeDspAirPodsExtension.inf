@@ -11,17 +11,25 @@
 ; software component; this only binds it to this endpoint.
 ;
 ; v1.0.3 (installed 2026-07-03) removed the COMMUNICATIONS processing mode that
-; v1.0.2 registered alongside DEFAULT. Under v1.0.2 every AirPods Bluetooth
-; recovery minted a brand-new MMDevices render endpoint (15 abandoned endpoint
-; GUIDs between 06-26 and 07-02): the inbox BthA2dpSrc driver only advertises
-; DEFAULT for its A2DP render pin, and an SFX claiming a mode the underlying
-; graph cannot build breaks endpoint reuse on reconnect. Removing it fixed the
-; endpoint churn (confirmed 2026-07-06 — reconnects now reuse the endpoint
-; GUID), so comms-mode processing (Zoom/Teams playback through the APO) needs a
-; different mechanism than an SFX mode registration. Until it has one,
-; Communications-mode streams bypass the APO by design. Note the separate
-; silent-reconnect wedge was NOT fixed by this change and is still under
-; investigation (see WORKLOG).
+; v1.0.2 registered alongside DEFAULT, suspecting it broke endpoint reuse on
+; Bluetooth reconnect (15 abandoned endpoint GUIDs 06-26..07-02). RE-LITIGATED
+; 2026-07-07 against the Audio/Operational event log: that attribution is a
+; CONFOUNDED ASSOCIATION, not an established cause. Churn continued after the
+; removal (same PnP interface-teardown signature at connect time), the v1.0.2
+; era reused GUIDs cleanly on ~57% of reconnects, and the v1.0.3 A/B coincided
+; with a package cleanup, a fresh endpoint, and an APO component reinstall.
+; The mint rate did drop ~4x, so DEFAULT-only stays (it is also sufficient —
+; see below); if COMMS registration is ever needed again, gate it on the
+; event-log metric (scripts\Get-AirPodsEndpointHistory.ps1) over matched
+; windows.
+;
+; COMMS registration turned out to be unnecessary anyway: comms apps bypass
+; the APO because they open RAW streams, not because of the mode list. With
+; Zoom's "Windows system audio enhancements" set to On (confirmed 2026-07-07)
+; the stream is non-RAW and falls back to DEFAULT mode, which this INF
+; registers — Zoom playback is processed with DEFAULT only. The separate
+; silent-reconnect wedge persists and is still under investigation (see
+; WORKLOG).
 ;
 ; Target is the AirPods-specific hardware id (Apple VID 004C / PID 2024) so we
 ; do not blanket every A2DP headphone.

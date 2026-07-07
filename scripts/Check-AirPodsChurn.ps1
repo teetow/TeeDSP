@@ -3,12 +3,17 @@
     Snapshot of AirPods A2DP render-endpoint state for the churn A/B test.
 
 .DESCRIPTION
-    Lists every "Headphones" render endpoint under MMDevices with its creation
-    time, device state, and whether the TeeDSP SFX binding still advertises the
-    COMMUNICATIONS processing mode. Run once to baseline, disconnect/reconnect
-    the AirPods, then run again: a brand-new endpoint GUID appearing (and the old
-    one going UNPLUGGED) means the churn is still happening. No new GUID + audio
-    plays without restarting Bluetooth means the v1.0.3 fix worked.
+    Lists every "Headphones" render endpoint under MMDevices with its registry
+    key last-write time, device state, and whether the TeeDSP SFX binding still
+    advertises the COMMUNICATIONS processing mode. Run once to baseline,
+    disconnect/reconnect the AirPods, then run again: a brand-new endpoint GUID
+    appearing (and the old one going UNPLUGGED) means a mint happened.
+
+    NOTE (2026-07-07): the timestamp is RegQueryInfoKey last-write — the last
+    state change, NOT creation time (registry keys have no creation time). For
+    tombstones it approximates abandonment time. For actual mint/reuse history
+    and churn rates use Get-AirPodsEndpointHistory.ps1, which reads the
+    Audio/Operational event log and is immune to tombstone cleanup.
 
     Non-elevated; read-only.
 #>
@@ -50,7 +55,7 @@ $rows = foreach ($n in $base.GetSubKeyNames()) {
         $fx.Close()
     }
     [PSCustomObject]@{
-        Created  = [RegTime]::Get($k)
+        LastWrite = [RegTime]::Get($k)
         State    = switch ((Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$n").DeviceState) {
                        1 {'ACTIVE'} 2 {'DISABLED'} 4 {'NOTPRESENT'} 8 {'UNPLUGGED'} default {"0x$('{0:x}' -f $_)"} }
         TeeSFX   = $isTee
@@ -60,8 +65,8 @@ $rows = foreach ($n in $base.GetSubKeyNames()) {
     $k.Close(); if ($props){$props.Close()}
 }
 
-$rows = $rows | Sort-Object Created
-$rows | Format-Table @{n='Created';e={'{0:MM-dd HH:mm}' -f $_.Created}}, State, TeeSFX, CommsMode, Endpoint -AutoSize
+$rows = $rows | Sort-Object LastWrite
+$rows | Format-Table @{n='LastWrite';e={'{0:MM-dd HH:mm}' -f $_.LastWrite}}, State, TeeSFX, CommsMode, Endpoint -AutoSize
 "Total AirPods 'Headphones' endpoints: $($rows.Count)"
 $newest = $rows | Select-Object -Last 1
-if ($newest) { "Newest endpoint: $($newest.Endpoint)  created $('{0:yyyy-MM-dd HH:mm:ss}' -f $newest.Created)  state=$($newest.State)  commsMode=$($newest.CommsMode)" }
+if ($newest) { "Most recently written: $($newest.Endpoint)  lastWrite $('{0:yyyy-MM-dd HH:mm:ss}' -f $newest.LastWrite)  state=$($newest.State)  commsMode=$($newest.CommsMode)" }

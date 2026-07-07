@@ -61,6 +61,44 @@ through a case-out/case-in cycle. Reversible: `pnputil /delete-driver oem99.inf`
 7. Production signing (WHQL/attestation) so it loads into a *protected* audiodg;
    `DisableProtectedAudioDG` is dev-only.
 
+## ✅ Zoom playback processed + churn verdict re-litigated (2026-07-07)
+
+**Zoom/comms playback SOLVED with zero driver changes.** Root cause of the
+bypass was Zoom opening a RAW shared stream (`AUDCLNT_STREAMOPTIONS_RAW`), not
+any registration gap. Zoom → Settings → Audio → Advanced →
+**"Windows system audio enhancements" = On** (leave "Signal processing by
+Windows audio device drivers" = Off — that one governs Zoom's raw-mic path)
+makes the render stream non-RAW; a comms-category stream on a pin that only
+advertises DEFAULT falls back to DEFAULT processing mode, so the existing
+DEFAULT-only registrations process it. User-verified on **Realtek and AirPods**
+(meters + audible EQ). Caveats: setting may reset on Zoom updates; Win11 has
+documented flakiness where enhancements revert mid-call. First speaker-switch
+to AirPods mid-session wedged Zoom (Test Speaker dead) until a BT radio reset —
+matches the known wedge signature, new trigger, n=1; if it recurs run
+`scripts\Restart-AudioEngine.ps1` BEFORE any BT reset (discriminates
+engine vs transport).
+
+**"COMMS mode = churn destabilizer" downgraded to confounded association**
+(evidence: Audio/Operational event 65 for 06-27→07-07 + setupapi.dev.log;
+tooling: `scripts\Get-AirPodsEndpointHistory.ps1`):
+- Churn was NOT fixed by v1.0.3: organic GUID mints continued (07-06 10:45,
+  07-07 11:55), same signature — old endpoint UNPLUGGED→NOTPRESENT, new GUID
+  ACTIVE ~3 s later at connect time = PnP interface teardown/recreate
+  (BT-stack level, below the audio engine).
+- v1.0.2 era was never deterministic: 12 in-window mints but ~57% of
+  reconnects reused the GUID cleanly with COMMS mode registered.
+- The v1.0.3 A/B was confounded: same-day oem106 removal + package cleanup
+  (07-03 17:33), a freshly minted endpoint (stale-state purge), the APO
+  component 0.1.5.0 reinstall 07-04 12:44 (the 07-04 12:56 "churn" was an
+  install artifact 12 min later), and an unmeasured weekend window.
+- Mint rate did drop ~4x (2.2/day → ~0.5/day organic) — association real,
+  attribution unproven. Registry endpoint counts were the wrong metric twice
+  over (key timestamps are last-write, not creation; cleanup distorts counts) —
+  use the event-log script for any future churn claims.
+- Consequence: COMMS-mode SFX registration is un-banned but moot (DEFAULT
+  fallback suffices for Zoom); if ever revisited, gate on the event-log metric
+  over matched windows with no concurrent driver deploys.
+
 ## ✅ PROVEN: APO PROCESSES audio in audiodg (2026-06-20, later)
 `APOProcess` is confirmed executing on real buffers inside audiodg, verified
 deterministically (not by ear) via a cross-process telemetry block the APO

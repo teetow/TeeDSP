@@ -68,10 +68,18 @@ The two endpoints bind differently, by necessity:
 
 - **Exclusive-mode** and **ASIO** streams bypass the audio engine and
   therefore bypass the APO. There is no fix for this — it's architectural.
-- **AirPods Communications-mode streams** (Zoom/Teams playback) currently
-  bypass the APO: the v1.0.2 COMMUNICATIONS-mode SFX registration broke
-  endpoint reuse on Bluetooth reconnect and was removed in v1.0.3. Comms
-  processing needs a different mechanism.
+- **Comms apps open RAW streams** (`AUDCLNT_STREAMOPTIONS_RAW`), which bypass
+  all APOs by design — no registration can reach them. **Solved for Zoom
+  (confirmed 2026-07-07):** Zoom → Settings → Audio → Advanced →
+  **"Windows system audio enhancements" = On** makes the stream non-RAW; it
+  then falls back to DEFAULT processing mode (the only mode our registrations
+  cover) and is processed. Verified on both Realtek and AirPods. "Signal
+  processing by Windows audio device drivers" can stay Off (that governs
+  Zoom's raw-mic behavior). Caveats: the setting can reset on Zoom updates,
+  and Win11 has documented flakiness where enhancements silently revert
+  mid-call (meters go flat, sound turns raw) — re-toggle if so. Teams/Discord
+  would need their own equivalents (untested). No COMMS-mode INF registration
+  is needed for this — see the re-litigation note below.
 - **AirPods Hands-Free mode** (HFP, 16k mono) is a separate endpoint
   from A2DP stereo. You'll see TeeDSP "stop working" when an app opens
   the mic and Windows switches endpoints. Not a concern per project
@@ -84,5 +92,21 @@ The two endpoints bind differently, by necessity:
 ## Open investigation
 
 AirPods can wedge silently on Bluetooth reconnect (plays a few seconds, then
-nothing) with the endpoint GUID reused and active; endpoint churn was fixed by
-extension v1.0.3 but the wedge was not. See WORKLOG for the current playbook.
+nothing) with the endpoint GUID reused and active. A new trigger was observed
+2026-07-07: switching Zoom's speaker to AirPods mid-session can wedge the
+endpoint the same way (Zoom Test Speaker goes dead until a BT radio reset).
+See WORKLOG for the current playbook.
+
+**Endpoint churn re-litigated 2026-07-07** (Audio/Operational event 65 +
+setupapi.dev.log; see `scripts\Get-AirPodsEndpointHistory.ps1`): churn was
+NOT fixed by extension v1.0.3 — organic GUID mints continued after the
+COMMUNICATIONS-mode removal, with the same signature (PnP interface
+teardown/recreate at connect time, a BT-stack-level event). The v1.0.2 era
+was also never deterministic (~57% of reconnects reused the GUID cleanly with
+COMMS mode present). The mint rate did drop ~4x after v1.0.3, but that change
+was confounded with a same-day package cleanup, a freshly minted endpoint,
+and an APO component reinstall — so "COMMS mode broke endpoint reuse" is a
+**confounded association, not an established cause**. Re-adding COMMS mode is
+no longer forbidden, just unnecessary (see the Zoom item above) and
+experiment-gated (measure with Get-AirPodsEndpointHistory.ps1 over matched
+windows if ever revisited).
