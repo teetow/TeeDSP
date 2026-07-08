@@ -2,6 +2,8 @@
 
 #include "../Theme.h"
 
+#include <QDir>
+#include <QFile>
 #include <QMouseEvent>
 #include <QContextMenuEvent>
 #include <QMenu>
@@ -10,11 +12,18 @@
 #include <QPen>
 #include <QResizeEvent>
 #include <QScreen>
+#include <QVarLengthArray>
 #include <QWheelEvent>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <timeapi.h>
+#pragma comment(lib, "winmm")
+#endif
 
 namespace ui {
 
@@ -173,6 +182,59 @@ inline double magDbAt(const BiquadCoefs &c,
     return 10.0 * std::log10(numMag2 / denMag2);
 }
 
+// Set TEEDSP_FPS_LOG=1 to append per-second pipeline rates (FFT target
+// arrivals, animation ticks, paints) to %TEMP%\teedsp_fps.log. Measures where
+// the spectrum display actually loses frame rate instead of guessing.
+struct FpsProbe {
+    const bool enabled = qEnvironmentVariableIsSet("TEEDSP_FPS_LOG");
+    QElapsedTimer clock;
+    int spectra = 0, animating = 0, animTicks = 0, paints = 0;
+    int rasters = 0, respRebuilds = 0, layerRebuilds = 0;
+    int plotW = 0, plotH = 0;
+    double refreshHz = 0.0;
+    qint64 animIntervalNs = 0;
+    qint64 nsBg = 0, nsSpec = 0, nsRest = 0;
+    qint64 nsEnsure = 0, nsBlit = 0, nsStroke = 0, nsResp = 0, nsLayer = 0;
+
+    void flush()
+    {
+        if (!enabled) return;
+        if (!clock.isValid()) { clock.start(); return; }
+        if (clock.elapsed() < 1000) return;
+        QFile f(QDir::temp().filePath(QStringLiteral("teedsp_fps.log")));
+        if (f.open(QIODevice::Append | QIODevice::Text)) {
+            const double n = std::max(1, paints);
+            f.write(QStringLiteral("spectra=%1 animStarts=%2 animTicks=%3 "
+                                   "paints=%4 refreshHz=%5 animIntervalMs=%6 "
+                                   "bgMs=%7 specMs=%8 restMs=%9 "
+                                   "rasters=%10 resp=%11 layer=%12 plot=%13x%14\n")
+                        .arg(spectra).arg(animating).arg(animTicks).arg(paints)
+                        .arg(refreshHz, 0, 'f', 1)
+                        .arg(static_cast<double>(animIntervalNs) / 1e6, 0, 'f', 2)
+                        .arg(static_cast<double>(nsBg) / 1e6 / n, 0, 'f', 2)
+                        .arg(static_cast<double>(nsSpec) / 1e6 / n, 0, 'f', 2)
+                        .arg(static_cast<double>(nsRest) / 1e6 / n, 0, 'f', 2)
+                        .arg(rasters).arg(respRebuilds).arg(layerRebuilds)
+                        .arg(plotW).arg(plotH)
+                        .toUtf8());
+            f.write(QStringLiteral("  ensureMs=%1 blitMs=%2 strokeMs=%3 "
+                                   "respMs=%4 layerMs=%5\n")
+                        .arg(static_cast<double>(nsEnsure) / 1e6 / n, 0, 'f', 2)
+                        .arg(static_cast<double>(nsBlit) / 1e6 / n, 0, 'f', 2)
+                        .arg(static_cast<double>(nsStroke) / 1e6 / n, 0, 'f', 2)
+                        .arg(static_cast<double>(nsResp) / 1e6 / n, 0, 'f', 2)
+                        .arg(static_cast<double>(nsLayer) / 1e6 / n, 0, 'f', 2)
+                        .toUtf8());
+        }
+        spectra = animating = animTicks = paints = 0;
+        rasters = respRebuilds = layerRebuilds = 0;
+        nsBg = nsSpec = nsRest = 0;
+        nsEnsure = nsBlit = nsStroke = nsResp = nsLayer = 0;
+        clock.restart();
+    }
+};
+FpsProbe g_fpsProbe;
+
 bool sameBand(const EqBandData &a, const EqBandData &b)
 {
     return a.enabled == b.enabled
@@ -181,7 +243,11 @@ bool sameBand(const EqBandData &a, const EqBandData &b)
         && a.q == b.q
         && a.gainDb == b.gainDb
         && a.dynThresholdDb == b.dynThresholdDb
-        && a.dynGainReductionDb == b.dynGainReductionDb;
+        // Live GR jitters by hundredths of a dB every telemetry tick; exact
+        // comparison made every tick rebuild the response curves + layer.
+        // Error stays bounded: once drift from the stored value reaches the
+        // epsilon the update goes through.
+        && std::abs(a.dynGainReductionDb - b.dynGainReductionDb) < 0.05f;
 }
 
 } // namespace
@@ -194,12 +260,40 @@ EqCurve::EqCurve(QWidget *parent) : QWidget(parent)
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     m_animationTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_animationTimer, &QChronoTimer::timeout, this, [this]() {
-        if (m_spectrumAnimating && isVisible()) {
+        const bool stale = !m_spectrumInterpolationClock.isValid()
+            || m_spectrumInterpolationClock.elapsed() > kSpectrumStaleMs;
+        if (m_spectrumAnimating && isVisible() && !stale) {
+            ++g_fpsProbe.animTicks;
             update();
         } else {
-            m_animationTimer.stop();
+            m_spectrumAnimating = false;
+            stopAnimation();
         }
     });
+}
+
+EqCurve::~EqCurve()
+{
+    setTimerResolutionRaised(false);
+}
+
+void EqCurve::stopAnimation()
+{
+    m_animationTimer.stop();
+    setTimerResolutionRaised(false);
+}
+
+void EqCurve::setTimerResolutionRaised(bool raised)
+{
+    if (m_timerResolutionRaised == raised) return;
+    m_timerResolutionRaised = raised;
+#ifdef Q_OS_WIN
+    // Windows quantizes timers to ~15.6 ms by default, which flattens both
+    // the 17 ms FFT feed and the refresh-paced animation timer to a fraction
+    // of their intended rates. Raise resolution only while animating so the
+    // process doesn't hold a wakeup-heavy setting when idle or hidden.
+    if (raised) timeBeginPeriod(1); else timeEndPeriod(1);
+#endif
 }
 
 void EqCurve::setSampleRate(double sr)
@@ -249,14 +343,15 @@ void EqCurve::setSpectra(const QVector<float> &inMag, const QVector<float> &outM
     m_outSpec = outMag;
     m_outSpecSr = sr;
 
-    if (m_showHeatmap
-        && (!m_heatmapClock.isValid() || m_heatmapClock.elapsed() >= kHeatmapIntervalMs)) {
-        rebuildHeatmapCache();
-        m_heatmapClock.restart();
-    }
-
+    ++g_fpsProbe.spectra;
     rebuildSpectrumTargets(true);
-    if (m_showInputSpectrum || m_showOutputSpectrum)
+    if (m_spectrumAnimating)
+        ++g_fpsProbe.animating;
+    // With the animation timer running, the next tick (≤ one frame away)
+    // repaints with these targets anyway — a second update() here would just
+    // add a wasted full repaint per FFT arrival.
+    if ((m_showInputSpectrum || m_showOutputSpectrum)
+        && !m_animationTimer.isActive())
         update();
 }
 
@@ -274,14 +369,13 @@ void EqCurve::clearSpectra()
 {
     m_inSpec.clear();
     m_outSpec.clear();
-    m_heatInImage = QImage();
-    m_heatOutImage = QImage();
+    m_spectrumImage = QImage();
     m_inSpectrumFromY.clear();
     m_inSpectrumTargetY.clear();
     m_outSpectrumFromY.clear();
     m_outSpectrumTargetY.clear();
     m_spectrumAnimating = false;
-    m_animationTimer.stop();
+    stopAnimation();
     update();
 }
 
@@ -289,8 +383,6 @@ void EqCurve::setShowInputSpectrum(bool show)
 {
     if (m_showInputSpectrum == show) return;
     m_showInputSpectrum = show;
-    if (m_showHeatmap)
-        rebuildHeatmapCache();
     update();
 }
 
@@ -298,8 +390,6 @@ void EqCurve::setShowOutputSpectrum(bool show)
 {
     if (m_showOutputSpectrum == show) return;
     m_showOutputSpectrum = show;
-    if (m_showHeatmap)
-        rebuildHeatmapCache();
     update();
 }
 
@@ -307,12 +397,6 @@ void EqCurve::setShowHeatmap(bool show)
 {
     if (m_showHeatmap == show) return;
     m_showHeatmap = show;
-    if (show) {
-        rebuildHeatmapCache();
-    } else {
-        m_heatInImage = QImage();
-        m_heatOutImage = QImage();
-    }
     update();
 }
 
@@ -398,12 +482,6 @@ void EqCurve::rebuildColumnTables()
     rebuildAngularTables();
     m_responseCurvesDirty = true;
     m_staticLayersDirty = true;
-
-    // Rasterize size changed → invalidate cached heatmap stripes.
-    m_heatInImage = QImage();
-    m_heatOutImage = QImage();
-    if (m_showHeatmap)
-        rebuildHeatmapCache();
     rebuildSpectrumTargets(false);
 }
 
@@ -436,6 +514,7 @@ void EqCurve::rebuildResponseCurves()
         m_staticCombinedPoly.clear();
         m_liveCombinedPoly.clear();
         m_responseCurvesDirty = false;
+        m_responseLayerDirty = true;
         return;
     }
 
@@ -456,17 +535,28 @@ void EqCurve::rebuildResponseCurves()
                                 band.gainDb - band.dynGainReductionDb, m_sampleRate);
         staticCoefs[i] = coefsFor(band.type, band.freqHz, band.q,
                                   band.gainDb, m_sampleRate);
-        m_liveBandPolys[i].resize(w);
     }
 
-    m_staticCombinedPoly.resize(w);
-    m_liveCombinedPoly.resize(w);
+    // 2 px sampling: response curves are smooth, and both the biquad
+    // magnitude math and the antialiased stroking scale with point count.
+    constexpr int kCurveStep = 2;
+    const int pointBudget = w / kCurveStep + 2;
+    m_staticCombinedPoly.clear();
+    m_staticCombinedPoly.reserve(pointBudget);
+    m_liveCombinedPoly.clear();
+    m_liveCombinedPoly.reserve(pointBudget);
+    for (int i = 0; i < nClamp; ++i) {
+        if (bandActive[i]) m_liveBandPolys[i].reserve(pointBudget);
+    }
+
     const double yScale = r.height() / (2.0 * kDbRange);
     const auto dbToY = [&r, yScale](double db) {
         return r.bottom() - (db + kDbRange) * yScale;
     };
-
-    for (int s = 0; s < w; ++s) {
+    // The faint per-band curves are context only — sample them at half the
+    // combined-curve density again; their magDbAt values are needed for the
+    // combined sums at every step regardless, so this only trims stroke work.
+    const auto sampleColumn = [&](int s, bool bandPointsToo) {
         double staticSumDb = 0.0;
         double liveSumDb = 0.0;
         const double cw = m_colCosW[s];
@@ -478,16 +568,23 @@ void EqCurve::rebuildResponseCurves()
             if (!bandActive[i]) continue;
             const double liveDb = magDbAt(liveCoefs[i], cw, cw2, sw, sw2);
             const double staticDb = magDbAt(staticCoefs[i], cw, cw2, sw, sw2);
-            m_liveBandPolys[i][s] = QPointF(r.left() + s, dbToY(liveDb));
+            if (bandPointsToo)
+                m_liveBandPolys[i].append(QPointF(r.left() + s, dbToY(liveDb)));
             liveSumDb += liveDb;
             staticSumDb += staticDb;
         }
 
-        m_staticCombinedPoly[s] = QPointF(r.left() + s, dbToY(staticSumDb));
-        m_liveCombinedPoly[s] = QPointF(r.left() + s, dbToY(liveSumDb));
-    }
+        m_staticCombinedPoly.append(QPointF(r.left() + s, dbToY(staticSumDb)));
+        m_liveCombinedPoly.append(QPointF(r.left() + s, dbToY(liveSumDb)));
+    };
+    for (int s = 0; s < w; s += kCurveStep)
+        sampleColumn(s, s % (2 * kCurveStep) == 0);
+    if ((w - 1) % kCurveStep != 0)
+        sampleColumn(w - 1, true);
 
+    ++g_fpsProbe.respRebuilds;
     m_responseCurvesDirty = false;
+    m_responseLayerDirty = true;
 }
 
 void EqCurve::projectSpectrum(const QVector<float> &mag, double specSr,
@@ -520,13 +617,22 @@ double EqCurve::spectrumInterpolationAlpha() const
     if (!m_spectrumInterpolationClock.isValid()) return 1.0;
     return std::clamp(
         static_cast<double>(m_spectrumInterpolationClock.nsecsElapsed())
-            / (static_cast<double>(kSpectrumInterpolationMs) * 1'000'000.0),
+            / (m_spectrumIntervalMs * 1'000'000.0),
         0.0, 1.0);
 }
 
 void EqCurve::rebuildSpectrumTargets(bool animate)
 {
     const double oldAlpha = animate ? spectrumInterpolationAlpha() : 1.0;
+    if (animate && m_spectrumInterpolationClock.isValid()) {
+        const double arrivalMs =
+            static_cast<double>(m_spectrumInterpolationClock.nsecsElapsed())
+                / 1'000'000.0;
+        if (arrivalMs < kSpectrumStaleMs) {
+            m_spectrumIntervalMs = std::clamp(
+                0.75 * m_spectrumIntervalMs + 0.25 * arrivalMs, 5.0, 120.0);
+        }
+    }
     bool changed = false;
     const auto advanceFrom = [animate, oldAlpha](QVector<float> &from,
                                                   const QVector<float> &target) {
@@ -556,6 +662,7 @@ void EqCurve::rebuildSpectrumTargets(bool animate)
     projectSpectrum(m_outSpec, m_outSpecSr, m_outSpectrumTargetY);
     detectChange(m_inSpectrumFromY, m_inSpectrumTargetY);
     detectChange(m_outSpectrumFromY, m_outSpectrumTargetY);
+    ++m_spectraGeneration;
 
     m_spectrumAnimating = animate && changed;
     if (m_spectrumAnimating)
@@ -568,9 +675,10 @@ void EqCurve::rebuildSpectrumTargets(bool animate)
 void EqCurve::updateAnimationTimer()
 {
     if (!m_spectrumAnimating || !isVisible()) {
-        m_animationTimer.stop();
+        stopAnimation();
         return;
     }
+    setTimerResolutionRaised(true);
 
     const QScreen *currentScreen = screen();
     const double refreshHz = std::clamp(
@@ -578,29 +686,12 @@ void EqCurve::updateAnimationTimer()
         30.0, 240.0);
     const auto interval = std::chrono::nanoseconds(
         static_cast<qint64>(std::llround(1'000'000'000.0 / refreshHz)));
+    g_fpsProbe.refreshHz = refreshHz;
+    g_fpsProbe.animIntervalNs = interval.count();
     if (m_animationTimer.interval() != interval)
         m_animationTimer.setInterval(interval);
     if (!m_animationTimer.isActive())
         m_animationTimer.start();
-}
-
-void EqCurve::buildSpectrumPolyline(const QVector<float> &fromY,
-                                    const QVector<float> &targetY,
-                                    double alpha,
-                                    QVector<QPointF> &out) const
-{
-    const int count = std::min(fromY.size(), targetY.size());
-    if (count <= 0) {
-        out.clear();
-        return;
-    }
-
-    out.resize(count);
-    const double left = plotRect().left();
-    for (int i = 0; i < count; ++i) {
-        const double y = fromY[i] + alpha * (targetY[i] - fromY[i]);
-        out[i] = QPointF(left + i, y);
-    }
 }
 
 void EqCurve::rebuildStaticLayers()
@@ -673,113 +764,218 @@ void EqCurve::rebuildStaticLayers()
     m_staticLayersDirty = false;
 }
 
-void EqCurve::rebuildHeatmapCache()
+void EqCurve::ensureSpectrumImage(int source, double alpha)
 {
-    // A pair of dense heatmaps is expensive and visually ambiguous because
-    // the second one largely covers the first. Prefer output whenever it is
-    // visible; input remains available as the lightweight comparison outline.
-    if (m_showOutputSpectrum && !m_outSpec.isEmpty()) {
-        renderHeatmapImage(m_outSpec, m_outSpecSr, m_heatOutImage);
-        m_heatInImage = QImage();
-    } else if (m_showInputSpectrum && !m_inSpec.isEmpty()) {
-        renderHeatmapImage(m_inSpec, m_inSpecSr, m_heatInImage);
-        m_heatOutImage = QImage();
-    } else {
-        m_heatInImage = QImage();
-        m_heatOutImage = QImage();
-    }
-}
-
-void EqCurve::renderHeatmapImage(const QVector<float> &mag, double specSr,
-                                  QImage &out) const
-{
-    if (mag.isEmpty() || m_cachedPlotWidth <= 0 || m_cachedPlotHeight <= 0) {
-        out = QImage();
+    if (!m_spectrumImage.isNull()
+        && m_spectrumImage.width() == m_cachedPlotWidth
+        && m_spectrumImage.height() == m_cachedPlotHeight
+        && m_spectrumImageSource == source
+        && m_spectrumImageGeneration == m_spectraGeneration
+        && m_spectrumImageAlpha == alpha) {
         return;
     }
-    const int bins = mag.size();
-    if (bins < 2) { out = QImage(); return; }
+    renderSpectrumImage(source, alpha, m_spectrumImage);
+    ++g_fpsProbe.rasters;
+    m_spectrumImageSource = source;
+    m_spectrumImageGeneration = m_spectraGeneration;
+    m_spectrumImageAlpha = alpha;
+}
 
+// Premultiplied SourceOver of two premultiplied colors.
+static inline QRgb premulOver(QRgb src, QRgb dst)
+{
+    const int ia = 255 - qAlpha(src);
+    return qRgba(qRed(src)   + (qRed(dst)   * ia + 127) / 255,
+                 qGreen(src) + (qGreen(dst) * ia + 127) / 255,
+                 qBlue(src)  + (qBlue(dst)  * ia + 127) / 255,
+                 qAlpha(src) + (qAlpha(dst) * ia + 127) / 255);
+}
+
+// Scale a premultiplied color by a 0..256 coverage factor.
+static inline QRgb premulScale(QRgb c, int cov256)
+{
+    return qRgba((qRed(c) * cov256) >> 8, (qGreen(c) * cov256) >> 8,
+                 (qBlue(c) * cov256) >> 8, (qAlpha(c) * cov256) >> 8);
+}
+
+// source bits: 1 = input visible, 2 = output visible, 4 = heatmap mode.
+void EqCurve::renderSpectrumImage(int source, double alpha, QImage &out)
+{
     const int w = m_cachedPlotWidth;
     const int h = m_cachedPlotHeight;
-    const double binHz = specSr / static_cast<double>(2 * (bins - 1));
-    const float invRange = 1.0f / static_cast<float>(kSpecDbMax - kSpecDbMin);
+    const bool heatmap = (source & 4) != 0;
+
+    const auto usable = [w](const QVector<float> &from, const QVector<float> &target) {
+        return from.size() >= w && target.size() >= w;
+    };
+    const bool haveIn  = (source & 1)
+        && usable(m_inSpectrumFromY,  m_inSpectrumTargetY);
+    const bool haveOut = (source & 2)
+        && usable(m_outSpectrumFromY, m_outSpectrumTargetY);
+    if (w <= 0 || h <= 0 || (!haveIn && !haveOut)) {
+        out = QImage();
+        m_spectrumImageTop = 0;
+        return;
+    }
 
     if (out.width() != w || out.height() != h ||
         out.format() != QImage::Format_ARGB32_Premultiplied)
     {
         out = QImage(w, h, QImage::Format_ARGB32_Premultiplied);
     }
-    out.fill(Qt::transparent);
 
-    for (int s = 0; s < w; ++s) {
-        const double f = std::clamp(m_colFreq[s], kFreqMin, kFreqMax);
-        const double bin = f / binHz;
-        const double db = applyAnalyzerSlope(sampleSpectrumSmooth(mag.constData(), bins, bin), f);
+    // The from/target arrays already carry the projected per-column levels;
+    // inverting projectSpectrum's Y mapping recovers the normalized dB, so
+    // the FFT resampling + slope math never reruns here.
+    const QRectF r = plotRect();
+    const double rTop = r.top();
+    const double bottom = r.bottom();
+    const double invHeight = 1.0 / r.height();
+    const float a = static_cast<float>(alpha);
+    const auto columnY = [&](const QVector<float> &from,
+                             const QVector<float> &target, int s) {
+        return static_cast<double>(from[s] + a * (target[s] - from[s]));
+    };
+    const auto columnLevel = [&](const QVector<float> &from,
+                                 const QVector<float> &target, int s) {
+        return std::clamp((bottom - columnY(from, target, s)) * invHeight,
+                          0.0, 1.0);
+    };
+    const auto levelToTop = [h](double n) {
+        return static_cast<int>(std::round((1.0 - n) * (h - 1)));
+    };
+    const auto outlineMinRow = [&](const QVector<float> &from,
+                                   const QVector<float> &target) {
+        double minY = h;
+        for (int s = 0; s < w; ++s)
+            minY = std::min(minY, columnY(from, target, s) - rTop);
+        return std::max(0, static_cast<int>(minY) - 2);
+    };
 
-        // Vertical extent of the column: from the spectrum height (top) down.
-        const double n = std::clamp(
-            (db - kSpecDbMin) / (kSpecDbMax - kSpecDbMin), 0.0, 1.0);
-        const int top = static_cast<int>(std::round((1.0 - n) * (h - 1)));
+    // All rows the fills or outlines will touch must be part of the cleared +
+    // blitted band; rows above it keep stale pixels and are never blitted.
+    int minTop = h;
 
-        const float u = (static_cast<float>(db) - static_cast<float>(kSpecDbMin)) * invRange;
-        const QRgb col = infernoRgb(u);
+    QVarLengthArray<int, 4096> topIn, topOut;
+    QVarLengthArray<QRgb, 4096> cols;
+    if (heatmap) {
+        const bool outPrimary = haveOut;
+        const QVector<float> &from   = outPrimary ? m_outSpectrumFromY   : m_inSpectrumFromY;
+        const QVector<float> &target = outPrimary ? m_outSpectrumTargetY : m_inSpectrumTargetY;
+        topOut.resize(w);
+        cols.resize(w);
+        for (int s = 0; s < w; ++s) {
+            const double n = columnLevel(from, target, s);
+            topOut[s] = levelToTop(n);
+            minTop = std::min(minTop, topOut[s]);
+            cols[s] = infernoRgb(static_cast<float>(n));
+        }
+        // The comparison outline of the secondary spectrum can sit anywhere
+        // above the heatmap — widen the cleared band to cover it.
+        if (outPrimary && haveIn)
+            minTop = std::min(minTop,
+                              outlineMinRow(m_inSpectrumFromY, m_inSpectrumTargetY));
+        minTop = std::max(0, minTop - 2);
 
-        for (int y = top; y < h; ++y) {
+        for (int y = minTop; y < h; ++y) {
             QRgb *line = reinterpret_cast<QRgb *>(out.scanLine(y));
-            line[s] = col;
+            for (int s = 0; s < w; ++s)
+                line[s] = (y >= topOut[s]) ? cols[s] : 0;
+        }
+    } else {
+        // Constant-color translucent fills, input under output — same colors
+        // and compositing the old QPainterPath fills produced, but as column
+        // fills. The overlap color is precomputed premultiplied SourceOver.
+        const QRgb cIn  = qPremultiply(qRgba(0x4F, 0xC1, 0xE9, 46));  // αF 0.18
+        const QRgb cOut = qPremultiply(qRgba(0xE6, 0x7E, 0x22, 51));  // αF 0.20
+        const QRgb cBoth = premulOver(cOut, cIn);
+        topIn.resize(w);
+        topOut.resize(w);
+        for (int s = 0; s < w; ++s) {
+            topIn[s]  = haveIn  ? levelToTop(columnLevel(m_inSpectrumFromY,
+                                                         m_inSpectrumTargetY, s))  : h;
+            topOut[s] = haveOut ? levelToTop(columnLevel(m_outSpectrumFromY,
+                                                         m_outSpectrumTargetY, s)) : h;
+            minTop = std::min({minTop, topIn[s], topOut[s]});
+        }
+        minTop = std::max(0, minTop - 2);
+        for (int y = minTop; y < h; ++y) {
+            QRgb *line = reinterpret_cast<QRgb *>(out.scanLine(y));
+            for (int s = 0; s < w; ++s) {
+                const bool belowIn  = y >= topIn[s];
+                const bool belowOut = y >= topOut[s];
+                line[s] = belowIn ? (belowOut ? cBoth : cIn)
+                                  : (belowOut ? cOut : 0);
+            }
         }
     }
-}
 
-void EqCurve::drawSpectrumOutline(QPainter &p, const QVector<QPointF> &poly,
-                                   const QColor &fill,
-                                   const QColor &stroke)
-{
-    if (poly.isEmpty()) return;
-    const QRectF r = plotRect();
-    const double rBottom = r.bottom();
+    // Spectrum outlines, rasterized as coverage-weighted vertical spans per
+    // column. QPainter's antialiased stroker cost explodes on jagged FFT
+    // polylines (measured ~3 ms per outline); this is O(w) regardless of
+    // jaggedness and visually equivalent at 1.2 px width.
+    const auto blendOutline = [&](const QVector<float> &from,
+                                  const QVector<float> &target, QRgb c) {
+        constexpr double kHalfWidth = 0.7;
+        double yPrev = columnY(from, target, 0) - rTop;
+        double yCur = yPrev;
+        for (int s = 0; s < w; ++s) {
+            const double yNext = (s + 1 < w)
+                ? columnY(from, target, s + 1) - rTop : yCur;
+            const double mPrev = 0.5 * (yCur + yPrev);
+            const double mNext = 0.5 * (yCur + yNext);
+            const double lo = std::clamp(
+                std::min({yCur, mPrev, mNext}) - kHalfWidth,
+                static_cast<double>(minTop), static_cast<double>(h));
+            const double hi = std::clamp(
+                std::max({yCur, mPrev, mNext}) + kHalfWidth,
+                static_cast<double>(minTop), static_cast<double>(h));
+            const int py0 = static_cast<int>(lo);
+            const int py1 = std::min(h - 1, static_cast<int>(hi));
+            for (int py = py0; py <= py1; ++py) {
+                const double cov = std::min(static_cast<double>(py) + 1.0, hi)
+                                 - std::max(static_cast<double>(py), lo);
+                if (cov <= 0.0) continue;
+                QRgb *px = reinterpret_cast<QRgb *>(out.scanLine(py)) + s;
+                const QRgb src = premulScale(
+                    c, static_cast<int>(cov * 256.0 + 0.5));
+                *px = premulOver(src, *px);
+            }
+            yPrev = yCur;
+            yCur = yNext;
+        }
+    };
 
-    // Filled area: stroke poly + close to bottom corners.
-    QPainterPath fillPath;
-    fillPath.moveTo(poly.first());
-    for (int i = 1; i < poly.size(); ++i) fillPath.lineTo(poly[i]);
-    fillPath.lineTo(r.right(), rBottom);
-    fillPath.lineTo(r.left(),  rBottom);
-    fillPath.closeSubpath();
-
-    p.setPen(Qt::NoPen);
-    p.setBrush(fill);
-    p.drawPath(fillPath);
-
-    p.setPen(QPen(stroke, 1.2));
-    p.setBrush(Qt::NoBrush);
-    p.drawPolyline(poly.constData(), poly.size());
-}
-
-void EqCurve::drawSpectrumHeatmap(QPainter &p, const QVector<QPointF> &poly,
-                                  QImage &cache)
-{
-    const QRectF r = plotRect();
-    const int w = m_cachedPlotWidth;
-    const int h = m_cachedPlotHeight;
-    if (w <= 0 || h <= 0) return;
-
-    if (!cache.isNull()) {
-        p.setRenderHint(QPainter::Antialiasing, false);
-        p.drawImage(QPointF(r.left(), r.top()), cache);
-        p.setRenderHint(QPainter::Antialiasing, true);
+    if (heatmap) {
+        // Warm off-white primary outline reads over all inferno tones.
+        const QVector<float> &from   = haveOut ? m_outSpectrumFromY   : m_inSpectrumFromY;
+        const QVector<float> &target = haveOut ? m_outSpectrumTargetY : m_inSpectrumTargetY;
+        blendOutline(from, target, qPremultiply(qRgba(255, 230, 160, 200)));
+        if (haveOut && haveIn)
+            blendOutline(m_inSpectrumFromY, m_inSpectrumTargetY,
+                         qPremultiply(qRgba(0x4F, 0xC1, 0xE9, 191)));  // αF 0.75
+    } else {
+        if (haveIn)
+            blendOutline(m_inSpectrumFromY, m_inSpectrumTargetY,
+                         qPremultiply(qRgba(0x4F, 0xC1, 0xE9, 140)));  // αF 0.55
+        if (haveOut)
+            blendOutline(m_outSpectrumFromY, m_outSpectrumTargetY,
+                         qPremultiply(qRgba(0xE6, 0x7E, 0x22, 153)));  // αF 0.60
     }
 
-    // Spectrum outline on top — warm off-white so it reads over all inferno tones.
-    if (poly.isEmpty()) return;
-    p.setPen(QPen(QColor(255, 230, 160, 200), 1.2));
-    p.setBrush(Qt::NoBrush);
-    p.drawPolyline(poly.constData(), poly.size());
+    m_spectrumImageTop = minTop;
 }
+
 
 void EqCurve::paintEvent(QPaintEvent *)
 {
+    ++g_fpsProbe.paints;
+    g_fpsProbe.plotW = m_cachedPlotWidth;
+    g_fpsProbe.plotH = m_cachedPlotHeight;
+    g_fpsProbe.flush();
+    QElapsedTimer perf;
+    if (g_fpsProbe.enabled) perf.start();
+
     if (m_cachedPlotWidth <= 0)
         rebuildColumnTables();
 
@@ -796,55 +992,94 @@ void EqCurve::paintEvent(QPaintEvent *)
     p.setRenderHint(QPainter::Antialiasing);
     p.drawPixmap(0, 0, m_backgroundLayer);
 
+    const qint64 perfBg = g_fpsProbe.enabled ? perf.nsecsElapsed() : 0;
+
     const QRectF r = plotRect();
     const double spectrumAlpha = spectrumInterpolationAlpha();
-    buildSpectrumPolyline(m_inSpectrumFromY, m_inSpectrumTargetY,
-                          spectrumAlpha, m_scratchPolyA);
-    buildSpectrumPolyline(m_outSpectrumFromY, m_outSpectrumTargetY,
-                          spectrumAlpha, m_scratchPolyB);
-    if (spectrumAlpha >= 1.0) {
-        m_spectrumAnimating = false;
-        m_animationTimer.stop();
-    }
+    // Note: interpolation completing (alpha == 1) does NOT stop the animation
+    // timer — the next FFT target usually arrives within a frame or two, and
+    // stop/start churn costs a full OS timer quantum per restart. The timeout
+    // lambda stops the timer once targets go stale.
 
-    // Clip subsequent fills/lines to the plot area so spectra don't bleed.
+    // Clip to the plot area so spectra don't bleed.
     p.save();
     p.setClipRect(r);
 
     // --- Spectra ---
-    if (m_showHeatmap) {
-        const bool outputHeatmap =
-            m_showOutputSpectrum && !m_scratchPolyB.isEmpty();
-        if (outputHeatmap) {
-            drawSpectrumHeatmap(p, m_scratchPolyB, m_heatOutImage);
-            if (m_showInputSpectrum && !m_scratchPolyA.isEmpty()) {
-                QColor inputStroke(0x4F, 0xC1, 0xE9);
-                inputStroke.setAlphaF(0.75);
-                p.setPen(QPen(inputStroke, 1.2));
-                p.setBrush(Qt::NoBrush);
-                p.drawPolyline(m_scratchPolyA.constData(), m_scratchPolyA.size());
+    // Everything that moves per frame — fills, heatmap, and outlines — is
+    // rasterized into m_spectrumImage by ensureSpectrumImage. Integer-aligned
+    // drawImage keeps the blit on the fast path; fractional offsets push Qt's
+    // raster engine through per-pixel filtering.
+    const bool haveIn  = m_showInputSpectrum  && !m_inSpectrumTargetY.isEmpty();
+    const bool haveOut = m_showOutputSpectrum && !m_outSpectrumTargetY.isEmpty();
+    const int source = (haveIn ? 1 : 0) | (haveOut ? 2 : 0)
+                     | (m_showHeatmap ? 4 : 0);
+    if ((source & 3) != 0) {
+        ensureSpectrumImage(source, spectrumAlpha);
+        const qint64 tEnsure = g_fpsProbe.enabled ? perf.nsecsElapsed() : 0;
+        if (!m_spectrumImage.isNull()) {
+            const int top = std::clamp(m_spectrumImageTop, 0,
+                                       m_spectrumImage.height());
+            const int rows = m_spectrumImage.height() - top;
+            if (rows > 0) {
+                p.setRenderHint(QPainter::Antialiasing, false);
+                p.drawImage(QPoint(static_cast<int>(r.left()),
+                                   static_cast<int>(r.top()) + top),
+                            m_spectrumImage,
+                            QRect(0, top, m_spectrumImage.width(), rows));
+                p.setRenderHint(QPainter::Antialiasing, true);
             }
-        } else if (m_showInputSpectrum && !m_scratchPolyA.isEmpty()) {
-            drawSpectrumHeatmap(p, m_scratchPolyA, m_heatInImage);
         }
-    } else {
-        if (m_showInputSpectrum && !m_scratchPolyA.isEmpty()) {
-            QColor fill(0x4F, 0xC1, 0xE9);  fill.setAlphaF(0.18);
-            QColor stroke(0x4F, 0xC1, 0xE9); stroke.setAlphaF(0.55);
-            drawSpectrumOutline(p, m_scratchPolyA, fill, stroke);
-        }
-        if (m_showOutputSpectrum && !m_scratchPolyB.isEmpty()) {
-            QColor fill(0xE6, 0x7E, 0x22); fill.setAlphaF(0.20);
-            QColor stroke(0xE6, 0x7E, 0x22); stroke.setAlphaF(0.60);
-            drawSpectrumOutline(p, m_scratchPolyB, fill, stroke);
+        if (g_fpsProbe.enabled) {
+            g_fpsProbe.nsEnsure += tEnsure - perfBg;
+            g_fpsProbe.nsBlit += perf.nsecsElapsed() - tEnsure;
         }
     }
 
     p.restore();
+
+    const qint64 perfSpec = g_fpsProbe.enabled ? perf.nsecsElapsed() : 0;
+
     p.drawPixmap(0, 0, m_gridLayer);
 
-    if (m_responseCurvesDirty)
+    if (m_responseCurvesDirty) {
+        const qint64 t0 = g_fpsProbe.enabled ? perf.nsecsElapsed() : 0;
         rebuildResponseCurves();
+        if (g_fpsProbe.enabled)
+            g_fpsProbe.nsResp += perf.nsecsElapsed() - t0;
+    }
+    if (m_responseLayerDirty
+        || m_responseLayerHover != m_hoverBand
+        || m_responseLayerDrag != m_draggingBand
+        || m_responseLayer.size() != expectedPixels
+        || m_responseLayer.devicePixelRatio() != dpr) {
+        const qint64 t0 = g_fpsProbe.enabled ? perf.nsecsElapsed() : 0;
+        rebuildResponseLayer(dpr, expectedPixels);
+        if (g_fpsProbe.enabled)
+            g_fpsProbe.nsLayer += perf.nsecsElapsed() - t0;
+    }
+    p.drawPixmap(0, 0, m_responseLayer);
+
+    if (g_fpsProbe.enabled) {
+        const qint64 total = perf.nsecsElapsed();
+        g_fpsProbe.nsBg += perfBg;
+        g_fpsProbe.nsSpec += perfSpec - perfBg;
+        g_fpsProbe.nsRest += total - perfSpec;
+    }
+}
+
+void EqCurve::rebuildResponseLayer(qreal dpr, const QSize &pixelSize)
+{
+    if (m_responseLayer.size() != pixelSize
+        || m_responseLayer.devicePixelRatio() != dpr) {
+        m_responseLayer = QPixmap(pixelSize);
+        m_responseLayer.setDevicePixelRatio(dpr);
+    }
+    m_responseLayer.fill(Qt::transparent);
+
+    QPainter p(&m_responseLayer);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setFont(font());
 
     // --- Per-band response (faint, in band colour, live dynamic gain) ---
     const int N = m_bands.size();
@@ -914,6 +1149,11 @@ void EqCurve::paintEvent(QPaintEvent *)
         p.drawText(QRectF(bp.x() - 10, bp.y() - 10, 20, 20), Qt::AlignCenter,
                    QString::number(i + 1));
     }
+
+    ++g_fpsProbe.layerRebuilds;
+    m_responseLayerHover = m_hoverBand;
+    m_responseLayerDrag = m_draggingBand;
+    m_responseLayerDirty = false;
 }
 
 void EqCurve::mousePressEvent(QMouseEvent *e)

@@ -180,6 +180,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Spectrum: drain the APO's pre/post sample ring (~60 Hz) and feed the
     // analyzer, whose spectraUpdated already drives the EqCurve overlay+heatmap.
+    // Precise type: a coarse 17 ms timer quantizes to ~31 ms under the default
+    // Windows timer resolution, halving the FFT target rate.
+    m_spectrumTimer.setTimerType(Qt::PreciseTimer);
     m_spectrumTimer.setInterval(17); // ~60 Hz FFT targets
     connect(&m_spectrumTimer, &QTimer::timeout, this, &MainWindow::onSpectrumTick);
     updateUiTimerGate();

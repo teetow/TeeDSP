@@ -24,9 +24,9 @@ struct EqBandData {
 // Double-clicking a handle resets that band's gain to 0 dB.
 // Optional pre/post-DSP magnitude spectra can be drawn behind the EQ curve.
 //
-// FFT targets arrive at ~60 Hz; lightweight curve interpolation runs at the
-// current screen refresh rate without rerunning analysis or rebuilding static
-// layers. This remains a raster QWidget so it does not force the entire
+// FFT targets arrive at ~60 Hz; lightweight curve + heatmap interpolation
+// runs at the current screen refresh rate without rerunning analysis or
+// rebuilding static layers. This remains a raster QWidget so it does not force the entire
 // top-level window through QOpenGLWidget composition.
 class EqCurve : public QWidget
 {
@@ -34,6 +34,7 @@ class EqCurve : public QWidget
 
 public:
     explicit EqCurve(QWidget *parent = nullptr);
+    ~EqCurve() override;
 
     void setSampleRate(double sr);
     void setBands(const QVector<EqBandData> &bands);
@@ -83,29 +84,27 @@ private:
 
     int hitBand(const QPointF &pos) const;
 
-    // Builds column-indexed frequency table + clears heatmap cache for the
-    // current plot width. Called from resizeEvent.
+    // Builds column-indexed frequency table for the current plot width.
+    // Called from resizeEvent.
     void rebuildColumnTables();
     void rebuildAngularTables();
     void rebuildResponseCurves();
     void rebuildStaticLayers();
     void rebuildSpectrumTargets(bool animate);
     void updateAnimationTimer();
-    void rebuildHeatmapCache();
     void projectSpectrum(const QVector<float> &mag, double specSr,
                          QVector<float> &outY) const;
     double spectrumInterpolationAlpha() const;
-    void buildSpectrumPolyline(const QVector<float> &fromY,
-                               const QVector<float> &targetY,
-                               double alpha, QVector<QPointF> &out) const;
-    void renderHeatmapImage(const QVector<float> &mag, double specSr,
-                            QImage &out) const;
-
-    void drawSpectrumOutline(class QPainter &p, const QVector<QPointF> &poly,
-                             const QColor &fill,
-                             const QColor &stroke);
-    void drawSpectrumHeatmap(class QPainter &p, const QVector<QPointF> &poly,
-                             QImage &cache);
+    // Rasterizes the area under the interpolated spectrum curve(s) into
+    // m_spectrumImage — inferno-colored columns in heatmap mode, translucent
+    // constant-color fills otherwise. Column fills into a reused image are an
+    // order of magnitude cheaper than antialiased QPainterPath fills, which
+    // is what makes screen-refresh-rate repaints affordable.
+    void ensureSpectrumImage(int source, double alpha);
+    void renderSpectrumImage(int source, double alpha, QImage &out);
+    void rebuildResponseLayer(qreal dpr, const QSize &pixelSize);
+    void stopAnimation();
+    void setTimerResolutionRaised(bool raised);
 
     QVector<EqBandData> m_bands;
     double m_sampleRate = 48000.0;
@@ -132,16 +131,25 @@ private:
     QVector<double> m_colSin2W;
     int m_cachedPlotWidth = 0;
     int m_cachedPlotHeight = 0;
-    // Pre-rendered heatmap stripes for input/output. Re-rasterized when the
-    // spectrum or geometry changes; blitted with drawImage (much cheaper than
-    // per-column setPen + drawLine).
-    QImage m_heatInImage;
-    QImage m_heatOutImage;
-    QElapsedTimer m_heatmapClock;
+    // Spectrum-area raster (heatmap or translucent fills), derived per
+    // animation frame from the interpolated per-column levels, so it moves in
+    // lockstep with the outline strokes. Memo keys skip re-rasterizing on
+    // repaints that didn't move the spectrum (hover, band drags).
+    QImage m_spectrumImage;
+    quint64 m_spectraGeneration = 0;
+    quint64 m_spectrumImageGeneration = 0;
+    double m_spectrumImageAlpha = -1.0;
+    int m_spectrumImageSource = 0;
+    // First row the raster actually wrote — rows above are stale garbage and
+    // must never be blitted. Rastering and blitting from here down skips the
+    // (typically large) empty area above the spectrum.
+    int m_spectrumImageTop = 0;
 
-    // FFT targets arrive at ~60 Hz. The display curves interpolate between
-    // them on a screen-refresh-paced timer without repeating FFT or
-    // spectrum-projection work.
+    // The display curves interpolate between FFT targets on a screen-refresh-
+    // paced timer without repeating FFT or spectrum-projection work. The
+    // interpolation window tracks the measured target arrival interval (EMA)
+    // so the curve keeps gliding at whatever cadence analysis actually runs,
+    // instead of freezing after a hardcoded window.
     QVector<float> m_inSpectrumFromY;
     QVector<float> m_inSpectrumTargetY;
     QVector<float> m_outSpectrumFromY;
@@ -149,10 +157,9 @@ private:
     QElapsedTimer m_spectrumInterpolationClock;
     QChronoTimer m_animationTimer;
     bool m_spectrumAnimating = false;
+    double m_spectrumIntervalMs = 17.0;
+    bool m_timerResolutionRaised = false;
 
-    // Reusable scratch buffers for line strokes — avoids allocation per paint.
-    QVector<QPointF> m_scratchPolyA;
-    QVector<QPointF> m_scratchPolyB;
 
     // EQ response geometry changes only when parameters, sample rate, or size
     // changes. Spectrum-only repaints reuse these polylines.
@@ -168,13 +175,23 @@ private:
     QPixmap m_gridLayer;
     bool m_staticLayersDirty = true;
 
+    // EQ response curves + band handles only change on parameter edits, hover,
+    // or drags — nowhere near frame rate. Stroking ~10 antialiased polylines
+    // per frame was the single biggest paint cost, so they render into this
+    // layer on change and blit per frame.
+    QPixmap m_responseLayer;
+    bool m_responseLayerDirty = true;
+    int m_responseLayerHover = -2;
+    int m_responseLayerDrag = -2;
+
     static constexpr double kFreqMin = 20.0;
     static constexpr double kFreqMax = 20000.0;
     static constexpr double kDbRange = 24.0;
     static constexpr double kSpecDbMin = -90.0;
     static constexpr double kSpecDbMax = 0.0;
-    static constexpr int kSpectrumInterpolationMs = 17;
-    static constexpr int kHeatmapIntervalMs = 33;
+    // Stop animating (and drop the raised timer resolution) once no fresh
+    // spectrum target has arrived for this long.
+    static constexpr int kSpectrumStaleMs = 250;
 };
 
 } // namespace ui
