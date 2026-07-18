@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include "StartupRegistration.h"
 #include "AudioServiceRecovery.h"
+#include "ApoManagerDialog.h"
 #include "TrayController.h"
 #include "widgets/EqCurve.h"
 #include "widgets/BipolarGainMeter.h"
@@ -12,6 +13,7 @@
 #include "widgets/WidgetMetrics.h"
 
 #include "../dsp/DspController.h"
+#include "../host/ApoBindingStatus.h"
 #include "../host/SpectrumAnalyzer.h"
 #include "../host/WasapiDevices.h"
 
@@ -370,6 +372,11 @@ QWidget *MainWindow::buildIoSection()
     connect(m_restartEngineButton, &QPushButton::clicked,
             this, &MainWindow::onRestartEngineRequested);
     statusBar()->addPermanentWidget(m_restartEngineButton);
+
+    m_manageApoButton = new QPushButton(QStringLiteral("Manage APO..."));
+    connect(m_manageApoButton, &QPushButton::clicked,
+            this, &MainWindow::onManageApoRequested);
+    statusBar()->addPermanentWidget(m_manageApoButton);
 
     m_dspBuildLabel = new QLabel(QStringLiteral("DSP build: \u2014"));
     m_dspBuildLabel->setProperty("role", "status");
@@ -1421,21 +1428,13 @@ DefaultOutInfo queryDefaultOut()
     s_ticksSinceRecheck = 0;
 
     info.id = def;
+    info.hasApo = host::queryApoBinding(def).bound;
+
     const int dot = def.lastIndexOf(QLatin1Char('.'));
     const QString guid = (dot >= 0) ? def.mid(dot + 1) : def;
     const QString base =
         QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion"
                        "\\MMDevices\\Audio\\Render\\") + guid;
-
-    QSettings fx(base + QStringLiteral("\\FxProperties"), QSettings::NativeFormat);
-    const QString teeDspClsid = QStringLiteral("{B7E1A0C0-7E5D-4D8B-9E2A-1C4F8D3A2B11}");
-    const auto isTeeDsp = [&fx, &teeDspClsid](const char *property) {
-        return fx.value(QString::fromLatin1(property)).toString()
-                     .compare(teeDspClsid, Qt::CaseInsensitive) == 0;
-    };
-    info.hasApo = isTeeDsp("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},14")  // composite MFX
-               || isTeeDsp("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6")   // regular MFX
-               || isTeeDsp("{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5");  // SFX
 
     QSettings pr(base + QStringLiteral("\\Properties"), QSettings::NativeFormat);
     info.name = pr.value(QStringLiteral("{a45c254e-df1c-4efd-8020-67d146a850e0},2")).toString();
@@ -1562,4 +1561,10 @@ void MainWindow::onRestartEngineRequested()
         m_restartEngineButton->hide();
     if (m_statusLabel)
         m_statusLabel->setText(QStringLiteral("Restarting audio engine…"));
+}
+
+void MainWindow::onManageApoRequested()
+{
+    ui::ApoManagerDialog dlg(this);
+    dlg.exec();
 }

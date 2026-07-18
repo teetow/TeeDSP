@@ -66,6 +66,7 @@ private:
     void syncDevicePickerToDefaultOutput(const QString &deviceId);
     void refreshEngineStatus();
     void onRestartEngineRequested();
+    void onManageApoRequested();
     void refreshEqCurve();
     // Lightweight refresh of just the dynamic knobs/labels for the currently
     // selected band — used on band-selection changes to avoid a full UI sync.
@@ -91,6 +92,7 @@ private:
     // bound to the current output and audio is playing, yet no processing) —
     // clicking it elevates and restarts Audiosrv to reload the APO.
     QPushButton *m_restartEngineButton = nullptr;
+    QPushButton *m_manageApoButton = nullptr;
     QLabel *m_dspBuildLabel = nullptr;
 
     QProgressBar *m_inputMeterBarL = nullptr;

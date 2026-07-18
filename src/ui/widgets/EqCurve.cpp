@@ -1181,6 +1181,11 @@ void EqCurve::mouseMoveEvent(QMouseEvent *e)
         auto &b = m_bands[m_draggingBand];
         b.freqHz = static_cast<float>(f);
         b.gainDb = static_cast<float>(g);
+        // The controller echoes these same values synchronously through
+        // MainWindow::refreshEqCurve().  Since m_bands already contains them,
+        // setBands() correctly treats that echo as unchanged; invalidate the
+        // cached response geometry here so the graph still follows the drag.
+        m_responseCurvesDirty = true;
         emit bandDragged(m_draggingBand,
                          static_cast<float>(f),
                          static_cast<float>(g));
@@ -1234,6 +1239,9 @@ void EqCurve::wheelEvent(QWheelEvent *e)
     q *= std::pow(1.1f, steps);
     q = std::clamp(q, 0.1f, 20.0f);
     b.q = q;
+    // As with dragging, the synchronous controller echo is identical to the
+    // value already stored above and therefore will not invalidate the cache.
+    m_responseCurvesDirty = true;
     emit bandQAdjusted(hit, q);
     update();
     e->accept();

@@ -56,6 +56,7 @@ set(HOST_SOURCES
 	src/host/Fft.cpp
 	src/host/SpectrumAnalyzer.cpp
 	src/host/ApoSharedClient.cpp
+	src/host/ApoBindingStatus.cpp
 )
 
 set(UI_SOURCES
@@ -64,6 +65,7 @@ set(UI_SOURCES
 	src/ui/Theme.cpp
 	src/ui/StartupRegistration.cpp
 	src/ui/AudioServiceRecovery.cpp
+	src/ui/ApoManagerDialog.cpp
 	src/ui/TrayController.cpp
 	src/ui/widgets/Knob.cpp
 	src/ui/widgets/LevelMeter.cpp
