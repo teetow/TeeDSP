@@ -49,6 +49,17 @@ QString friendlyPackageLabel(const QString &originalInfName)
     // being silently dropped — that mismatch is exactly what this is for.
     return it != kKnownLabels.constEnd() ? it.value() : originalInfName;
 }
+
+QString packagePurpose(const QString &originalInfName)
+{
+    if (originalInfName.compare(QStringLiteral("teedspapocomponent.inf"),
+                                Qt::CaseInsensitive) == 0)
+        return QStringLiteral("DSP DLL (single loaded component)");
+    if (originalInfName.endsWith(QStringLiteral("extension.inf"),
+                                 Qt::CaseInsensitive))
+        return QStringLiteral("Device binding only");
+    return QStringLiteral("Unknown TeeDSP package");
+}
 } // namespace
 
 QList<InstalledApoPackage> queryInstalledApoPackages()
@@ -83,6 +94,7 @@ QList<InstalledApoPackage> queryInstalledApoPackages()
                 continue;
             InstalledApoPackage pkg;
             pkg.label = friendlyPackageLabel(currentOriginal);
+            pkg.purpose = packagePurpose(currentOriginal);
             pkg.originalInfName = currentOriginal;
             pkg.publishedName = currentPublished;
             pkg.driverVersion = version;

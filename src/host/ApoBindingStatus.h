@@ -25,6 +25,7 @@ ApoBindingInfo queryApoBinding(const QString &renderDeviceId);
 // going unreported.
 struct InstalledApoPackage {
     QString label;           // friendly name for known packages, else the raw inf name
+    QString purpose;         // DSP component or device-binding extension
     QString originalInfName; // e.g. "teedsprealtekextension.inf"
     QString publishedName;   // e.g. "oem123.inf"
     QString driverVersion;   // e.g. "07/08/2026 0.1.189.1234"

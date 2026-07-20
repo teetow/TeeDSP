@@ -85,6 +85,7 @@ void Leveler::prepare(double sampleRate, std::size_t channels)
     m_maxDeltaUpPerSample   = static_cast<float>(m_maxUpRateDbPerSec / sampleRate);
 
     m_longTermLufs   = m_targetLufs;
+    m_hasLoudnessEstimate = false;
     m_smoothedGainDb = 0.0f;
     m_enableMix      = m_bypass ? 0.0f : 1.0f;
     m_currentGainDb.store(0.0f, std::memory_order_relaxed);
@@ -101,6 +102,7 @@ void Leveler::reset()
     m_writePos       = 0;
     m_accumulated    = 0;
     m_longTermLufs   = m_targetLufs;
+    m_hasLoudnessEstimate = false;
     m_smoothedGainDb = 0.0f;
     m_enableMix      = m_bypass ? 0.0f : 1.0f;
     m_currentGainDb.store(0.0f, std::memory_order_relaxed);
@@ -149,13 +151,20 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
             if (power > 1e-10) {
                 const float lufs = static_cast<float>(-0.691 + 10.0 * std::log10(power));
 
+                // Bootstrap from the first valid window before applying the
+                // relative gate. Starting at the target and gating immediately
+                // deadlocks quiet sources: their first reading is rejected,
+                // the estimate remains at target, and the rider stays at 0 dB.
+                if (!m_hasLoudnessEstimate) {
+                    m_longTermLufs = lufs;
+                    m_hasLoudnessEstimate = true;
                 // Relative gate (EBU R128 style): a short-term dip more than
                 // m_relativeGateLu below the running long-term estimate is
                 // treated as musical dynamics (a quiet verse), not a genuine
                 // source-level change, so it's excluded from the estimate.
                 // This is what stops the rider from chasing a song's own
                 // arrangement instead of just leveling between sources.
-                if (lufs >= m_longTermLufs - m_relativeGateLu) {
+                } else if (lufs >= m_longTermLufs - m_relativeGateLu) {
                     m_longTermLufs = m_longTermCoef * m_longTermLufs
                                    + (1.0f - m_longTermCoef) * lufs;
                 }

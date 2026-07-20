@@ -84,6 +84,7 @@ private:
     int   m_accumulated   = 0;   // valid samples in ring since last enable
 
     float m_longTermLufs   = -18.0f;  // gated, slowly-tracked loudness estimate
+    bool  m_hasLoudnessEstimate = false; // first valid window bootstraps the gate
     float m_smoothedGainDb = 0.0f;    // rider's continuous tracking (always live)
     float m_enableMix      = 0.0f;    // 0..1 crossfade — what fraction of rider gain to apply
     float m_longTermCoef      = 0.0f;

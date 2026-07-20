@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 project(TeeDSP LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -43,6 +45,10 @@ target_include_directories(teedsp_dsp PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}/src/dsp
 )
 target_compile_definitions(teedsp_dsp PRIVATE NOMINMAX)
+
+if(BUILD_TESTING)
+	add_subdirectory(tests)
+endif()
 
 set(DSP_SOURCES
 	src/dsp/DspController.cpp

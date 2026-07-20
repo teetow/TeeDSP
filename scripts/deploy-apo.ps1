@@ -71,8 +71,11 @@ if (-not (Test-Path $apoDll)) { throw "Built APO DLL not found: $apoDll" }
 # Encoded as 0.1.<day-of-year>.<HHmm> alongside today's date — monotonic
 # within a year and trivially inspectable (pnputil driver-version output).
 $infPath = Join-Path $repoRoot 'apo\driver\TeeDspApoComponent.inf'
-$now = Get-Date
-$dateStr = $now.ToString('MM/dd/yyyy')
+# Inf2Cat rejects a DriverVer date later than its UTC "today". Use UTC for
+# the whole monotonically-increasing stamp so deployments during the local
+# midnight-to-UTC-midnight gap are valid in every locale.
+$now = (Get-Date).ToUniversalTime()
+$dateStr = $now.ToString('MM/dd/yyyy', [Globalization.CultureInfo]::InvariantCulture)
 $versionStr = "0.1.$($now.DayOfYear).$($now.ToString('HHmm'))"
 $infText = Get-Content $infPath -Raw
 $infText = [regex]::Replace($infText, 'DriverVer\s*=\s*[^\r\n]+', "DriverVer   = $dateStr,$versionStr")

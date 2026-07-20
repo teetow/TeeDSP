@@ -26,24 +26,27 @@ ApoManagerDialog::ApoManagerDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(QStringLiteral("Manage APO"));
-    resize(600, 440);
+    resize(820, 440);
 
     auto *layout = new QVBoxLayout(this);
 
     auto *intro = new QLabel(QStringLiteral(
         "Every teedsp*.inf package pnputil currently has published in the "
-        "Driver Store (including stale or unexpected ones — this is not "
-        "filtered to a fixed list), and which live output endpoints "
-        "currently have the APO bound. Install/uninstall is still a "
+        "Driver Store. Only the APO component contains the DSP DLL; extension "
+        "packages merely bind that same component to devices. Their DriverVer "
+        "dates are independent package versions, not DLL compile dates. The "
+        "tables also show which live output endpoints currently have the APO "
+        "bound. Install/uninstall is still a "
         "scripted operation (scripts\\deploy-apo.ps1) — this view only "
         "reports current state."), this);
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
     layout->addWidget(new QLabel(QStringLiteral("<b>Installed driver packages</b>"), this));
-    m_packagesTable = new QTableWidget(0, 3, this);
+    m_packagesTable = new QTableWidget(0, 4, this);
     m_packagesTable->setHorizontalHeaderLabels(
-        {QStringLiteral("Package"), QStringLiteral("Published name"),
+        {QStringLiteral("Package"), QStringLiteral("Purpose"),
+         QStringLiteral("Published name"),
          QStringLiteral("Driver version")});
     m_packagesTable->horizontalHeader()->setStretchLastSection(true);
     m_packagesTable->verticalHeader()->setVisible(false);
@@ -78,8 +81,9 @@ void ApoManagerDialog::refresh()
     for (int row = 0; row < packages.size(); ++row) {
         const auto &pkg = packages[row];
         m_packagesTable->setItem(row, 0, readOnlyItem(pkg.label));
-        m_packagesTable->setItem(row, 1, readOnlyItem(pkg.publishedName));
-        m_packagesTable->setItem(row, 2, readOnlyItem(pkg.driverVersion));
+        m_packagesTable->setItem(row, 1, readOnlyItem(pkg.purpose));
+        m_packagesTable->setItem(row, 2, readOnlyItem(pkg.publishedName));
+        m_packagesTable->setItem(row, 3, readOnlyItem(pkg.driverVersion));
     }
 
     const auto endpoints = host::WasapiDevices::enumerateRender();
