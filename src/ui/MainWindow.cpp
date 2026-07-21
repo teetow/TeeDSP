@@ -279,16 +279,13 @@ void MainWindow::updateUiTimerGate()
     if (m_analyzer) m_analyzer->setUiActive(analyze);
     if (analyze) m_spectrumTimer.start(); else m_spectrumTimer.stop();
 
-    // Endpoint probing is only useful while its status label can be seen.
-    // Refresh immediately on return, rather than continuing COM/registry polls
-    // for a hidden widget tree.
-    if (active) {
-        if (!m_apoStatusTimer.isActive()) {
-            refreshEngineStatus();
-            m_apoStatusTimer.start();
-        }
-    } else {
-        m_apoStatusTimer.stop();
+    // Keep polling regardless of window visibility: this also drives the
+    // tray icon color and tooltip, which are the only feedback available
+    // while hidden to tray. Stopping it there left the icon frozen at
+    // whatever it showed at the moment the window was last hidden.
+    if (!m_apoStatusTimer.isActive()) {
+        refreshEngineStatus();
+        m_apoStatusTimer.start();
     }
 }
 
