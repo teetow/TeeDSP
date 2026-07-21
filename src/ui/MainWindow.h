@@ -77,15 +77,12 @@ private:
     void updateUiTimerGate();
 
     QString selectedCaptureDeviceId() const;
-    QString selectedRenderDeviceId() const;
     void saveSelectedDevices() const;
     void restoreSelectedDevices();
 
     QWidget *m_central = nullptr;
 
     QComboBox *m_captureDevice = nullptr;
-    QComboBox *m_renderDevice = nullptr;
-    QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
     // Shown in the status bar only when the audio engine looks dead (the APO is
     // bound to the current output and audio is playing, yet no processing) —
@@ -155,7 +152,6 @@ private:
     dsp::DspController *m_dspController = nullptr;
     ui::TrayController *m_tray = nullptr;
 
-    QList<host::DeviceInfo> m_inputDevices;
     QList<host::DeviceInfo> m_outputDevices;
     bool m_syncingUi = false;
     bool m_quitting = false;

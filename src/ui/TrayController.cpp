@@ -1,7 +1,6 @@
 #include "TrayController.h"
 
 #include <QAction>
-#include <QActionGroup>
 #include <QApplication>
 #include <QDateTime>
 #include <QFileInfo>
@@ -77,9 +76,6 @@ TrayController::TrayController(QMainWindow *window, QObject *parent)
     m_showAction = m_menu->addAction(QStringLiteral("&Show TeeDSP"));
     connect(m_showAction, &QAction::triggered, this, &TrayController::onShowToggle);
 
-    m_inputMenu = m_menu->addMenu(QStringLiteral("&Input"));
-    m_outputMenu = m_menu->addMenu(QStringLiteral("&Output"));
-
     m_menu->addSeparator();
 
     m_bypassAction = m_menu->addAction(QStringLiteral("&Bypass DSP"));
@@ -140,45 +136,6 @@ void TrayController::setStartWithWindows(bool on)
         QSignalBlocker block(m_startWithWindowsAction);
         m_startWithWindowsAction->setChecked(on);
     }
-}
-
-void TrayController::setRoutingOptions(const QList<DeviceChoice> &inputs,
-                                       const QString &selectedInputId,
-                                       const QList<DeviceChoice> &outputs,
-                                       const QString &selectedOutputId)
-{
-    const auto populate = [this](QMenu *menu,
-                                 const QList<DeviceChoice> &items,
-                                 const QString &selectedId,
-                                 bool isInput) {
-        if (!menu) return;
-        menu->clear();
-
-        if (items.isEmpty()) {
-            QAction *none = menu->addAction(QStringLiteral("No devices"));
-            none->setEnabled(false);
-            return;
-        }
-
-        auto *group = new QActionGroup(menu);
-        group->setExclusive(true);
-        for (const auto &item : items) {
-            QAction *a = menu->addAction(item.name);
-            a->setCheckable(true);
-            a->setData(item.id);
-            a->setChecked(item.id == selectedId);
-            group->addAction(a);
-            connect(a, &QAction::triggered, this, [this, a, isInput](bool checked) {
-                if (!checked) return;
-                const QString id = a->data().toString();
-                if (isInput) emit inputDeviceSelected(id);
-                else emit outputDeviceSelected(id);
-            });
-        }
-    };
-
-    populate(m_inputMenu, inputs, selectedInputId, true);
-    populate(m_outputMenu, outputs, selectedOutputId, false);
 }
 
 void TrayController::onActivated(int reason)

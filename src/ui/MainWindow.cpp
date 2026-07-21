@@ -54,7 +54,6 @@
 namespace {
 
 constexpr const char *kCaptureDeviceKey = "io/captureDeviceId";
-constexpr const char *kRenderDeviceKey  = "io/renderDeviceId";
 constexpr const char *kFirstRunKey      = "ui/initialized";
 constexpr const char *kGeometryKey      = "ui/geometry";
 constexpr const char *kShowInputSpecKey  = "ui/showInputSpectrum";
@@ -350,14 +349,6 @@ QWidget *MainWindow::buildIoSection()
 
     m_globalBypass = new QCheckBox(QStringLiteral("Bypass"));
     grid->addWidget(m_globalBypass, 0, 3);
-
-    // Bridge-era controls retired from the APO surface. Kept as hidden,
-    // parented members so the remaining wiring (device enumeration, tray,
-    // status) stays valid without a sweeping refactor; they never drive audio.
-    m_renderDevice = new QComboBox(section);
-    m_renderDevice->hide();
-    m_startStopButton = new QPushButton(section);
-    m_startStopButton->hide();
 
     grid->setColumnStretch(1, 2);
 
@@ -1114,30 +1105,6 @@ void MainWindow::connectSignals()
         });
         connect(m_tray, &ui::TrayController::startWithWindowsToggled,
                 this, [](bool on) { ui::startup::setEnabled(on); });
-        connect(m_tray, &ui::TrayController::inputDeviceSelected,
-                this, [this](const QString &id) {
-            if (id.isEmpty() || !m_captureDevice) return;
-            const int idx = m_captureDevice->findData(id);
-            if (idx < 0) return;
-            const bool wasSyncing = m_syncingUi;
-            m_syncingUi = true;
-            m_captureDevice->setCurrentIndex(idx);
-            m_syncingUi = wasSyncing;
-            saveSelectedDevices();
-            refreshEngineStatus();
-        });
-        connect(m_tray, &ui::TrayController::outputDeviceSelected,
-                this, [this](const QString &id) {
-            if (id.isEmpty() || !m_renderDevice) return;
-            const int idx = m_renderDevice->findData(id);
-            if (idx < 0) return;
-            const bool wasSyncing = m_syncingUi;
-            m_syncingUi = true;
-            m_renderDevice->setCurrentIndex(idx);
-            m_syncingUi = wasSyncing;
-            saveSelectedDevices();
-            refreshEngineStatus();
-        });
         connect(m_tray, &ui::TrayController::quitRequested, this, [this]() {
             m_quitting = true;
             close();
@@ -1245,20 +1212,8 @@ void MainWindow::refreshDevices()
     // current selection, which can drift between refreshes.
     const QSettings s;
     const QString prefCapture = s.value(QString::fromLatin1(kCaptureDeviceKey)).toString();
-    const QString prefRender   = s.value(QString::fromLatin1(kRenderDeviceKey)).toString();
 
     m_outputDevices = host::WasapiDevices::enumerateRender();
-    m_inputDevices = host::WasapiDevices::enumerateCapture();
-
-    // Preserve classic physical-output loopback as an input option, but do
-    // not offer virtual render endpoints here. VB-CABLE/VoiceMeeter audio is
-    // readable from their capture side; render-loopback on those endpoints can
-    // produce packets full of zeros.
-    const int realCaptureCount = m_inputDevices.size();
-    for (const auto &d : m_outputDevices) {
-        if (!d.isVirtual)
-            m_inputDevices.append(d);
-    }
 
     // Hold m_syncingUi across the entire populate + select sequence — every
     // setCurrentIndex emits currentIndexChanged, and we don't want any of
@@ -1266,12 +1221,9 @@ void MainWindow::refreshDevices()
     const bool wasSyncing = m_syncingUi;
     m_syncingUi = true;
     m_captureDevice->clear();
-    m_renderDevice->clear();
     // Device picker lists output endpoints — the things a TeeDSP APO sits on.
-    // (The hidden render combo is kept mirrored only for legacy wiring.)
     for (const auto &d : m_outputDevices) {
         m_captureDevice->addItem(d.name, d.id);
-        m_renderDevice->addItem(d.name, d.id);
     }
 
     auto selectById = [](QComboBox *cb, const QString &id) -> bool {
@@ -1287,74 +1239,37 @@ void MainWindow::refreshDevices()
         migratedCapture = selectById(m_captureDevice, pairedCapture);
     }
 
-    selectById(m_renderDevice, prefRender);   // hidden mirror combo
-
-    // First-run / no-pref fallbacks: pick something reasonable.
+    // First-run / no-pref fallback: pick something reasonable.
     if (m_captureDevice->currentIndex() < 0 && m_captureDevice->count() > 0) {
         int defIdx = -1;
         for (int i = 0; i < m_outputDevices.size(); ++i)
             if (m_outputDevices[i].isDefault) { defIdx = i; break; }
         m_captureDevice->setCurrentIndex(defIdx >= 0 ? defIdx : 0);
     }
-    if (m_renderDevice->currentIndex() < 0 && m_renderDevice->count() > 0) {
-        for (int i = 0; i < m_outputDevices.size(); ++i) {
-            if (!m_outputDevices[i].isDefault && !m_outputDevices[i].isVirtual) {
-                m_renderDevice->setCurrentIndex(i);
-                break;
-            }
-        }
-        if (m_renderDevice->currentIndex() < 0) m_renderDevice->setCurrentIndex(0);
-    }
     m_syncingUi = wasSyncing;
 
     if (migratedCapture)
         saveSelectedDevices();
-
-    if (m_tray) {
-        QList<ui::TrayController::DeviceChoice> inputChoices;
-        inputChoices.reserve(m_inputDevices.size());
-        for (int i = 0; i < m_inputDevices.size(); ++i) {
-            const auto &d = m_inputDevices[i];
-            inputChoices.push_back(ui::TrayController::DeviceChoice{
-                d.id,
-                (i >= realCaptureCount) ? QStringLiteral("Loopback: %1").arg(d.name) : d.name
-            });
-        }
-
-        QList<ui::TrayController::DeviceChoice> outputChoices;
-        outputChoices.reserve(m_outputDevices.size());
-        for (const auto &d : m_outputDevices) {
-            outputChoices.push_back(ui::TrayController::DeviceChoice{d.id, d.name});
-        }
-        m_tray->setRoutingOptions(inputChoices, selectedCaptureDeviceId(),
-                                  outputChoices, selectedRenderDeviceId());
-    }
 }
 
 void MainWindow::syncDevicePickerToDefaultOutput(const QString &deviceId)
 {
-    if (deviceId.isEmpty() || !m_captureDevice || !m_renderDevice) return;
+    if (deviceId.isEmpty() || !m_captureDevice) return;
 
     // A Bluetooth endpoint may have appeared since the last manual refresh.
-    // Re-enumerate once in that case, then align both the visible picker and
-    // its legacy hidden mirror to the Windows default endpoint.
+    // Re-enumerate once in that case, then align the picker to the Windows
+    // default endpoint.
     int captureIndex = m_captureDevice->findData(deviceId);
-    int renderIndex = m_renderDevice->findData(deviceId);
-    if (captureIndex < 0 || renderIndex < 0) {
+    if (captureIndex < 0) {
         refreshDevices();
         captureIndex = m_captureDevice->findData(deviceId);
-        renderIndex = m_renderDevice->findData(deviceId);
     }
-    if (captureIndex < 0 || renderIndex < 0) return;
-    if (m_captureDevice->currentIndex() == captureIndex
-        && m_renderDevice->currentIndex() == renderIndex) {
-        return;
-    }
+    if (captureIndex < 0) return;
+    if (m_captureDevice->currentIndex() == captureIndex) return;
 
     const bool wasSyncing = m_syncingUi;
     m_syncingUi = true;
     m_captureDevice->setCurrentIndex(captureIndex);
-    m_renderDevice->setCurrentIndex(renderIndex);
     m_syncingUi = wasSyncing;
     saveSelectedDevices();
 }
@@ -1364,33 +1279,22 @@ QString MainWindow::selectedCaptureDeviceId() const
     return m_captureDevice ? m_captureDevice->currentData().toString() : QString();
 }
 
-QString MainWindow::selectedRenderDeviceId() const
-{
-    return m_renderDevice ? m_renderDevice->currentData().toString() : QString();
-}
-
 void MainWindow::saveSelectedDevices() const
 {
     QSettings s;
     s.setValue(QString::fromLatin1(kCaptureDeviceKey), selectedCaptureDeviceId());
-    s.setValue(QString::fromLatin1(kRenderDeviceKey), selectedRenderDeviceId());
 }
 
 void MainWindow::restoreSelectedDevices()
 {
     QSettings s;
     const QString cap = s.value(QString::fromLatin1(kCaptureDeviceKey)).toString();
-    const QString ren = s.value(QString::fromLatin1(kRenderDeviceKey)).toString();
 
     const bool wasSyncing = m_syncingUi;
     m_syncingUi = true;
     if (!cap.isEmpty()) {
         const int idx = m_captureDevice->findData(cap);
         if (idx >= 0) m_captureDevice->setCurrentIndex(idx);
-    }
-    if (!ren.isEmpty()) {
-        const int idx = m_renderDevice->findData(ren);
-        if (idx >= 0) m_renderDevice->setCurrentIndex(idx);
     }
     m_syncingUi = wasSyncing;
 }
