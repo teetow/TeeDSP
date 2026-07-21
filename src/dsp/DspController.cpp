@@ -138,6 +138,7 @@ void DspController::setBypass(bool b)
     if (m_bypass == b) return;
     m_bypass = b;
     emit bypassChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 void DspController::setInputTrimDb(float v)
@@ -168,6 +169,7 @@ void DspController::setLevelerEnabled(bool b)
     if (m_levelerEnabled == b) return;
     m_levelerEnabled = b;
     emit levelerChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 float DspController::levelerGainDb() const
@@ -187,6 +189,7 @@ void DspController::setSpectralLevelerEnabled(bool b)
     if (m_spectralLevelerEnabled == b) return;
     m_spectralLevelerEnabled = b;
     emit levelerChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 void DspController::setOutputLevelerEnabled(bool b)
@@ -194,6 +197,7 @@ void DspController::setOutputLevelerEnabled(bool b)
     if (m_outputLevelerEnabled == b) return;
     m_outputLevelerEnabled = b;
     emit levelerChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 float DspController::outputLevelerGainDb() const
@@ -208,6 +212,7 @@ void DspController::setCompressorEnabled(bool b)
     if (m_compressorEnabled == b) return;
     m_compressorEnabled = b;
     emit compressorChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 void DspController::setCompThresholdDb(float v)
@@ -298,6 +303,7 @@ void DspController::setExciterEnabled(bool b)
     if (m_exciterEnabled == b) return;
     m_exciterEnabled = b;
     emit exciterChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 void DspController::setExciterDrive(float v)
@@ -333,6 +339,7 @@ void DspController::setEqEnabled(bool b)
     if (m_eqEnabled == b) return;
     m_eqEnabled = b;
     emit eqChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 // --- EQ band reads (cache for params, telemetry for GR) --------------------
@@ -404,6 +411,7 @@ void DspController::setEqBandEnabled(int band, bool enabled)
     if (band < 0 || band >= kEqBandCount) return;
     m_eqBands[band].enabled = enabled;
     emit eqChanged();
+    syncApo();   // discrete toggle: push now, don't wait for the batch timer
 }
 
 void DspController::setEqBandType(int band, int type)
