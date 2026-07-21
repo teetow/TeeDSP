@@ -85,7 +85,6 @@ private:
 
     QComboBox *m_captureDevice = nullptr;
     QComboBox *m_renderDevice = nullptr;
-    QPushButton *m_refreshDevicesButton = nullptr;
     QPushButton *m_startStopButton = nullptr;
     QLabel *m_statusLabel = nullptr;
     // Shown in the status bar only when the audio engine looks dead (the APO is

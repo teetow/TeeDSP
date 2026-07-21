@@ -343,16 +343,13 @@ QWidget *MainWindow::buildIoSection()
     m_captureDevice->setMinimumWidth(UiMetrics::kDeviceMinWidth);
     grid->addWidget(m_captureDevice, 0, 1);
 
-    m_refreshDevicesButton = new QPushButton(QStringLiteral("Refresh"));
-    grid->addWidget(m_refreshDevicesButton, 0, 2);
-
     m_manageApoButton = new QPushButton(QStringLiteral("Manage APO..."));
     connect(m_manageApoButton, &QPushButton::clicked,
             this, &MainWindow::onManageApoRequested);
-    grid->addWidget(m_manageApoButton, 0, 3);
+    grid->addWidget(m_manageApoButton, 0, 2);
 
     m_globalBypass = new QCheckBox(QStringLiteral("Bypass"));
-    grid->addWidget(m_globalBypass, 0, 4);
+    grid->addWidget(m_globalBypass, 0, 3);
 
     // Bridge-era controls retired from the APO surface. Kept as hidden,
     // parented members so the remaining wiring (device enumeration, tray,
@@ -790,7 +787,6 @@ QWidget *MainWindow::buildOutputPane()
 
 void MainWindow::connectSignals()
 {
-    connect(m_refreshDevicesButton, &QPushButton::clicked, this, &MainWindow::refreshDevices);
     // No Start/Stop: the APO is always inline in audiodg. The bridge engine is
     // retired from the audio path, so we don't wire its run/error signals.
 
