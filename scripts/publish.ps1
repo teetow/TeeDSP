@@ -50,6 +50,24 @@ function Stop-RunningTeeDsp {
     return $true
 }
 
+function Remove-DirWithRetry {
+    param([string]$Path, [int]$Retries = 5, [int]$DelayMs = 400)
+    # Right after Stop-Process exits, a DLL the process had loaded (seen in
+    # practice: platforms\qwindows.dll) can stay locked for a moment — likely
+    # AV/Defender scanning the just-terminated image, not the process itself
+    # (Wait-Process above already confirmed it's gone). Retry instead of
+    # failing the whole publish over a transient handle.
+    for ($i = 1; $i -le $Retries; $i++) {
+        try {
+            Remove-Item -Path $Path -Recurse -Force
+            return
+        } catch {
+            if ($i -eq $Retries) { throw }
+            Start-Sleep -Milliseconds $DelayMs
+        }
+    }
+}
+
 $wasRunning = $false
 if ($Restart) {
     $wasRunning = Stop-RunningTeeDsp
@@ -115,7 +133,7 @@ if (-not $Restart) {
 }
 if (Test-Path $InstallDir) {
     Write-Host "Clearing $InstallDir"
-    Remove-Item -Path $InstallDir -Recurse -Force
+    Remove-DirWithRetry -Path $InstallDir
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
