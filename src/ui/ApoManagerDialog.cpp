@@ -1,5 +1,6 @@
 #include "ApoManagerDialog.h"
 
+#include "AudioServiceRecovery.h"
 #include "../host/ApoBindingStatus.h"
 #include "../host/WasapiDevices.h"
 
@@ -64,10 +65,35 @@ ApoManagerDialog::ApoManagerDialog(QWidget *parent)
     m_bindingsTable->setSelectionMode(QAbstractItemView::NoSelection);
     layout->addWidget(m_bindingsTable);
 
+    m_actionStatusLabel = new QLabel(this);
+    m_actionStatusLabel->setProperty("role", "status");
+    m_actionStatusLabel->hide();
+    layout->addWidget(m_actionStatusLabel);
+
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     m_refreshButton = new QPushButton(QStringLiteral("Refresh"), this);
     buttons->addButton(m_refreshButton, QDialogButtonBox::ActionRole);
     connect(m_refreshButton, &QPushButton::clicked, this, &ApoManagerDialog::refresh);
+
+    m_restartEngineButton = new QPushButton(QStringLiteral("Restart Audio Engine"), this);
+    m_restartEngineButton->setToolTip(
+        QStringLiteral("Restarts the Windows Audio service (Audiosrv), which forces "
+                       "audiodg.exe to respawn and reload the APO. Requires elevation "
+                       "(a UAC prompt appears). Use this if audio is playing on the "
+                       "wrong device, sounds unprocessed, or TeeDSP shows \"not active\" "
+                       "on the current output without a clear reason — the same fix as "
+                       "scripts\\Restart-AudioEngine.ps1, without leaving the app."));
+    buttons->addButton(m_restartEngineButton, QDialogButtonBox::ActionRole);
+    connect(m_restartEngineButton, &QPushButton::clicked, this, [this]() {
+        m_restartEngineButton->setEnabled(false);
+        const bool launched = ui::recovery::restartAudioService();
+        m_actionStatusLabel->setText(launched
+            ? QStringLiteral("Restarting Windows Audio… approve the UAC prompt if one appears.")
+            : QStringLiteral("Restart was declined or could not be launched."));
+        m_actionStatusLabel->show();
+        m_restartEngineButton->setEnabled(true);
+    });
+
     connect(buttons, &QDialogButtonBox::rejected, this, &ApoManagerDialog::reject);
     layout->addWidget(buttons);
 

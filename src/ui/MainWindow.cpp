@@ -346,8 +346,13 @@ QWidget *MainWindow::buildIoSection()
     m_refreshDevicesButton = new QPushButton(QStringLiteral("Refresh"));
     grid->addWidget(m_refreshDevicesButton, 0, 2);
 
+    m_manageApoButton = new QPushButton(QStringLiteral("Manage APO..."));
+    connect(m_manageApoButton, &QPushButton::clicked,
+            this, &MainWindow::onManageApoRequested);
+    grid->addWidget(m_manageApoButton, 0, 3);
+
     m_globalBypass = new QCheckBox(QStringLiteral("Bypass"));
-    grid->addWidget(m_globalBypass, 0, 3);
+    grid->addWidget(m_globalBypass, 0, 4);
 
     // Bridge-era controls retired from the APO surface. Kept as hidden,
     // parented members so the remaining wiring (device enumeration, tray,
@@ -372,11 +377,6 @@ QWidget *MainWindow::buildIoSection()
     connect(m_restartEngineButton, &QPushButton::clicked,
             this, &MainWindow::onRestartEngineRequested);
     statusBar()->addPermanentWidget(m_restartEngineButton);
-
-    m_manageApoButton = new QPushButton(QStringLiteral("Manage APO..."));
-    connect(m_manageApoButton, &QPushButton::clicked,
-            this, &MainWindow::onManageApoRequested);
-    statusBar()->addPermanentWidget(m_manageApoButton);
 
     m_dspBuildLabel = new QLabel(QStringLiteral("DSP build: \u2014"));
     m_dspBuildLabel->setProperty("role", "status");

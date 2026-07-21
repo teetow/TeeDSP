@@ -4,6 +4,7 @@
 
 class QTableWidget;
 class QPushButton;
+class QLabel;
 
 namespace ui {
 
@@ -25,6 +26,8 @@ private:
     QTableWidget *m_packagesTable = nullptr;
     QTableWidget *m_bindingsTable = nullptr;
     QPushButton *m_refreshButton = nullptr;
+    QPushButton *m_restartEngineButton = nullptr;
+    QLabel *m_actionStatusLabel = nullptr;
 };
 
 } // namespace ui
