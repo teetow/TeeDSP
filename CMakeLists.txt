@@ -71,6 +71,7 @@ set(UI_SOURCES
 	src/ui/Theme.cpp
 	src/ui/StartupRegistration.cpp
 	src/ui/AudioServiceRecovery.cpp
+	src/ui/ApoLifecycleActions.cpp
 	src/ui/ApoManagerDialog.cpp
 	src/ui/TrayController.cpp
 	src/ui/widgets/Knob.cpp
@@ -96,7 +97,12 @@ target_compile_definitions(TeeDsp PRIVATE
 	_UNICODE
 	NOMINMAX
 	WIN32_LEAN_AND_MEAN
-	$<$<CONFIG:Debug>:TEEDSP_SOURCE_DIR="${CMAKE_SOURCE_DIR}">
+	# Unconditional (not just Debug): Theme.cpp uses this to find theme.qss
+	# when running from the build tree, and ApoManagerDialog uses it to locate
+	# scripts/deploy-apo.ps1 for the "Redeploy APO" action. This is a personal
+	# dev tool built only on the dev's own machine, so embedding the checkout
+	# path in Release is fine.
+	TEEDSP_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_link_libraries(TeeDsp PRIVATE
