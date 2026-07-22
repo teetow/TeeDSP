@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "ChainParams.h"
+#include "SpectralLeveler.h"       // dsp::SpectralLeveler::kBandCount
 #include "host/ApoSharedClient.h"
 #include "shared/TeeDspParams.h"   // teedsp::kBandCount
 
@@ -17,7 +18,7 @@ namespace dsp {
 // Band count, mirrored from the shared param contract. Kept as a dsp:: name so
 // existing call sites read unchanged; the DSP itself now runs in the system APO.
 inline constexpr int kEqBandCount = teedsp::kBandCount;
-inline constexpr int kSpectralLevelerBandCount = 4;
+inline constexpr int kSpectralLevelerBandCount = SpectralLeveler::kBandCount;
 
 // Lightweight POD view of a single EQ band, for high-frequency UI reads
 // (paint loops). Intentionally NOT exposed via QVariant — direct field access

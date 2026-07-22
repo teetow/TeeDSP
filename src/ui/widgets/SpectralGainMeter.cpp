@@ -11,7 +11,6 @@ namespace ui {
 
 namespace {
 constexpr float kMaxGainDb = 6.0f;
-constexpr char kLabels[SpectralGainMeter::kBandCount] = { 'B', 'M', 'P', 'H' };
 }
 
 SpectralGainMeter::SpectralGainMeter(QWidget *parent) : QWidget(parent)
@@ -42,14 +41,13 @@ void SpectralGainMeter::paintEvent(QPaintEvent *)
     p.setBrush(theme::kBgSunken);
     p.drawRoundedRect(well, 3.0, 3.0);
 
-    const double labelHeight = 12.0;
-    const QRectF chart = well.adjusted(4.0, 3.0, -4.0, -labelHeight - 2.0);
+    const QRectF chart = well.adjusted(4.0, 3.0, -4.0, -3.0);
     const double centreY = std::floor(chart.center().y()) + 0.5;
     p.setPen(QPen(theme::kTextDim, 1.0));
     p.drawLine(QPointF(chart.left(), centreY), QPointF(chart.right(), centreY));
 
     const double slotWidth = chart.width() / kBandCount;
-    const double barWidth = std::max(4.0, slotWidth - 5.0);
+    const double barWidth = std::max(2.0, slotWidth - 3.0);
     const double halfHeight = std::max(1.0, (chart.height() * 0.5) - 1.0);
     for (int b = 0; b < kBandCount; ++b) {
         const double x = chart.left() + slotWidth * b + (slotWidth - barWidth) * 0.5;
@@ -61,16 +59,6 @@ void SpectralGainMeter::paintEvent(QPaintEvent *)
             p.setBrush(gain >= 0.0f ? theme::kAccent : theme::kWarn);
             p.drawRect(bar);
         }
-
-        p.setPen(m_active ? theme::kTextSecondary : theme::kTextDim);
-        QFont font = p.font();
-        font.setPointSizeF(7.0);
-        font.setBold(true);
-        p.setFont(font);
-        const QRectF labelRect(chart.left() + slotWidth * b, chart.bottom() + 1.0,
-                               slotWidth, labelHeight);
-        p.drawText(labelRect, Qt::AlignHCenter | Qt::AlignTop,
-                   QString(QChar::fromLatin1(kLabels[b])));
     }
 }
 

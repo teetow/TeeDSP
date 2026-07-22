@@ -580,7 +580,7 @@ QWidget *MainWindow::buildSpectralSection()
 
     m_spectralLevelerEnabled = new QCheckBox(QStringLiteral("Enable"));
     m_spectralLevelerEnabled->setToolTip(
-        QStringLiteral("Speech spectral leveler — a gentle four-band AGC that "
+        QStringLiteral("Speech spectral leveler — a gentle ten-band AGC that "
                        "evens out voice timbre before the dynamic EQ. It helps "
                        "muffled or unusually bright voices land in a consistent "
                        "working range."));
@@ -588,8 +588,8 @@ QWidget *MainWindow::buildSpectralSection()
 
     m_spectralGainMeter = new ui::SpectralGainMeter();
     m_spectralGainMeter->setToolTip(
-        QStringLiteral("Live spectral correction in dB. B = body, M = low-mid, "
-                       "P = presence, H = high. Blue adds energy; orange reduces it."));
+        QStringLiteral("Live spectral correction in dB, low band to high, left "
+                       "to right. Blue adds energy; orange reduces it."));
     col->addWidget(m_spectralGainMeter, 0, Qt::AlignHCenter);
 
     return section;

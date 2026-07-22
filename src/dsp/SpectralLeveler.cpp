@@ -16,11 +16,20 @@ constexpr float kMaxCutDb = 6.0f;
 // reasonably natural close-mic voice. The filter bandwidths matter here, hence
 // the intentionally non-flat values. They form a gentle speech contour: enough
 // body and presence to stay intelligible, without forcing every voice bright.
+// Ten log-spaced points (~0.72 octaves apart) refine the same four-region
+// shape the previous body/low-mid/presence/brilliance contour used, fit
+// through the same anchors (170→-12, 600→-11, 1800→-13, 5000→-20 dB).
 constexpr float kTargetRelativeDb[SpectralLeveler::kBandCount] = {
-    -12.0f, // body       ~170 Hz
-    -11.0f, // low-mid    ~600 Hz
-    -13.0f, // presence   ~1.8 kHz
-    -20.0f, // brilliance ~5.0 kHz
+    -14.0f, //  90 Hz  sub
+    -12.5f, // 150 Hz  body
+    -11.5f, // 240 Hz  body-mid
+    -11.0f, // 400 Hz  low-mid
+    -11.0f, // 660 Hz  low-mid
+    -12.0f, //  1.1 kHz mid
+    -13.0f, //  1.8 kHz presence
+    -16.5f, //  2.9 kHz presence-hi
+    -20.0f, //  4.8 kHz brilliance
+    -26.0f, //  8.0 kHz air
 };
 
 struct BandDesign {
@@ -32,10 +41,16 @@ struct BandDesign {
 };
 
 constexpr BandDesign kBands[SpectralLeveler::kBandCount] = {
-    {  170.0f, 0.8f, Biquad::Type::LowShelf,   220.0f, 0.7f },
-    {  600.0f, 0.8f, Biquad::Type::Peaking,    600.0f, 0.8f },
-    { 1800.0f, 0.9f, Biquad::Type::Peaking,   1800.0f, 0.9f },
-    { 5000.0f, 0.9f, Biquad::Type::HighShelf, 4800.0f, 0.7f },
+    {   90.0f, 1.1f, Biquad::Type::LowShelf,    120.0f, 0.7f },
+    {  150.0f, 1.1f, Biquad::Type::Peaking,     150.0f, 1.1f },
+    {  240.0f, 1.1f, Biquad::Type::Peaking,     240.0f, 1.1f },
+    {  400.0f, 1.1f, Biquad::Type::Peaking,     400.0f, 1.1f },
+    {  660.0f, 1.1f, Biquad::Type::Peaking,     660.0f, 1.1f },
+    { 1100.0f, 1.1f, Biquad::Type::Peaking,    1100.0f, 1.1f },
+    { 1800.0f, 1.1f, Biquad::Type::Peaking,    1800.0f, 1.1f },
+    { 2900.0f, 1.1f, Biquad::Type::Peaking,    2900.0f, 1.1f },
+    { 4800.0f, 1.1f, Biquad::Type::Peaking,    4800.0f, 1.1f },
+    { 8000.0f, 1.1f, Biquad::Type::HighShelf,  7700.0f, 0.7f },
 };
 
 inline float onePoleCoef(float timeMs, double sampleRate)

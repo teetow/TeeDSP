@@ -8,8 +8,8 @@
 
 namespace dsp {
 
-// A gentle speech-oriented multiband AGC. It measures four broad spectral
-// regions relative to the incoming broadband level, then drives equally broad
+// A gentle speech-oriented multiband AGC. It measures ten log-spaced spectral
+// regions (~90 Hz-8 kHz) relative to the incoming broadband level, then drives
 // correction filters toward a reference speech contour. Keeping the mean gain
 // at unity makes this a timbre leveller rather than a second loudness rider;
 // Leveler remains responsible for absolute loudness.
@@ -21,7 +21,7 @@ namespace dsp {
 class SpectralLeveler : public Processor
 {
 public:
-    static constexpr int kBandCount = 4;
+    static constexpr int kBandCount = 10;
 
     void prepare(double sampleRate, std::size_t channels) override;
     void reset() override;

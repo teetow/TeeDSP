@@ -102,16 +102,19 @@ Remove-Item $log -ErrorAction SilentlyContinue
 # Built as a single elevated script so the user is only prompted once. Only
 # the two host-known paths ($componentInf, $log) are substituted by the
 # *parent* shell below; everything else (backtick-escaped) evaluates in the
-# elevated child, where the actual pnputil enumeration happens.
+# elevated child, where the actual pnputil enumeration happens. Every step
+# goes through Tee-Object rather than Out-File/*>> so it lands in the log
+# AND prints live in the elevated console — otherwise this whole window is
+# silent by design and just looks stuck/blank.
 $elevatedScript = @"
 `$log = '$log'
-"== Installing new package ==" | Out-File `$log
+"== Installing new package ==" | Tee-Object -FilePath `$log -Append
 `$addOutput = pnputil /add-driver '$componentInf' /install
-`$addOutput | Out-File `$log -Append
+`$addOutput | Tee-Object -FilePath `$log -Append
 `$justAdded = (`$addOutput | Select-String 'Published Name:\s+(oem\d+\.inf)').Matches |
     Select-Object -Last 1 | ForEach-Object { `$_.Groups[1].Value }
 
-"== Retiring superseded TeeDspApoComponent packages (keeping `$justAdded) ==" | Out-File `$log -Append
+"== Retiring superseded TeeDspApoComponent packages (keeping `$justAdded) ==" | Tee-Object -FilePath `$log -Append
 `$lines = pnputil /enum-drivers
 `$current = `$null
 `$stale = @()
@@ -120,19 +123,29 @@ foreach (`$line in `$lines) {
     if (`$line -match 'Original Name:\s+teedspapocomponent\.inf' -and `$current -ne `$justAdded) { `$stale += `$current }
 }
 foreach (`$oem in (`$stale | Sort-Object -Unique)) {
-    "Removing superseded `$oem" | Out-File `$log -Append
-    pnputil /delete-driver `$oem /uninstall /force *>> `$log
+    "Removing superseded `$oem" | Tee-Object -FilePath `$log -Append
+    pnputil /delete-driver `$oem /uninstall /force 2>&1 | Tee-Object -FilePath `$log -Append
 }
 
-"== Restarting Windows Audio ==" | Out-File `$log -Append
-Restart-Service Audiosrv -Force *>> `$log
+"== Restarting Windows Audio ==" | Tee-Object -FilePath `$log -Append
+Restart-Service Audiosrv -Force 2>&1 | Tee-Object -FilePath `$log -Append
+
+"== Done ==" | Tee-Object -FilePath `$log -Append
 "@
+
+$elevatedScriptPath = Join-Path $repoRoot 'out\deploy-apo-elevated.ps1'
+Set-Content -Path $elevatedScriptPath -Value $elevatedScript -Encoding UTF8
 
 Write-Host ""
 Write-Host "A UAC elevation prompt will appear now - approve it to install the"
 Write-Host "new driver package, retire the old one(s), and reload Windows Audio."
+# -File (a real script path) instead of -Command $elevatedScript: passing a
+# multi-line string with embedded double quotes through -ArgumentList mangles
+# the quoting when Start-Process rebuilds the child's command line, so quoted
+# strings inside the script (e.g. the "== ... ==" status lines) arrive at
+# powershell.exe already stripped of their quotes and fail as bare commands.
 Start-Process powershell -Verb RunAs `
-    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $elevatedScript) -Wait
+    -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $elevatedScriptPath) -Wait
 
 Write-Host ""
 Write-Host "--- deploy log ---"
