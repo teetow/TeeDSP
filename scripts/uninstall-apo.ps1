@@ -31,15 +31,25 @@
     elevated process exits, since a UAC-elevated process's stdout isn't
     otherwise visible to the launching app.
 
+.PARAMETER SkipFxClear
+    Skip the FX-binding-clear step and only remove the package(s). For
+    retiring a superseded/duplicate Driver Store package that isn't the one
+    actually bound to anything -- e.g. a leftover from an interrupted
+    deploy-apo.ps1 run. Removing a package nothing points at doesn't need
+    (and shouldn't risk) touching a live, working binding on some other
+    endpoint.
+
 .EXAMPLE
     .\uninstall-apo.ps1 -PublishedNames oem123.inf
     .\uninstall-apo.ps1 -PublishedNames oem123.inf,oem124.inf,oem125.inf -Log C:\temp\uninstall.log
+    .\uninstall-apo.ps1 -PublishedNames oem120.inf -SkipFxClear   # retire a stale duplicate only
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$PublishedNames,
-    [string]$Log
+    [string]$Log,
+    [switch]$SkipFxClear
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,18 +63,22 @@ function Out-Line([string]$msg) {
 
 . "$PSScriptRoot\..\apo\install\_Interop.ps1"
 
-Out-Line "== Clearing TeeDSP FX bindings on all render endpoints =="
-foreach ($pair in [TeeDsp.Apo.Helpers]::ListRender()) {
-    $epId = $pair[0]
-    $epName = $pair[1]
-    foreach ($pid in 5, 6, 14) {
-        try {
-            [TeeDsp.Apo.Helpers]::ClearClsidProp($epId, $pid)
-        } catch {
-            Out-Line "  warn: clearing pid $pid on '$epName': $($_.Exception.Message)"
+if ($SkipFxClear) {
+    Out-Line "== Skipping FX-binding clear (-SkipFxClear) =="
+} else {
+    Out-Line "== Clearing TeeDSP FX bindings on all render endpoints =="
+    foreach ($pair in [TeeDsp.Apo.Helpers]::ListRender()) {
+        $epId = $pair[0]
+        $epName = $pair[1]
+        foreach ($pid in 5, 6, 14) {
+            try {
+                [TeeDsp.Apo.Helpers]::ClearClsidProp($epId, $pid)
+            } catch {
+                Out-Line "  warn: clearing pid $pid on '$epName': $($_.Exception.Message)"
+            }
         }
+        Out-Line "  cleared: $epName"
     }
-    Out-Line "  cleared: $epName"
 }
 
 Out-Line "== Removing driver package(s) =="

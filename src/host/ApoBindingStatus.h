@@ -2,6 +2,7 @@
 
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 namespace host {
 
@@ -16,6 +17,20 @@ struct ApoBindingInfo {
 };
 
 ApoBindingInfo queryApoBinding(const QString &renderDeviceId);
+
+// Uncollapsed view of the same FxProperties key queryApoBinding() reads:
+// the raw CLSID string (or empty) at each of the three known slots, plus the
+// raw MFX-modes-supported multi-string. For diagnostics — protects against
+// the interpretation in queryApoBinding() itself having a blind spot (it's
+// happened before: an earlier script only ever touched the ,6 slot).
+struct ApoBindingRaw {
+    QString sfxClsid;             // ,5  (PKEY_FX_StreamEffectClsid)
+    QString mfxClsid;              // ,6  (PKEY_FX_ModeEffectClsid)
+    QString compositeMfxClsid;     // ,14 (PKEY_CompositeFX_ModeEffectClsid)
+    QStringList modesSupported;    // MFX_ProcessingModes_Supported_For_Streaming
+};
+
+ApoBindingRaw queryApoBindingRaw(const QString &renderDeviceId);
 
 // One row per teedsp*.inf package pnputil currently has published in the
 // Driver Store, independent of whether the target device is plugged in right

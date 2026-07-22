@@ -29,8 +29,15 @@ public:
         uint32_t locked = 0;          // APO is bound into an active stream
         uint32_t channels = 0;
         uint32_t sampleRate = 0;
+        uint32_t bytesPerFrame = 0;
         uint32_t uiAlive = 0;         // APO sees our heartbeat
         unsigned long long processCalls = 0; // climbing => actively processing
+        unsigned long long framesProcessed = 0;
+        unsigned long long lastBufferFlags = 0; // most recent APO_CONNECTION_PROPERTY flags
+        uint32_t paramGen = 0;        // UI's committed-change counter
+        uint32_t appliedGen = 0;      // paramGen the APO has actually consumed
+        uint32_t meterOwner = 0;      // instance id elected to write meters (0 = none)
+        unsigned long long uiHeartbeat = 0; // raw heartbeat counter (diagnostics only)
         // Compile-time stamp of the DSP code the currently-loaded APO instance
         // was built from (see TeeDspApoShared.h); empty until the APO writes it.
         char dspBuildStamp[32] = {};

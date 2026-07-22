@@ -21,3 +21,11 @@
 - [x] we can lengthen the max release for the compressors a bit, maybe 3s
 - [x] non-linear knob response: the compressor Ratio knob could have 4.0 at 12 o'clock
 - [x] compressor make-up 24 dB is extreme, 12 dB feels better
+
+- [ ] Evaluate the balance/separation of concerns between C++ and PowerShell
+  in the APO lifecycle & diagnostics code (ApoLifecycleActions, deploy-apo.ps1
+  /uninstall-apo.ps1, ApoDiagnostics's cert-info gap, the AirPods churn
+  shell-out). Some things ended up in PowerShell because it was easiest in
+  the moment (e.g. a cert-store lookup), others because the PowerShell side
+  is genuinely the better tool for the job (Event Log parsing). Worth a
+  deliberate pass rather than accreting more of either ad hoc.

@@ -63,6 +63,7 @@ set(HOST_SOURCES
 	src/host/SpectrumAnalyzer.cpp
 	src/host/ApoSharedClient.cpp
 	src/host/ApoBindingStatus.cpp
+	src/host/ApoDiagnostics.cpp
 )
 
 set(UI_SOURCES
@@ -110,10 +111,12 @@ target_link_libraries(TeeDsp PRIVATE
 	Qt6::Core
 	Qt6::Gui
 	Qt6::Widgets
+	Advapi32
 	Avrt
 	Mmdevapi
 	Ole32
 	Propsys
+	Psapi
 	Shell32
 	Uuid
 	Winmm

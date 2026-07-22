@@ -24,7 +24,8 @@ QString quoteArg(const QString &arg)
 } // namespace
 
 RemovePackagesResult removeApoPackages(const QString &scriptPath,
-                                        const QStringList &publishedNames)
+                                        const QStringList &publishedNames,
+                                        bool skipFxClear)
 {
     RemovePackagesResult result;
     if (publishedNames.isEmpty())
@@ -35,11 +36,13 @@ RemovePackagesResult removeApoPackages(const QString &scriptPath,
             .arg(QDateTime::currentMSecsSinceEpoch()));
     QFile::remove(logPath);   // stale leftover from a previous run, if any
 
-    const QString params =
+    QString params =
         QStringLiteral("-NoProfile -ExecutionPolicy Bypass -File %1 -PublishedNames %2 -Log %3")
             .arg(quoteArg(scriptPath),
                  quoteArg(publishedNames.join(QLatin1Char(','))),
                  quoteArg(logPath));
+    if (skipFxClear)
+        params += QStringLiteral(" -SkipFxClear");
 
     SHELLEXECUTEINFOW sei{};
     sei.cbSize       = sizeof(sei);
