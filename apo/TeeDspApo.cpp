@@ -251,6 +251,8 @@ void TeeDspApo::leaveSharedProcessing()
 {
     if (!m_shm || !m_locked)
         return;
+    if (m_ownsMeters)
+        teedsp::apoWriteCalibration(m_shm, m_chain.calibrationState());
     uint32_t expected = m_instanceId;
     const bool wasOwner = std::atomic_ref<uint32_t>(m_shm->meterOwner)
         .compare_exchange_strong(expected, 0u, std::memory_order_acq_rel);
@@ -327,6 +329,7 @@ void TeeDspApo::publishMeters(const float *inBuf, const float *outBuf, UINT32 fr
                   "ApoShared::spectralGainDb size must match dsp::SpectralLeveler::kBandCount");
     static_assert(sizeof(teedsp::ApoShared::bandGrDb) / sizeof(float) == dsp::kEqBandCount,
                   "ApoShared::bandGrDb size must match dsp::kEqBandCount");
+    teedsp::apoWriteCalibration(m_shm, m_chain.calibrationState());
     m_shm->compGrDb         = m_chain.compressor().currentGainReductionDb();
     m_shm->levelerGainDb    = m_chain.leveler().currentGainDb();
     for (int b = 0; b < dsp::SpectralLeveler::kBandCount; ++b)
@@ -509,6 +512,10 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
     m_lastAppliedGen = 0;
     m_framesSinceHeartbeat = 0;
     if (m_shm) {
+        dsp::LevelerChainCalibration calibration;
+        if (teedsp::apoReadCalibration(m_shm, calibration))
+            m_chain.restoreCalibration(calibration);
+
         // channels/sampleRate/bytesPerFrame are NOT written here: with 2+
         // concurrent instances (e.g. a Communications-mode stream + a media
         // stream), whichever locked most recently would clobber the format

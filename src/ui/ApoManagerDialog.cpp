@@ -10,6 +10,7 @@
 #include <QAbstractItemView>
 #include <QClipboard>
 #include <QDate>
+#include <QDateTime>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileInfo>
@@ -19,6 +20,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLayoutItem>
+#include <QLocale>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
@@ -93,12 +95,44 @@ bool endpointMatches(const host::DeviceInfo &ep, const DeviceMapping &m)
         || ep.name.contains(needle, Qt::CaseInsensitive);
 }
 
-// Driver version strings look like "07/21/2026 0.1.202.0914" — the date
-// portion sorts correctly as text, but parsing it avoids relying on that.
-QDate parseDriverVersionDate(const QString &driverVersion)
+// deploy-apo.ps1 encodes its UTC deployment minute in the final DriverVer
+// component (HHmm). pnputil parses that component as an integer and drops a
+// leading zero, so 09:16 comes back as ".916"; recover it numerically.
+QDateTime parseDriverDeploymentTime(const QString &driverVersion)
 {
     const QString datePart = driverVersion.section(QLatin1Char(' '), 0, 0);
-    return QDate::fromString(datePart, QStringLiteral("MM/dd/yyyy"));
+    const QDate date = QDate::fromString(datePart, QStringLiteral("MM/dd/yyyy"));
+    const QString versionPart = driverVersion.section(QLatin1Char(' '), 1, 1);
+    const QStringList components = versionPart.split(QLatin1Char('.'));
+    if (!date.isValid() || components.size() != 4
+        || components[0] != QStringLiteral("0")
+        || components[1] != QStringLiteral("1"))
+        return {};
+
+    bool ok = false;
+    const int hhmm = components[3].toInt(&ok);
+    const QTime time(hhmm / 100, hhmm % 100);
+    if (!ok || !time.isValid())
+        return {};
+    return QDateTime(date, time, Qt::UTC);
+}
+
+QString displayDriverDeploymentTime(const QString &driverVersion)
+{
+    const QDateTime utc = parseDriverDeploymentTime(driverVersion);
+    return utc.isValid()
+        ? utc.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm"))
+        : driverVersion;
+}
+
+QString displayApoBuildStamp(const char *stamp)
+{
+    const QString raw = QString::fromLatin1(stamp);
+    const QDateTime parsed =
+        QLocale::c().toDateTime(raw, QStringLiteral("MMM d yyyy HH:mm:ss"));
+    return parsed.isValid()
+        ? parsed.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
+        : raw;
 }
 
 QLabel *statusLabel(const QString &text, const char *role, QWidget *parent)
@@ -192,9 +226,10 @@ ApoManagerDialog::ApoManagerDialog(QWidget *parent)
     m_packagesTable = new QTableWidget(0, 5, this);
     m_packagesTable->setHorizontalHeaderLabels(
         {QStringLiteral("Package"), QStringLiteral("Purpose"),
-         QStringLiteral("Published name"), QStringLiteral("Driver version"), QString()});
+         QStringLiteral("Published name"), QStringLiteral("Deployed (local)"), QString()});
     m_packagesTable->horizontalHeader()->setStretchLastSection(false);
     m_packagesTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_packagesTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     m_packagesTable->verticalHeader()->setVisible(false);
     m_packagesTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_packagesTable->setSelectionMode(QAbstractItemView::NoSelection);
@@ -500,7 +535,9 @@ void ApoManagerDialog::refresh()
         m_packagesTable->setItem(row, 0, readOnlyItem(pkg.label));
         m_packagesTable->setItem(row, 1, readOnlyItem(pkg.purpose));
         m_packagesTable->setItem(row, 2, readOnlyItem(pkg.publishedName));
-        m_packagesTable->setItem(row, 3, readOnlyItem(pkg.driverVersion));
+        auto *deployedItem = readOnlyItem(displayDriverDeploymentTime(pkg.driverVersion));
+        deployedItem->setToolTip(QStringLiteral("Raw DriverVer: %1").arg(pkg.driverVersion));
+        m_packagesTable->setItem(row, 3, deployedItem);
 
         auto *rowUninstall = new QPushButton(QStringLiteral("Uninstall"), m_packagesTable);
         const QString publishedName = pkg.publishedName;
@@ -531,12 +568,12 @@ void ApoManagerDialog::refresh()
 
     if (componentRows.size() > 1) {
         int latestRow = -1;
-        QDate latestDate;
+        QDateTime latestTime;
         bool allParsed = true;
         for (int row : componentRows) {
-            const QDate d = parseDriverVersionDate(packages[row].driverVersion);
-            if (!d.isValid()) { allParsed = false; continue; }
-            if (latestRow < 0 || d > latestDate) { latestDate = d; latestRow = row; }
+            const QDateTime time = parseDriverDeploymentTime(packages[row].driverVersion);
+            if (!time.isValid()) { allParsed = false; continue; }
+            if (latestRow < 0 || time > latestTime) { latestTime = time; latestRow = row; }
         }
         m_packagesAnomalyLabel->setText(
             QStringLiteral("%1 copies of the APO component are installed at once — likely a "
@@ -563,7 +600,7 @@ void ApoManagerDialog::refresh()
     if (haveStatus) {
         m_loadedBuildLabel->setText(
             QStringLiteral("Loaded build: %1 (%2)")
-                .arg(QString::fromLatin1(status.dspBuildStamp),
+                .arg(displayApoBuildStamp(status.dspBuildStamp),
                      status.locked ? QStringLiteral("processing now") : QStringLiteral("idle")));
     } else {
         m_loadedBuildLabel->setText(
@@ -655,11 +692,11 @@ void ApoManagerDialog::retireSuperseded()
         return;
 
     int latestIdx = -1;
-    QDate latestDate;
+    QDateTime latestTime;
     for (int i : componentIdx) {
-        const QDate d = parseDriverVersionDate(packages[i].driverVersion);
-        if (!d.isValid()) return;   // shouldn't happen -- refresh() already checked this
-        if (latestIdx < 0 || d > latestDate) { latestDate = d; latestIdx = i; }
+        const QDateTime time = parseDriverDeploymentTime(packages[i].driverVersion);
+        if (!time.isValid()) return;   // shouldn't happen -- refresh() already checked this
+        if (latestIdx < 0 || time > latestTime) { latestTime = time; latestIdx = i; }
     }
 
     QStringList stale;

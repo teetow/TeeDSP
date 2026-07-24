@@ -27,6 +27,9 @@ public:
     void reset();
     void process(float *interleaved, std::size_t frameCount);
 
+    LevelerChainCalibration calibrationState() const noexcept;
+    bool restoreCalibration(const LevelerChainCalibration &state);
+
     void setBypass(bool bypass) { m_bypass.store(bypass, std::memory_order_relaxed); }
     bool isBypassed() const { return m_bypass.load(std::memory_order_relaxed); }
 
@@ -41,8 +44,11 @@ public:
     Compressor &compressor() { return m_compressor; }
     Exciter &exciter() { return m_exciter; }
     Leveler &leveler() { return m_leveler; }
+    const Leveler &leveler() const { return m_leveler; }
     SpectralLeveler &spectralLeveler() { return m_spectralLeveler; }
+    const SpectralLeveler &spectralLeveler() const { return m_spectralLeveler; }
     Leveler &outputLeveler() { return m_outputLeveler; }
+    const Leveler &outputLeveler() const { return m_outputLeveler; }
 
 private:
     Leveler m_leveler;

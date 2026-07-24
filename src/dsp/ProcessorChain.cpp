@@ -49,6 +49,32 @@ void ProcessorChain::reset()
     m_exciter.reset();
 }
 
+LevelerChainCalibration ProcessorChain::calibrationState() const noexcept
+{
+    LevelerChainCalibration state;
+    state.sampleRate = static_cast<uint32_t>(m_sampleRate);
+    state.channels = static_cast<uint32_t>(m_channels);
+    state.input = m_leveler.calibrationState();
+    state.spectral = m_spectralLeveler.calibrationState();
+    state.output = m_outputLeveler.calibrationState();
+    return state;
+}
+
+bool ProcessorChain::restoreCalibration(const LevelerChainCalibration &state)
+{
+    // Learned loudness, relative spectral energy, and gain corrections are
+    // dimensionless programme state. The filters themselves were rebuilt by
+    // prepare() for this stream's format, so a sample-rate/channel/device
+    // change is a transport handoff, not a reason to discard calibration.
+    if (state.version != kLevelerCalibrationVersion)
+        return false;
+
+    const bool inputRestored = m_leveler.restoreCalibration(state.input);
+    const bool spectralRestored = m_spectralLeveler.restoreCalibration(state.spectral);
+    const bool outputRestored = m_outputLeveler.restoreCalibration(state.output);
+    return inputRestored || spectralRestored || outputRestored;
+}
+
 void ProcessorChain::process(float *interleaved, std::size_t frameCount)
 {
     if (m_bypass.load(std::memory_order_relaxed) || interleaved == nullptr || frameCount == 0)

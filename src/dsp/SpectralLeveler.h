@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Biquad.h"
+#include "LevelerCalibration.h"
 #include "Processor.h"
 
 #include <array>
@@ -29,6 +30,9 @@ public:
 
     float currentGainDb(int band) const;
 
+    SpectralLevelerCalibration calibrationState() const noexcept;
+    bool restoreCalibration(const SpectralLevelerCalibration &state);
+
 private:
     void updateCorrectionFilters();
     void updateGains();
@@ -49,6 +53,9 @@ private:
     float m_enableMix = 0.0f;
     int m_controlCountdown = 0;
     bool m_prepared = false;
+    bool m_hasCalibration = false;
 };
+
+static_assert(SpectralLeveler::kBandCount == kSpectralCalibrationBandCount);
 
 } // namespace dsp

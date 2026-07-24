@@ -108,6 +108,7 @@ void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
         m_gainDb.fill(0.0f);
         m_filterGainDb.fill(0.0f);
         m_widePower = 0.0f;
+        m_hasCalibration = false;
     } else {
         m_filterGainDb = m_gainDb;
     }
@@ -143,6 +144,43 @@ float SpectralLeveler::currentGainDb(int band) const
 {
     return (band >= 0 && band < kBandCount)
         ? m_currentGainDb[band].load(std::memory_order_relaxed) : 0.0f;
+}
+
+SpectralLevelerCalibration SpectralLeveler::calibrationState() const noexcept
+{
+    SpectralLevelerCalibration state;
+    state.widePower = m_widePower;
+    for (int b = 0; b < kBandCount; ++b) {
+        state.bandPower[b] = m_bandPower[b];
+        state.gainDb[b] = m_gainDb[b];
+    }
+    state.valid = m_hasCalibration ? 1u : 0u;
+    return state;
+}
+
+bool SpectralLeveler::restoreCalibration(const SpectralLevelerCalibration &state)
+{
+    if (state.valid == 0u || !std::isfinite(state.widePower)
+        || state.widePower < 0.0f)
+        return false;
+
+    for (int b = 0; b < kBandCount; ++b) {
+        if (!std::isfinite(state.bandPower[b]) || state.bandPower[b] < 0.0f
+            || !std::isfinite(state.gainDb[b]))
+            return false;
+    }
+
+    m_widePower = state.widePower;
+    for (int b = 0; b < kBandCount; ++b) {
+        m_bandPower[b] = state.bandPower[b];
+        m_gainDb[b] = clampf(state.gainDb[b], -kMaxCutDb, kMaxBoostDb);
+    }
+    m_hasCalibration = true;
+    updateCorrectionFilters();
+    for (int b = 0; b < kBandCount; ++b)
+        m_currentGainDb[b].store(m_gainDb[b] * m_enableMix,
+                                 std::memory_order_relaxed);
+    return true;
 }
 
 void SpectralLeveler::updateCorrectionFilters()
@@ -212,6 +250,7 @@ void SpectralLeveler::process(float *interleaved, std::size_t frameCount)
         }
 
         if (!calibrationFrozen) {
+            m_hasCalibration = true;
             wideEnergy /= static_cast<float>(m_channels);
             const float wideCoef = (wideEnergy > m_widePower)
                 ? m_detectorAttackCoef : m_detectorReleaseCoef;

@@ -125,6 +125,30 @@ void Leveler::reset()
     m_currentGainDb.store(m_smoothedGainDb * m_enableMix, std::memory_order_relaxed);
 }
 
+LoudnessLevelerCalibration Leveler::calibrationState() const noexcept
+{
+    LoudnessLevelerCalibration state;
+    state.longTermLufs = m_longTermLufs;
+    state.smoothedGainDb = m_smoothedGainDb;
+    state.valid = m_hasLoudnessEstimate ? 1u : 0u;
+    return state;
+}
+
+bool Leveler::restoreCalibration(const LoudnessLevelerCalibration &state) noexcept
+{
+    if (state.valid == 0u
+        || !std::isfinite(state.longTermLufs)
+        || !std::isfinite(state.smoothedGainDb))
+        return false;
+
+    m_longTermLufs = clampf(state.longTermLufs, -120.0f, 24.0f);
+    m_smoothedGainDb = clampf(state.smoothedGainDb, -m_maxCutDb, m_maxBoostDb);
+    m_hasLoudnessEstimate = true;
+    m_currentGainDb.store(m_smoothedGainDb * m_enableMix,
+                          std::memory_order_relaxed);
+    return true;
+}
+
 void Leveler::process(float *interleaved, std::size_t frameCount)
 {
     if (interleaved == nullptr || frameCount == 0

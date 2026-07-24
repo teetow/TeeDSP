@@ -7,7 +7,7 @@ Signature   = "$WINDOWS NT$"
 Class       = SoftwareComponent
 ClassGuid   = {5C4C3332-344D-483C-8739-259E934C9CC8}
 Provider    = %ProviderName%
-DriverVer   = 07/24/2026,0.1.205.0916
+DriverVer   = 07/24/2026,0.1.205.0941
 CatalogFile = TeeDspApo.cat
 PnpLockDown = 1
 

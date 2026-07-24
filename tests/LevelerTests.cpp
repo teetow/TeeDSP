@@ -1,4 +1,5 @@
 #include "dsp/Leveler.h"
+#include "dsp/ProcessorChain.h"
 #include "dsp/SpectralLeveler.h"
 
 #include <array>
@@ -110,6 +111,15 @@ int main()
         ok &= expect("gain survives valid-buffer silence",
                      std::fabs(afterSilence - settled) < 0.01f,
                      afterSilence - settled);
+
+        dsp::Leveler replacement;
+        replacement.prepare(kSampleRate, kChannels);
+        const bool restored = replacement.restoreCalibration(leveler.calibrationState());
+        ok &= expect("gain survives replacement stream instance",
+                     restored
+                         && std::fabs(replacement.currentGainDb() - settled) < 0.01f,
+                     replacement.currentGainDb() - settled);
+
         leveler.reset();                                   // simulate stream flush
         const float afterReset = pushTone(leveler, 0.5f, 0.5f, phase);
         ok &= expect("gain survives reset (stays attenuating)",
@@ -151,11 +161,46 @@ int main()
                      maxDifference(settled, afterSilence) < 0.01f,
                      maxDifference(settled, afterSilence));
 
+        dsp::SpectralLeveler replacement;
+        replacement.prepare(kSampleRate, kChannels);
+        const bool restored = replacement.restoreCalibration(leveler.calibrationState());
+        const auto afterReplacement = spectralGains(replacement);
+        ok &= expect("spectral calibration survives replacement stream instance",
+                     restored && maxDifference(settled, afterReplacement) < 0.01f,
+                     maxDifference(settled, afterReplacement));
+
         leveler.reset();
         const auto afterReset = spectralGains(leveler);
         ok &= expect("spectral calibration survives reset",
                      maxDifference(settled, afterReset) < 0.01f,
                      maxDifference(settled, afterReset));
+    }
+
+    // Calibration describes programme loudness/shape, not transport format.
+    // Device handoffs must preserve it even when the new endpoint negotiates
+    // a different sample rate or channel count.
+    {
+        dsp::LevelerChainCalibration calibration;
+        calibration.sampleRate = 48000;
+        calibration.channels = 2;
+        calibration.input = {-21.0f, 3.0f, 1u};
+        calibration.output = {-9.0f, -3.0f, 1u};
+        calibration.spectral.valid = 1u;
+        calibration.spectral.widePower = 0.01f;
+        for (int band = 0; band < dsp::kSpectralCalibrationBandCount; ++band) {
+            calibration.spectral.bandPower[band] = 0.001f;
+            calibration.spectral.gainDb[band] = (band % 2 == 0) ? 1.0f : -1.0f;
+        }
+
+        dsp::ProcessorChain replacement;
+        replacement.prepare(44100.0, 1);
+        const bool restored = replacement.restoreCalibration(calibration);
+        ok &= expect("chain calibration crosses sample-rate/channel handoff",
+                     restored
+                         && std::fabs(replacement.leveler().currentGainDb() - 3.0f) < 0.01f
+                         && std::fabs(replacement.outputLeveler().currentGainDb() + 3.0f) < 0.01f
+                         && std::fabs(replacement.spectralLeveler().currentGainDb(0) - 1.0f) < 0.01f,
+                     replacement.leveler().currentGainDb());
     }
 
     return ok ? 0 : 1;

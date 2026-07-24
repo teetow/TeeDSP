@@ -14,6 +14,7 @@
 // are written with std::atomic_ref; `params` is transferred via seqlock memcpy.
 
 #include "dsp/ChainParams.h"
+#include "dsp/LevelerCalibration.h"
 
 #include <atomic>
 #include <cstdint>
@@ -21,9 +22,9 @@
 
 namespace teedsp {
 
-inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV9";
+inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV10";
 inline constexpr uint32_t kApoSharedMagic   = 0x50534454u; // 'TDSP'
-inline constexpr uint32_t kApoSharedVersion = 9u;
+inline constexpr uint32_t kApoSharedVersion = 10u;
 
 // Mono pre/post sample ring for the UI spectrum analyzer. ~170 ms at 48 kHz —
 // far more than the UI's drain interval, so it never underruns between ticks.
@@ -84,6 +85,12 @@ struct ApoShared {
     // running right now, not just what's on disk.
     char dspBuildStamp[32];
 
+    // Last learned calibration from the meter-owning stream. The APO is
+    // instantiated per application stream, so this snapshot bridges browser
+    // pause/resume cycles that destroy one instance and create another.
+    uint32_t calibrationSeq;
+    dsp::LevelerChainCalibration calibration;
+
     dsp::ChainParams params;  // the snapshot (guarded by paramSeq)
 
     // --- audio ring: APO -> UI spectrum analyzer (post-mix mono samples) ---
@@ -117,6 +124,31 @@ inline bool apoReadParams(ApoShared *s, dsp::ChainParams &out)
         if (s1 & 1u) continue;                            // writer mid-update
         std::atomic_thread_fence(std::memory_order_acquire);
         std::memcpy(&out, &s->params, sizeof(dsp::ChainParams));
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (seq.load(std::memory_order_acquire) == s1) return true;
+    }
+    return false;
+}
+
+inline void apoWriteCalibration(ApoShared *s, const dsp::LevelerChainCalibration &value)
+{
+    std::atomic_ref<uint32_t> seq(s->calibrationSeq);
+    const uint32_t v = seq.load(std::memory_order_relaxed);
+    seq.store(v + 1, std::memory_order_release);
+    std::atomic_thread_fence(std::memory_order_release);
+    std::memcpy(&s->calibration, &value, sizeof(value));
+    std::atomic_thread_fence(std::memory_order_release);
+    seq.store(v + 2, std::memory_order_release);
+}
+
+inline bool apoReadCalibration(ApoShared *s, dsp::LevelerChainCalibration &out)
+{
+    std::atomic_ref<uint32_t> seq(s->calibrationSeq);
+    for (int i = 0; i < 16; ++i) {
+        const uint32_t s1 = seq.load(std::memory_order_acquire);
+        if (s1 & 1u) continue;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        std::memcpy(&out, &s->calibration, sizeof(out));
         std::atomic_thread_fence(std::memory_order_acquire);
         if (seq.load(std::memory_order_acquire) == s1) return true;
     }

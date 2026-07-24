@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LevelerCalibration.h"
 #include "Processor.h"
 
 #include <atomic>
@@ -34,6 +35,9 @@ public:
     // Live readout of the rider's currently-applied gain in dB. Positive
     // means the rider is boosting; negative means it is attenuating.
     float currentGainDb() const { return m_currentGainDb.load(std::memory_order_relaxed); }
+
+    LoudnessLevelerCalibration calibrationState() const noexcept;
+    bool restoreCalibration(const LoudnessLevelerCalibration &state) noexcept;
 
     // Retune target loudness, clamp range, and ballistics. Defaults suit an
     // input-stage rider normalizing highly varying source loudness (music
