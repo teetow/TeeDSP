@@ -9,6 +9,7 @@
 #include "widgets/BipolarGainMeter.h"
 #include "widgets/Knob.h"
 #include "widgets/LevelMeter.h"
+#include "widgets/SectionBox.h"
 #include "widgets/SpectralGainMeter.h"
 #include "widgets/WidgetMetrics.h"
 
@@ -85,9 +86,9 @@ void repolish(QWidget *w)
     w->update();
 }
 
-QGroupBox *createSection(const QString &title)
+ui::SectionBox *createSection(const QString &title)
 {
-    auto *box = new QGroupBox(title);
+    auto *box = new ui::SectionBox(title);
     box->setFlat(false);
     return box;
 }
@@ -494,8 +495,9 @@ QWidget *MainWindow::buildCompSection()
                             UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
     col->setSpacing(8);
 
-    m_compEnabled = new QCheckBox(QStringLiteral("Enable"));
-    col->addWidget(m_compEnabled);
+    m_compEnabled = new QCheckBox();
+    m_compEnabled->setToolTip(QStringLiteral("Enable the compressor."));
+    section->setCornerWidget(m_compEnabled);
 
     auto *grid = new QGridLayout();
     grid->setHorizontalSpacing(2);
@@ -548,8 +550,9 @@ QWidget *MainWindow::buildExciterSection()
                             UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
     col->setSpacing(8);
 
-    m_exciterEnabled = new QCheckBox(QStringLiteral("Enable"));
-    col->addWidget(m_exciterEnabled);
+    m_exciterEnabled = new QCheckBox();
+    m_exciterEnabled->setToolTip(QStringLiteral("Enable the harmonic exciter."));
+    section->setCornerWidget(m_exciterEnabled);
 
     auto *row = new QHBoxLayout();
     row->setSpacing(UiMetrics::kCompactSpacing);
@@ -578,19 +581,21 @@ QWidget *MainWindow::buildSpectralSection()
                             UiMetrics::kPanelPadLr, UiMetrics::kPanelPadBottom);
     col->setSpacing(UiMetrics::kCompactSpacing);
 
-    m_spectralLevelerEnabled = new QCheckBox(QStringLiteral("Enable"));
+    m_spectralLevelerEnabled = new QCheckBox();
     m_spectralLevelerEnabled->setToolTip(
         QStringLiteral("Speech spectral leveler — a gentle ten-band AGC that "
                        "evens out voice timbre before the dynamic EQ. It helps "
                        "muffled or unusually bright voices land in a consistent "
                        "working range."));
-    col->addWidget(m_spectralLevelerEnabled, 0, Qt::AlignHCenter);
+    section->setCornerWidget(m_spectralLevelerEnabled);
 
     m_spectralGainMeter = new ui::SpectralGainMeter();
     m_spectralGainMeter->setToolTip(
         QStringLiteral("Live spectral correction in dB, low band to high, left "
-                       "to right. Blue adds energy; orange reduces it."));
-    col->addWidget(m_spectralGainMeter, 0, Qt::AlignHCenter);
+                       "to right. Teal adds energy; orange reduces it. Hover a "
+                       "band for its centre frequency and exact gain."));
+    col->addWidget(m_spectralGainMeter);
+    col->addStretch(1);
 
     return section;
 }

@@ -77,6 +77,7 @@ set(UI_SOURCES
 	src/ui/TrayController.cpp
 	src/ui/widgets/Knob.cpp
 	src/ui/widgets/LevelMeter.cpp
+	src/ui/widgets/SectionBox.cpp
 	src/ui/widgets/SpectralGainMeter.cpp
 	src/ui/widgets/EqCurve.cpp
 	src/ui/widgets/BipolarGainMeter.cpp
