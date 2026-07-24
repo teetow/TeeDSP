@@ -17,7 +17,7 @@ void ProcessorChain::prepare(double sampleRate, std::size_t channels)
     m_channels = channels;
     // Input stage: normalizes wildly different source loudness (music vs.
     // voice calls) before EQ/dynamics see it, so it reacts a bit more
-    // readily than the output stage — still gated/deadbanded/slew-limited
+    // readily than the output stage — still gated/deadbanded/glide-eased
     // (see Leveler::configure defaults), just not as glacially gentle.
     m_leveler.configure(-18.0f, 18.0f, 9.0f);
     m_leveler.prepare(sampleRate, channels);
@@ -32,7 +32,7 @@ void ProcessorChain::prepare(double sampleRate, std::size_t channels)
     m_outputLeveler.configure(-12.0f, 12.0f, 12.0f,
                                /*longTermTauSec=*/20.0f, /*relativeGateLu=*/10.0f,
                                /*deadbandLu=*/2.5f,
-                               /*maxDownRateDbPerSec=*/0.6f, /*maxUpRateDbPerSec=*/0.15f);
+                               /*glideDownTauSec=*/1.2f, /*glideUpTauSec=*/3.0f);
     m_outputLeveler.prepare(sampleRate, channels);
     m_eq.prepare(sampleRate, channels);
     m_compressor.prepare(sampleRate, channels);

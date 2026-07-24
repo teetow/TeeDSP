@@ -27,21 +27,30 @@ inline float clampf(float x, float lo, float hi)
 
 void Leveler::configure(float targetLufs, float maxBoostDb, float maxCutDb,
                          float longTermTauSec, float relativeGateLu, float deadbandLu,
-                         float maxDownRateDbPerSec, float maxUpRateDbPerSec)
+                         float glideDownTauSec, float glideUpTauSec)
 {
     m_targetLufs = targetLufs;
     m_maxBoostDb = std::max(0.0f, maxBoostDb);
     m_maxCutDb   = std::max(0.0f, maxCutDb);
 
-    m_longTermTauSec      = std::max(0.001f, longTermTauSec);
-    m_relativeGateLu      = std::max(0.0f, relativeGateLu);
-    m_deadbandLu          = std::max(0.0f, deadbandLu);
-    m_maxDownRateDbPerSec = std::max(0.0f, maxDownRateDbPerSec);
-    m_maxUpRateDbPerSec   = std::max(0.0f, maxUpRateDbPerSec);
+    m_longTermTauSec  = std::max(0.001f, longTermTauSec);
+    m_relativeGateLu  = std::max(0.0f, relativeGateLu);
+    m_deadbandLu      = std::max(0.0f, deadbandLu);
+    m_glideDownTauSec = std::max(0.001f, glideDownTauSec);
+    m_glideUpTauSec   = std::max(0.001f, glideUpTauSec);
 }
 
 void Leveler::prepare(double sampleRate, std::size_t channels)
 {
+    // A same-format re-prepare is a transport restart (pause/resume, stream
+    // relock), not a genuine reconfiguration. We still reallocate/flush the
+    // measurement window and filter memory below, but the *learned* loudness
+    // and applied gain are preserved (see the tail of this function) so the
+    // rider resumes where it left off instead of crawling back from unity.
+    const bool formatChanged = (sampleRate != m_sampleRate)
+                            || (channels   != m_channels);
+    const bool coldStart     = formatChanged || !m_hasLoudnessEstimate;
+
     m_sampleRate    = sampleRate;
     m_channels      = channels;
     m_numCh         = std::min<int>(static_cast<int>(channels), kMaxCh);
@@ -79,33 +88,41 @@ void Leveler::prepare(double sampleRate, std::size_t channels)
     m_writePos    = 0;
     m_accumulated = 0;
 
-    m_longTermCoef          = onePoleCoef(m_longTermTauSec * 1000.0f, sampleRate);
-    m_enableMixCoef         = onePoleCoef(kEnableMixMs, sampleRate);
-    m_maxDeltaDownPerSample = static_cast<float>(m_maxDownRateDbPerSec / sampleRate);
-    m_maxDeltaUpPerSample   = static_cast<float>(m_maxUpRateDbPerSec / sampleRate);
+    m_longTermCoef  = onePoleCoef(m_longTermTauSec * 1000.0f, sampleRate);
+    m_enableMixCoef = onePoleCoef(kEnableMixMs, sampleRate);
+    m_glideDownCoef = onePoleCoef(m_glideDownTauSec * 1000.0f, sampleRate);
+    m_glideUpCoef   = onePoleCoef(m_glideUpTauSec * 1000.0f, sampleRate);
 
-    m_longTermLufs   = m_targetLufs;
-    m_hasLoudnessEstimate = false;
-    m_smoothedGainDb = 0.0f;
-    m_enableMix      = m_bypass ? 0.0f : 1.0f;
-    m_currentGainDb.store(0.0f, std::memory_order_relaxed);
+    // Cold start (first run or a real format change): forget everything and
+    // re-learn from scratch. Warm restart: keep the estimate and gain so the
+    // silence-freeze below holds the *correct* level until audio returns.
+    if (coldStart) {
+        m_longTermLufs        = m_targetLufs;
+        m_hasLoudnessEstimate = false;
+        m_smoothedGainDb      = 0.0f;
+    }
+    m_enableMix = m_bypass ? 0.0f : 1.0f;
+    m_currentGainDb.store(m_smoothedGainDb * m_enableMix, std::memory_order_relaxed);
 }
 
 void Leveler::reset()
 {
+    // Flush *transient* state only: filter memory and the measurement window
+    // must be cleared at start-of-stream / format change so stale pre-gap
+    // samples don't leak into the new window and so the biquads don't click.
+    // The *learned* state (loudness estimate + applied gain) is deliberately
+    // preserved — a transport pause or stream relock shouldn't force the rider
+    // to re-converge from unity. prepare() wipes it on a genuine cold start.
     for (int c = 0; c < m_numCh; ++c) {
         m_ch[c].pre.reset();
         m_ch[c].rlb.reset();
         std::fill(m_ch[c].ring.begin(), m_ch[c].ring.end(), 0.0f);
         m_ch[c].sumSq = 0.0;
     }
-    m_writePos       = 0;
-    m_accumulated    = 0;
-    m_longTermLufs   = m_targetLufs;
-    m_hasLoudnessEstimate = false;
-    m_smoothedGainDb = 0.0f;
-    m_enableMix      = m_bypass ? 0.0f : 1.0f;
-    m_currentGainDb.store(0.0f, std::memory_order_relaxed);
+    m_writePos    = 0;
+    m_accumulated = 0;
+    m_enableMix   = m_bypass ? 0.0f : 1.0f;
+    m_currentGainDb.store(m_smoothedGainDb * m_enableMix, std::memory_order_relaxed);
 }
 
 void Leveler::process(float *interleaved, std::size_t frameCount)
@@ -142,7 +159,13 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
         // Channel-weight 1.0 across the board — this app is stereo, so the
         // surround weights from BS.1770 §2 don't apply.
         const bool silent  = (framePeak < silenceLin);
-        const bool warming = (m_accumulated < warmupSamples);
+        // Warmup only guards the *cold* bootstrap: the first estimate must be
+        // taken over a reasonable window, not one noisy sample. On a warm
+        // restart we already hold an estimate, so skip warmup — individual
+        // early samples are negligible under the multi-second tau and the ring
+        // refills long before they'd matter.
+        const bool warming = !m_hasLoudnessEstimate
+                          && (m_accumulated < warmupSamples);
 
         if (!silent && !warming) {
             double power = 0.0;
@@ -179,19 +202,20 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
 
                 const float desiredGainDb = clampf(err, -m_maxCutDb, m_maxBoostDb);
 
-                // Slew-rate limited actuator (not exponential): a fixed
-                // dB/sec cap has no "biggest jump right when the error
-                // appears" signature, so a correction of a given size is far
-                // less noticeable than the same excursion done via one-pole
-                // smoothing. Faster down-ride than up-ride still protects
-                // the downstream limiter from hot phrases while avoiding
-                // pumping on the way back up.
-                if (desiredGainDb < m_smoothedGainDb)
-                    m_smoothedGainDb = std::max(desiredGainDb,
-                        m_smoothedGainDb - m_maxDeltaDownPerSample);
-                else if (desiredGainDb > m_smoothedGainDb)
-                    m_smoothedGainDb = std::min(desiredGainDb,
-                        m_smoothedGainDb + m_maxDeltaUpPerSample);
+                // Error-proportional glide: ease the applied gain toward the
+                // target with a fixed time constant instead of a fixed dB/sec
+                // slew. Velocity is proportional to the remaining error, so a
+                // large correction moves fast when it first appears and eases
+                // in as it lands (roughly complete in ~1 tau regardless of
+                // size) — the opposite of a slew's "big jump crawls forever"
+                // feel. Anti-pumping is already handled upstream by the
+                // gated/deadbanded estimate, so a livelier actuator here can't
+                // reintroduce chasing of musical dynamics. Faster down-glide
+                // than up-glide keeps hot phrases off the downstream limiter.
+                const float glideCoef = (desiredGainDb < m_smoothedGainDb)
+                    ? m_glideDownCoef : m_glideUpCoef;
+                m_smoothedGainDb = glideCoef * m_smoothedGainDb
+                                 + (1.0f - glideCoef) * desiredGainDb;
             }
         }
         // While silent or warming, freeze m_smoothedGainDb (no update).

@@ -13,10 +13,16 @@ namespace dsp {
 // passages more than kRelativeGateLu below the running estimate don't pull
 // it down, so a verse-to-chorus swing isn't mistaken for a level change.
 // The estimate then drives gain through a deadband (small errors are
-// ignored outright) and a slew-rate limiter (gain moves at a fixed, capped
-// dB/sec rather than an exponential curve), which avoids the audible
-// "it's ramping" signature of one-pole smoothing. Silence-freeze prevents
-// room tone from being ridden up to target between phrases. Sits before
+// ignored outright) and an error-proportional glide: gain eases toward the
+// target with a fixed time constant, so it moves fastest right when the
+// error is largest and settles gently, and a correction of any size mostly
+// completes in ~1 tau instead of crawling at a fixed dB/sec (a big jump no
+// longer takes proportionally forever). Anti-pumping lives in the estimate
+// (tau/gate/deadband), not the actuator, so a livelier glide can't chase a
+// song's own arrangement. Silence-freeze prevents room tone from being
+// ridden up to target between phrases. The learned estimate and applied
+// gain survive a transport pause / stream restart (only filter memory is
+// flushed) so resuming playback doesn't re-converge from unity. Sits before
 // EQ/comp so they see a level-stable signal regardless of source level.
 class Leveler : public Processor
 {
@@ -36,11 +42,11 @@ public:
     // as close to inaudible as possible and just mop up internal chain
     // drift (EQ/comp makeup gain etc).
     void configure(float targetLufs, float maxBoostDb, float maxCutDb,
-                   float longTermTauSec      = 12.0f,
-                   float relativeGateLu      = 10.0f,
-                   float deadbandLu          =  1.5f,
-                   float maxDownRateDbPerSec =  1.0f,
-                   float maxUpRateDbPerSec   =  0.2f);
+                   float longTermTauSec   = 12.0f,
+                   float relativeGateLu   = 10.0f,
+                   float deadbandLu       =  1.5f,
+                   float glideDownTauSec  =  0.8f,
+                   float glideUpTauSec    =  2.0f);
 
 private:
     static constexpr int   kMaxCh        = 8;
@@ -71,11 +77,11 @@ private:
     float m_maxCutDb     =   9.0f;
 
     // Ballistics — see configure().
-    float m_longTermTauSec      = 12.0f;
-    float m_relativeGateLu      = 10.0f;
-    float m_deadbandLu          =  1.5f;
-    float m_maxDownRateDbPerSec =  1.0f;
-    float m_maxUpRateDbPerSec   =  0.2f;
+    float m_longTermTauSec   = 12.0f;
+    float m_relativeGateLu   = 10.0f;
+    float m_deadbandLu       =  1.5f;
+    float m_glideDownTauSec  =  0.8f;   // gain eases down (attenuating) faster…
+    float m_glideUpTauSec    =  2.0f;   // …than it eases up (boosting)
 
     ChannelState m_ch[kMaxCh];
     int   m_numCh         = 0;
@@ -87,9 +93,9 @@ private:
     bool  m_hasLoudnessEstimate = false; // first valid window bootstraps the gate
     float m_smoothedGainDb = 0.0f;    // rider's continuous tracking (always live)
     float m_enableMix      = 0.0f;    // 0..1 crossfade — what fraction of rider gain to apply
-    float m_longTermCoef      = 0.0f;
-    float m_maxDeltaDownPerSample = 0.0f;
-    float m_maxDeltaUpPerSample   = 0.0f;
+    float m_longTermCoef   = 0.0f;
+    float m_glideDownCoef  = 0.0f;   // per-sample one-pole coef (attenuating)
+    float m_glideUpCoef    = 0.0f;   // per-sample one-pole coef (boosting)
     float m_enableMixCoef  = 0.0f;
 
     std::atomic<float> m_currentGainDb{0.0f};
