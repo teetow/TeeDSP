@@ -325,6 +325,9 @@ const clap_plugin_state_t kStateExt = { stateSave, stateLoad };
 // ---------------------------------------------------------------------------
 void telemetryRead(const clap_plugin_t *p, teedsp_telemetry_data *out)
 {
+    static_assert(TEEDSP_SPECTRAL_GAIN_BAND_COUNT
+                  == dsp::SpectralLeveler::kBandCount,
+                  "Telemetry spectral band count must match SpectralLeveler");
     if (!out)
         return;
     TeeDspPlugin *tp = self(p);

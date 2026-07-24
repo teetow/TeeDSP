@@ -99,8 +99,10 @@ void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
     // little faster when taking excess energy away than when adding energy.
     m_detectorAttackCoef = onePoleCoef(180.0f, sampleRate);
     m_detectorReleaseCoef = onePoleCoef(850.0f, sampleRate);
-    m_gainAttackCoef = onePoleCoef(280.0f, sampleRate);
-    m_gainReleaseCoef = onePoleCoef(650.0f, sampleRate);
+    const double controlRate = sampleRate
+        / static_cast<double>(kControlIntervalSamples);
+    m_gainAttackCoef = onePoleCoef(280.0f, controlRate);
+    m_gainReleaseCoef = onePoleCoef(650.0f, controlRate);
     m_enableMixCoef = onePoleCoef(40.0f, sampleRate);
 
     if (coldStart) {

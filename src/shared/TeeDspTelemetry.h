@@ -14,13 +14,14 @@
 extern "C" {
 #endif
 
-#define TEEDSP_EXT_TELEMETRY "teedsp.telemetry/2"
+#define TEEDSP_EXT_TELEMETRY "teedsp.telemetry/3"
+#define TEEDSP_SPECTRAL_GAIN_BAND_COUNT 10
 
 typedef struct teedsp_telemetry_data {
     float bandGrDb[5];          // per-EQ-band dynamic gain reduction (dB, >=0)
     float compGrDb;             // compressor gain reduction (dB, >=0)
     float levelerGainDb;        // input leveler rider gain (dB, signed)
-    float spectralGainDb[4];    // spectral leveler corrections (dB, signed)
+    float spectralGainDb[TEEDSP_SPECTRAL_GAIN_BAND_COUNT]; // low-to-high corrections (dB, signed)
     float outputLevelerGainDb;  // output leveler rider gain (dB, signed)
 } teedsp_telemetry_data;
 

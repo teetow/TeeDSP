@@ -10,6 +10,7 @@
 
 #include "shared/TeeDspApoShared.h"
 
+#include <cstddef>
 #include <vector>
 
 namespace host {
@@ -46,12 +47,15 @@ public:
 
     // Live meters published by the APO (dBFS / dB). Defaults are silence / no GR.
     struct ApoMeters {
+        static constexpr std::size_t kSpectralBandCount =
+            sizeof(teedsp::ApoShared::spectralGainDb) / sizeof(float);
+
         float inPeakDbfs[2]  = { -120.0f, -120.0f };
         float outPeakDbfs[2] = { -120.0f, -120.0f };
         float outRmsDbfs     = -120.0f;
         float compGrDb       = 0.0f;
         float levelerGainDb  = 0.0f;
-        float spectralGainDb[4] = { 0, 0, 0, 0 };
+        float spectralGainDb[kSpectralBandCount] = {};
         float outLevelerGainDb = 0.0f;
         float bandGrDb[5]    = { 0, 0, 0, 0, 0 };
         float outLufsCh[2]   = { -120.0f, -120.0f };

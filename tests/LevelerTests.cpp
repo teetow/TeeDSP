@@ -137,7 +137,8 @@ int main()
         std::vector<float> block(kBlockFrames * kChannels);
         double phase = 0.0;
         const double phaseStep = 2.0 * kPi * 1000.0 / kSampleRate;
-        for (int blockIndex = 0; blockIndex < 500; ++blockIndex) {
+        // Three seconds is the practical acquisition window for a new speaker.
+        for (int blockIndex = 0; blockIndex < 300; ++blockIndex) {
             for (std::size_t frame = 0; frame < kBlockFrames; ++frame) {
                 const float sample = 0.2f * static_cast<float>(std::sin(phase));
                 phase += phaseStep;
@@ -152,8 +153,8 @@ int main()
         const float learnedCorrection = *std::max_element(
             settled.begin(), settled.end(),
             [](float a, float b) { return std::fabs(a) < std::fabs(b); });
-        ok &= expect("spectral leveler learns a correction",
-                     std::fabs(learnedCorrection) > 0.1f, learnedCorrection);
+        ok &= expect("spectral leveler converges within three seconds",
+                     std::fabs(learnedCorrection) > 4.0f, learnedCorrection);
 
         pushSilence(leveler, 10.0f);
         const auto afterSilence = spectralGains(leveler);

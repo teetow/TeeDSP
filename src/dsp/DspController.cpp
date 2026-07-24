@@ -180,6 +180,9 @@ float DspController::levelerGainDb() const
 void DspController::spectralLevelerGainDb(
     std::array<float, kSpectralLevelerBandCount> &out) const
 {
+    static_assert(host::ApoSharedClient::ApoMeters::kSpectralBandCount
+                  == kSpectralLevelerBandCount,
+                  "APO meter spectral band count must match SpectralLeveler");
     for (int b = 0; b < kSpectralLevelerBandCount; ++b)
         out[b] = m_meterSnapshot.spectralGainDb[b];
 }
