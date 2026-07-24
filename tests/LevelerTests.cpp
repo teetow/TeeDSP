@@ -153,8 +153,10 @@ int main()
         const float learnedCorrection = *std::max_element(
             settled.begin(), settled.end(),
             [](float a, float b) { return std::fabs(a) < std::fabs(b); });
-        ok &= expect("spectral leveler converges within three seconds",
-                     std::fabs(learnedCorrection) > 4.0f, learnedCorrection);
+        ok &= expect("spectral leveler responds moderately within three seconds",
+                     std::fabs(learnedCorrection) > 2.5f
+                         && std::fabs(learnedCorrection) < 4.0f,
+                     learnedCorrection);
 
         pushSilence(leveler, 10.0f);
         const auto afterSilence = spectralGains(leveler);

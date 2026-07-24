@@ -11,6 +11,7 @@ constexpr int kControlIntervalSamples = 64;
 constexpr float kSilencePower = 1.0e-5f; // -50 dBFS RMS
 constexpr float kMaxBoostDb = 6.0f;
 constexpr float kMaxCutDb = 6.0f;
+constexpr float kGainDeadbandDb = 0.5f;
 
 // These targets are the detector levels, relative to broadband RMS, of a
 // reasonably natural close-mic voice. The filter bandwidths matter here, hence
@@ -101,8 +102,8 @@ void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
     m_detectorReleaseCoef = onePoleCoef(850.0f, sampleRate);
     const double controlRate = sampleRate
         / static_cast<double>(kControlIntervalSamples);
-    m_gainAttackCoef = onePoleCoef(280.0f, controlRate);
-    m_gainReleaseCoef = onePoleCoef(650.0f, controlRate);
+    m_gainAttackCoef = onePoleCoef(4000.0f, controlRate);
+    m_gainReleaseCoef = onePoleCoef(8000.0f, controlRate);
     m_enableMixCoef = onePoleCoef(40.0f, sampleRate);
 
     if (coldStart) {
@@ -216,7 +217,10 @@ void SpectralLeveler::updateGains()
     meanDesired /= static_cast<float>(kBandCount);
     for (int b = 0; b < kBandCount; ++b) {
         const float target = clampf(desired[b] - meanDesired, -kMaxCutDb, kMaxBoostDb);
-        const float coef = (target < m_gainDb[b]) ? m_gainAttackCoef : m_gainReleaseCoef;
+        const float delta = target - m_gainDb[b];
+        if (std::fabs(delta) <= kGainDeadbandDb)
+            continue;
+        const float coef = (delta < 0.0f) ? m_gainAttackCoef : m_gainReleaseCoef;
         m_gainDb[b] = coef * m_gainDb[b] + (1.0f - coef) * target;
     }
     updateCorrectionFilters();
