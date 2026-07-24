@@ -136,29 +136,42 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
     const int   warmupSamples = m_windowSamples / 2;
     const float enableTarget  = m_bypass ? 0.0f : 1.0f;
 
+    // Some clients (including browsers) keep the render stream alive and send
+    // ordinary BUFFER_VALID blocks filled with zeroes while paused. Gate the
+    // whole block instead of individual samples: zero crossings and natural
+    // gaps remain part of a real programme window, while an actually silent
+    // block cannot displace learned samples or advance either calibration
+    // smoother.
+    float blockPeak = 0.0f;
+    for (std::size_t f = 0; f < frameCount; ++f) {
+        for (int c = 0; c < nCh; ++c)
+            blockPeak = std::max(blockPeak,
+                std::fabs(interleaved[f * m_channels + c]));
+    }
+    const bool calibrationFrozen = blockPeak < silenceLin;
+
     for (std::size_t f = 0; f < frameCount; ++f) {
         // Detector runs continuously regardless of bypass state, so the
         // toggle only fades the *application* of gain — when the user flicks
         // the rider back on it engages immediately at the right level rather
         // than warming up from scratch.
-        float framePeak = 0.0f;
         for (int c = 0; c < nCh; ++c) {
             const float x  = interleaved[f * m_channels + c];
             const float y  = m_ch[c].rlb.process(m_ch[c].pre.process(x));
-            const float sq = y * y;
-            m_ch[c].sumSq -= static_cast<double>(m_ch[c].ring[m_writePos]);
-            m_ch[c].ring[m_writePos] = sq;
-            m_ch[c].sumSq += static_cast<double>(sq);
-
-            const float ax = std::fabs(x);
-            if (ax > framePeak) framePeak = ax;
+            if (!calibrationFrozen) {
+                const float sq = y * y;
+                m_ch[c].sumSq -= static_cast<double>(m_ch[c].ring[m_writePos]);
+                m_ch[c].ring[m_writePos] = sq;
+                m_ch[c].sumSq += static_cast<double>(sq);
+            }
         }
-        m_writePos = (m_writePos + 1) % m_windowSamples;
-        if (m_accumulated < m_windowSamples) ++m_accumulated;
+        if (!calibrationFrozen) {
+            m_writePos = (m_writePos + 1) % m_windowSamples;
+            if (m_accumulated < m_windowSamples) ++m_accumulated;
+        }
 
         // Channel-weight 1.0 across the board — this app is stereo, so the
         // surround weights from BS.1770 §2 don't apply.
-        const bool silent  = (framePeak < silenceLin);
         // Warmup only guards the *cold* bootstrap: the first estimate must be
         // taken over a reasonable window, not one noisy sample. On a warm
         // restart we already hold an estimate, so skip warmup — individual
@@ -167,7 +180,7 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
         const bool warming = !m_hasLoudnessEstimate
                           && (m_accumulated < warmupSamples);
 
-        if (!silent && !warming) {
+        if (!calibrationFrozen && !warming) {
             double power = 0.0;
             for (int c = 0; c < nCh; ++c)
                 power += m_ch[c].sumSq / static_cast<double>(m_accumulated);
@@ -218,7 +231,8 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
                                  + (1.0f - glideCoef) * desiredGainDb;
             }
         }
-        // While silent or warming, freeze m_smoothedGainDb (no update).
+        // While silent or warming, freeze the learned window, long-term
+        // estimate, and m_smoothedGainDb (no calibration update).
 
         // Crossfade between unity and the rider's tracked gain. Short tau
         // (~40 ms) is fast enough to feel responsive on toggle, slow enough

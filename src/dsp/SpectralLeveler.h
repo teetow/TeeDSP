@@ -48,6 +48,7 @@ private:
     float m_enableMixCoef = 0.0f;
     float m_enableMix = 0.0f;
     int m_controlCountdown = 0;
+    bool m_prepared = false;
 };
 
 } // namespace dsp

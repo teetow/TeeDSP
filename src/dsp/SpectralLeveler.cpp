@@ -75,6 +75,10 @@ inline float clampf(float value, float lo, float hi)
 
 void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
 {
+    const bool formatChanged = m_prepared
+        && (sampleRate != m_sampleRate || channels != m_channels);
+    const bool coldStart = !m_prepared || formatChanged;
+
     m_sampleRate = sampleRate;
     m_channels = channels;
 
@@ -86,7 +90,8 @@ void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
 
         m_corrections[b].reset(channels);
         m_corrections[b].setParams(kBands[b].correctionType, sampleRate,
-                                   kBands[b].correctionHz, kBands[b].correctionQ, 0.0f);
+                                   kBands[b].correctionHz, kBands[b].correctionQ,
+                                   coldStart ? 0.0f : m_gainDb[b]);
         m_corrections[b].setBypass(false);
     }
 
@@ -98,33 +103,40 @@ void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
     m_gainReleaseCoef = onePoleCoef(650.0f, sampleRate);
     m_enableMixCoef = onePoleCoef(40.0f, sampleRate);
 
-    m_bandPower.fill(0.0f);
-    m_gainDb.fill(0.0f);
-    m_filterGainDb.fill(0.0f);
-    for (auto &gain : m_currentGainDb)
-        gain.store(0.0f, std::memory_order_relaxed);
-    m_widePower = 0.0f;
+    if (coldStart) {
+        m_bandPower.fill(0.0f);
+        m_gainDb.fill(0.0f);
+        m_filterGainDb.fill(0.0f);
+        m_widePower = 0.0f;
+    } else {
+        m_filterGainDb = m_gainDb;
+    }
     m_controlCountdown = 0;
     m_enableMix = m_bypass ? 0.0f : 1.0f;
+    for (int b = 0; b < kBandCount; ++b)
+        m_currentGainDb[b].store(m_gainDb[b] * m_enableMix,
+                                 std::memory_order_relaxed);
+    m_prepared = true;
 }
 
 void SpectralLeveler::reset()
 {
+    // A transport reset only flushes filter delay memory. Keep the detector
+    // envelopes and learned band gains so pause/resume does not flatten the
+    // correction curve back to 0 dB.
     for (int b = 0; b < kBandCount; ++b) {
         m_detectors[b].reset(m_channels);
         m_corrections[b].reset(m_channels);
         m_corrections[b].setParams(kBands[b].correctionType, m_sampleRate,
-                                   kBands[b].correctionHz, kBands[b].correctionQ, 0.0f);
+                                   kBands[b].correctionHz, kBands[b].correctionQ,
+                                   m_gainDb[b]);
+        m_filterGainDb[b] = m_gainDb[b];
     }
-    m_bandPower.fill(0.0f);
-    m_gainDb.fill(0.0f);
-    m_filterGainDb.fill(0.0f);
-    for (auto &gain : m_currentGainDb)
-        gain.store(0.0f, std::memory_order_relaxed);
-    m_widePower = 0.0f;
     m_controlCountdown = 0;
     m_enableMix = m_bypass ? 0.0f : 1.0f;
-    updateCorrectionFilters();
+    for (int b = 0; b < kBandCount; ++b)
+        m_currentGainDb[b].store(m_gainDb[b] * m_enableMix,
+                                 std::memory_order_relaxed);
 }
 
 float SpectralLeveler::currentGainDb(int band) const
@@ -175,6 +187,16 @@ void SpectralLeveler::process(float *interleaved, std::size_t frameCount)
     if (!interleaved || frameCount == 0 || m_channels == 0)
         return;
 
+    double blockPower = 0.0;
+    const std::size_t sampleCount = frameCount * m_channels;
+    for (std::size_t i = 0; i < sampleCount; ++i)
+        blockPower += static_cast<double>(interleaved[i]) * interleaved[i];
+    blockPower /= static_cast<double>(sampleCount);
+    const bool calibrationFrozen = blockPower <= kSilencePower;
+
+    // Detector and correction biquads still run below so their transient delay
+    // memory drains normally. Only the learned envelopes and gain calibration
+    // are frozen for a silent block.
     const float enableTarget = m_bypass ? 0.0f : 1.0f;
     for (std::size_t f = 0; f < frameCount; ++f) {
         float wideEnergy = 0.0f;
@@ -189,20 +211,22 @@ void SpectralLeveler::process(float *interleaved, std::size_t frameCount)
             }
         }
 
-        wideEnergy /= static_cast<float>(m_channels);
-        const float wideCoef = (wideEnergy > m_widePower)
-            ? m_detectorAttackCoef : m_detectorReleaseCoef;
-        m_widePower = wideCoef * m_widePower + (1.0f - wideCoef) * wideEnergy;
-        for (int b = 0; b < kBandCount; ++b) {
-            bandEnergy[b] /= static_cast<float>(m_channels);
-            const float coef = (bandEnergy[b] > m_bandPower[b])
+        if (!calibrationFrozen) {
+            wideEnergy /= static_cast<float>(m_channels);
+            const float wideCoef = (wideEnergy > m_widePower)
                 ? m_detectorAttackCoef : m_detectorReleaseCoef;
-            m_bandPower[b] = coef * m_bandPower[b] + (1.0f - coef) * bandEnergy[b];
-        }
+            m_widePower = wideCoef * m_widePower + (1.0f - wideCoef) * wideEnergy;
+            for (int b = 0; b < kBandCount; ++b) {
+                bandEnergy[b] /= static_cast<float>(m_channels);
+                const float coef = (bandEnergy[b] > m_bandPower[b])
+                    ? m_detectorAttackCoef : m_detectorReleaseCoef;
+                m_bandPower[b] = coef * m_bandPower[b] + (1.0f - coef) * bandEnergy[b];
+            }
 
-        if (++m_controlCountdown >= kControlIntervalSamples) {
-            m_controlCountdown = 0;
-            updateGains();
+            if (++m_controlCountdown >= kControlIntervalSamples) {
+                m_controlCountdown = 0;
+                updateGains();
+            }
         }
 
         // Always run the wet filters, even while bypassed, so re-enabling is a
