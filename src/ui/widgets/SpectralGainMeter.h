@@ -9,9 +9,13 @@ namespace ui {
 // A full-width readout of the speech spectral leveler's live correction, one
 // bipolar bar per band, low band (left) to high (right). A bar above the
 // centre line is adding energy to that region; below is attenuating it. The
-// chart is framed by dB reference lines (0, ±3, ±6 — the processor's operating
-// range) and labelled with a subset of band centre frequencies; hovering a
-// band shows its exact centre frequency and gain.
+// chart is framed by dB reference lines (0, ±3, ±6) and labelled with a subset
+// of band centre frequencies; hovering a band shows its exact centre frequency
+// and gain.
+//
+// Each band is allowed a different amount of correction (dsp::kSpectralBands),
+// so the slot is shaded wherever that band may not go — the low bands, held
+// flat on purpose, are shaded top to bottom.
 class SpectralGainMeter : public QWidget
 {
 public:

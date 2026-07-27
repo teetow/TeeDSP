@@ -1,6 +1,7 @@
 #include "SpectralGainMeter.h"
 
 #include "../Theme.h"
+#include "../../dsp/SpectralLeveler.h"
 
 #include <QFontMetricsF>
 #include <QMouseEvent>
@@ -12,7 +13,7 @@
 namespace ui {
 
 namespace {
-constexpr float kMaxGainDb = 6.0f;
+constexpr float kMaxGainDb = dsp::kSpectralMaxGainDb;
 
 // Chart insets: room for dB labels on the left and frequency labels below.
 constexpr double kLeftAxisPx   = 22.0;
@@ -20,11 +21,15 @@ constexpr double kRightPadPx   = 6.0;
 constexpr double kTopPadPx     = 4.0;
 constexpr double kBottomAxisPx = 14.0;
 
-// Band centre frequencies, matching dsp::SpectralLeveler's detector bands.
-constexpr float kBandHz[SpectralGainMeter::kBandCount] = {
-    90.0f, 150.0f, 240.0f, 400.0f, 660.0f,
-    1100.0f, 1800.0f, 2900.0f, 4800.0f, 8000.0f,
-};
+// Everything about the bands — centres and per-band limits — comes from the
+// processor's own table, so a retuned response curve shows up here for free.
+constexpr const dsp::SpectralBandDesign &band(int index)
+{
+    return dsp::kSpectralBands[index];
+}
+
+// Wash over the part of a slot the band is not permitted to reach.
+inline QColor outOfRangeWash() { return QColor(0, 0, 0, 90); }
 
 // A legible subset to label along the bottom (labelling all ten collides).
 constexpr int kLabelBands[] = {0, 3, 5, 7, 9};
@@ -58,7 +63,7 @@ void SpectralGainMeter::setGainsDb(const std::array<float, kBandCount> &gains, b
 {
     std::array<float, kBandCount> clamped{};
     for (int b = 0; b < kBandCount; ++b)
-        clamped[b] = std::clamp(gains[b], -kMaxGainDb, kMaxGainDb);
+        clamped[b] = std::clamp(gains[b], -band(b).maxCutDb, band(b).maxBoostDb);
 
     if (m_active == active && clamped == m_gains)
         return;
@@ -111,6 +116,18 @@ void SpectralGainMeter::paintEvent(QPaintEvent *)
     for (int b = 0; b < kBandCount; ++b) {
         const double slotLeft = plot.left() + slotWidth * b;
 
+        // Shade where this band is not allowed to go. A band the response
+        // curve holds flat then reads as deliberate rather than as a dead
+        // meter, and the tilt across the spectrum is visible at a glance.
+        const double boostCeilY = centreY - (band(b).maxBoostDb / kMaxGainDb) * usableHalf;
+        const double cutFloorY  = centreY + (band(b).maxCutDb / kMaxGainDb) * usableHalf;
+        p.setPen(Qt::NoPen);
+        p.setBrush(outOfRangeWash());
+        if (boostCeilY > plot.top() + 0.5)
+            p.drawRect(QRectF(slotLeft, plot.top(), slotWidth, boostCeilY - plot.top()));
+        if (cutFloorY < plot.bottom() - 0.5)
+            p.drawRect(QRectF(slotLeft, cutFloorY, slotWidth, plot.bottom() - cutFloorY));
+
         if (b == m_hoverBand) {
             p.setPen(Qt::NoPen);
             p.setBrush(QColor(255, 255, 255, 16));
@@ -131,7 +148,7 @@ void SpectralGainMeter::paintEvent(QPaintEvent *)
     // Frequency labels, centred under their slot and clamped to the widget.
     p.setPen(theme::kTextDim);
     for (int b : kLabelBands) {
-        const QString t  = hzLabel(kBandHz[b]);
+        const QString t  = hzLabel(band(b).detectorHz);
         const double tw  = fm.horizontalAdvance(t) + 2.0;
         const double cx  = plot.left() + slotWidth * (b + 0.5);
         const double tx  = std::clamp(cx - tw * 0.5, 1.0, width() - tw - 1.0);
@@ -142,10 +159,15 @@ void SpectralGainMeter::paintEvent(QPaintEvent *)
     // Hover readout: exact band frequency + gain, top-right of the chart.
     if (m_active && m_hoverBand >= 0 && m_hoverBand < kBandCount) {
         const float g = m_gains[m_hoverBand];
-        const QString t = hzLabel(kBandHz[m_hoverBand]) + QStringLiteral("  ")
-                        + (g >= 0.0f ? QStringLiteral("+") : QString())
-                        + QString::number(g, 'f', 1) + QStringLiteral(" dB");
-        p.setPen(g >= 0.0f ? theme::kAccent : theme::kWarn);
+        const bool movable = dsp::spectralBandMovable(m_hoverBand);
+        const QString t = hzLabel(band(m_hoverBand).detectorHz)
+                        + QStringLiteral("  ")
+                        + (movable ? (g >= 0.0f ? QStringLiteral("+") : QString())
+                                         + QString::number(g, 'f', 1)
+                                         + QStringLiteral(" dB")
+                                   : QStringLiteral("held flat"));
+        p.setPen(!movable ? theme::kTextDim
+                          : (g >= 0.0f ? theme::kAccent : theme::kWarn));
         p.drawText(plot.adjusted(2.0, 1.0, -2.0, 0.0),
                    Qt::AlignRight | Qt::AlignTop, t);
     }

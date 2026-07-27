@@ -153,10 +153,26 @@ int main()
         const float learnedCorrection = *std::max_element(
             settled.begin(), settled.end(),
             [](float a, float b) { return std::fabs(a) < std::fabs(b); });
+        // A 1 kHz tone is the extreme case: only the 1.1 kHz detector sees
+        // anything, so that band runs for its limit. Since the response curve
+        // was tilted, that limit is 4 dB rather than 6, which caps how far
+        // three seconds of one-pole movement can get.
         ok &= expect("spectral leveler responds moderately within three seconds",
-                     std::fabs(learnedCorrection) > 2.5f
-                         && std::fabs(learnedCorrection) < 4.0f,
+                     std::fabs(learnedCorrection) > 1.5f
+                         && std::fabs(learnedCorrection) < 3.5f,
                      learnedCorrection);
+
+        // No band may exceed what its own entry allows, and the frozen low
+        // bands must sit at exactly 0 dB rather than merely close to it.
+        float worstOvershoot = 0.0f;
+        for (int band = 0; band < dsp::SpectralLeveler::kBandCount; ++band) {
+            const float gain = settled[band];
+            worstOvershoot = std::max(worstOvershoot,
+                std::max(gain - dsp::kSpectralBands[band].maxBoostDb,
+                         -gain - dsp::kSpectralBands[band].maxCutDb));
+        }
+        ok &= expect("spectral leveler honours its per-band range",
+                     worstOvershoot <= 0.001f, worstOvershoot);
 
         pushSilence(leveler, 10.0f);
         const auto afterSilence = spectralGains(leveler);
@@ -198,11 +214,13 @@ int main()
         dsp::ProcessorChain replacement;
         replacement.prepare(44100.0, 1);
         const bool restored = replacement.restoreCalibration(calibration);
+        // Band 8 (4.8 kHz) carries the full correction range, so its restored
+        // gain survives verbatim; the low bands are clamped flat by design.
         ok &= expect("chain calibration crosses sample-rate/channel handoff",
                      restored
                          && std::fabs(replacement.leveler().currentGainDb() - 3.0f) < 0.01f
                          && std::fabs(replacement.outputLeveler().currentGainDb() + 3.0f) < 0.01f
-                         && std::fabs(replacement.spectralLeveler().currentGainDb(0) - 1.0f) < 0.01f,
+                         && std::fabs(replacement.spectralLeveler().currentGainDb(8) - 1.0f) < 0.01f,
                      replacement.leveler().currentGainDb());
     }
 

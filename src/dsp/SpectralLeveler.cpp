@@ -9,8 +9,6 @@ namespace {
 
 constexpr int kControlIntervalSamples = 64;
 constexpr float kSilencePower = 1.0e-5f; // -50 dBFS RMS
-constexpr float kMaxBoostDb = 6.0f;
-constexpr float kMaxCutDb = 6.0f;
 constexpr float kGainDeadbandDb = 0.5f;
 
 // These targets are the detector levels, relative to broadband RMS, of a
@@ -33,27 +31,6 @@ constexpr float kTargetRelativeDb[SpectralLeveler::kBandCount] = {
     -26.0f, //  8.0 kHz air
 };
 
-struct BandDesign {
-    float detectorHz;
-    float detectorQ;
-    Biquad::Type correctionType;
-    float correctionHz;
-    float correctionQ;
-};
-
-constexpr BandDesign kBands[SpectralLeveler::kBandCount] = {
-    {   90.0f, 1.1f, Biquad::Type::LowShelf,    120.0f, 0.7f },
-    {  150.0f, 1.1f, Biquad::Type::Peaking,     150.0f, 1.1f },
-    {  240.0f, 1.1f, Biquad::Type::Peaking,     240.0f, 1.1f },
-    {  400.0f, 1.1f, Biquad::Type::Peaking,     400.0f, 1.1f },
-    {  660.0f, 1.1f, Biquad::Type::Peaking,     660.0f, 1.1f },
-    { 1100.0f, 1.1f, Biquad::Type::Peaking,    1100.0f, 1.1f },
-    { 1800.0f, 1.1f, Biquad::Type::Peaking,    1800.0f, 1.1f },
-    { 2900.0f, 1.1f, Biquad::Type::Peaking,    2900.0f, 1.1f },
-    { 4800.0f, 1.1f, Biquad::Type::Peaking,    4800.0f, 1.1f },
-    { 8000.0f, 1.1f, Biquad::Type::HighShelf,  7700.0f, 0.7f },
-};
-
 inline float onePoleCoef(float timeMs, double sampleRate)
 {
     if (timeMs <= 0.0f || sampleRate <= 0.0)
@@ -72,6 +49,12 @@ inline float clampf(float value, float lo, float hi)
     return std::clamp(value, lo, hi);
 }
 
+inline float clampToBandRange(float gainDb, int band)
+{
+    return clampf(gainDb, -kSpectralBands[band].maxCutDb,
+                  kSpectralBands[band].maxBoostDb);
+}
+
 } // namespace
 
 void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
@@ -84,16 +67,26 @@ void SpectralLeveler::prepare(double sampleRate, std::size_t channels)
     m_channels = channels;
 
     for (int b = 0; b < kBandCount; ++b) {
+        // Retuning the limit table must not leave a gain outside the new range.
+        m_gainDb[b] = clampToBandRange(m_gainDb[b], b);
+
+        // A frozen band is neither measured nor filtered. Its correction sits
+        // at 0 dB, where the biquad is already the identity, so bypassing it is
+        // exactly equivalent — it just skips the arithmetic.
+        const bool movable = spectralBandMovable(b);
+
         m_detectors[b].reset(channels);
         m_detectors[b].setParams(Biquad::Type::BandPass, sampleRate,
-                                 kBands[b].detectorHz, kBands[b].detectorQ, 0.0f);
-        m_detectors[b].setBypass(false);
+                                 kSpectralBands[b].detectorHz,
+                                 kSpectralBands[b].detectorQ, 0.0f);
+        m_detectors[b].setBypass(!movable);
 
         m_corrections[b].reset(channels);
-        m_corrections[b].setParams(kBands[b].correctionType, sampleRate,
-                                   kBands[b].correctionHz, kBands[b].correctionQ,
+        m_corrections[b].setParams(kSpectralBands[b].correctionType, sampleRate,
+                                   kSpectralBands[b].correctionHz,
+                                   kSpectralBands[b].correctionQ,
                                    coldStart ? 0.0f : m_gainDb[b]);
-        m_corrections[b].setBypass(false);
+        m_corrections[b].setBypass(!movable);
     }
 
     // Detector smoothing removes phoneme-scale movement. Gain smoothing is a
@@ -131,9 +124,9 @@ void SpectralLeveler::reset()
     for (int b = 0; b < kBandCount; ++b) {
         m_detectors[b].reset(m_channels);
         m_corrections[b].reset(m_channels);
-        m_corrections[b].setParams(kBands[b].correctionType, m_sampleRate,
-                                   kBands[b].correctionHz, kBands[b].correctionQ,
-                                   m_gainDb[b]);
+        m_corrections[b].setParams(kSpectralBands[b].correctionType, m_sampleRate,
+                                   kSpectralBands[b].correctionHz,
+                                   kSpectralBands[b].correctionQ, m_gainDb[b]);
         m_filterGainDb[b] = m_gainDb[b];
     }
     m_controlCountdown = 0;
@@ -176,7 +169,7 @@ bool SpectralLeveler::restoreCalibration(const SpectralLevelerCalibration &state
     m_widePower = state.widePower;
     for (int b = 0; b < kBandCount; ++b) {
         m_bandPower[b] = state.bandPower[b];
-        m_gainDb[b] = clampf(state.gainDb[b], -kMaxCutDb, kMaxBoostDb);
+        m_gainDb[b] = clampToBandRange(state.gainDb[b], b);
     }
     m_hasCalibration = true;
     updateCorrectionFilters();
@@ -191,9 +184,9 @@ void SpectralLeveler::updateCorrectionFilters()
     for (int b = 0; b < kBandCount; ++b) {
         if (std::fabs(m_gainDb[b] - m_filterGainDb[b]) < 0.005f)
             continue;
-        m_corrections[b].setParams(kBands[b].correctionType, m_sampleRate,
-                                   kBands[b].correctionHz, kBands[b].correctionQ,
-                                   m_gainDb[b]);
+        m_corrections[b].setParams(kSpectralBands[b].correctionType, m_sampleRate,
+                                   kSpectralBands[b].correctionHz,
+                                   kSpectralBands[b].correctionQ, m_gainDb[b]);
         m_filterGainDb[b] = m_gainDb[b];
     }
 }
@@ -206,17 +199,30 @@ void SpectralLeveler::updateGains()
     const float wideDb = powerToDb(m_widePower);
     std::array<float, kBandCount> desired{};
     float meanDesired = 0.0f;
+    int movableBands = 0;
     for (int b = 0; b < kBandCount; ++b) {
+        if (!spectralBandMovable(b))
+            continue;
         const float relativeDb = powerToDb(m_bandPower[b]) - wideDb;
         desired[b] = kTargetRelativeDb[b] - relativeDb;
         meanDesired += desired[b];
+        ++movableBands;
     }
+    if (movableBands == 0)
+        return;
 
     // Remove the common component: broadband Leveler owns absolute loudness;
-    // this stage should only correct the spectral shape.
-    meanDesired /= static_cast<float>(kBandCount);
+    // this stage should only correct the spectral shape. Only the bands that
+    // are allowed to act contribute to that mean — a frozen band must not
+    // offset the others, or the bass we deliberately refuse to touch would
+    // still ride every remaining band up and down as programme material
+    // changes. That coupling, not the band gains themselves, is what made the
+    // stage feel reactive.
+    meanDesired /= static_cast<float>(movableBands);
     for (int b = 0; b < kBandCount; ++b) {
-        const float target = clampf(desired[b] - meanDesired, -kMaxCutDb, kMaxBoostDb);
+        if (!spectralBandMovable(b))
+            continue;
+        const float target = clampToBandRange(desired[b] - meanDesired, b);
         const float delta = target - m_gainDb[b];
         if (std::fabs(delta) <= kGainDeadbandDb)
             continue;
@@ -250,6 +256,8 @@ void SpectralLeveler::process(float *interleaved, std::size_t frameCount)
             const float x = interleaved[f * m_channels + c];
             wideEnergy += x * x;
             for (int b = 0; b < kBandCount; ++b) {
+                if (!spectralBandMovable(b))
+                    continue; // frozen: no measurement, so no state to keep
                 const float d = m_detectors[b].processSample(x, c);
                 bandEnergy[b] += d * d;
             }
@@ -262,6 +270,8 @@ void SpectralLeveler::process(float *interleaved, std::size_t frameCount)
                 ? m_detectorAttackCoef : m_detectorReleaseCoef;
             m_widePower = wideCoef * m_widePower + (1.0f - wideCoef) * wideEnergy;
             for (int b = 0; b < kBandCount; ++b) {
+                if (!spectralBandMovable(b))
+                    continue;
                 bandEnergy[b] /= static_cast<float>(m_channels);
                 const float coef = (bandEnergy[b] > m_bandPower[b])
                     ? m_detectorAttackCoef : m_detectorReleaseCoef;

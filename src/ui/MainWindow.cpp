@@ -592,8 +592,11 @@ QWidget *MainWindow::buildSpectralSection()
     m_spectralGainMeter = new ui::SpectralGainMeter();
     m_spectralGainMeter->setToolTip(
         QStringLiteral("Live spectral correction in dB, low band to high, left "
-                       "to right. Teal adds energy; orange reduces it. Hover a "
-                       "band for its centre frequency and exact gain."));
+                       "to right. Teal adds energy; orange reduces it. Shaded "
+                       "areas are outside a band's allowed range: the low bands "
+                       "are held flat and the low mids may only trim, while the "
+                       "presence and brilliance bands get the full range. Hover "
+                       "a band for its centre frequency and exact gain."));
     col->addWidget(m_spectralGainMeter);
     col->addStretch(1);
 
