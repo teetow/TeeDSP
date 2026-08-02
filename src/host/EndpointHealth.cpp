@@ -56,6 +56,13 @@ const char *verdictName(EndpointVerdict v)
     return "?";
 }
 
+// Sticky for the rest of the process once a forced fault has been injected, so
+// every subsequent line is tagged. Marking is automatic rather than per-call:
+// a deliberately induced fault must never be mistakable for a real incident in
+// the audit trail, and that guarantee should not depend on remembering a prefix
+// at each log site.
+bool g_forcedRun = false;
+
 // Always on, not env-gated: these events are rare, user-visible as silence, and
 // the whole point is that the next incident is read off a log rather than
 // reconstructed by registry archaeology after the state has already moved --
@@ -66,7 +73,9 @@ void logLine(const QString &text)
     QFile f(QDir::temp().filePath(QStringLiteral("teedsp_endpoint_health.log")));
     if (!f.open(QIODevice::Append | QIODevice::Text)) return;
     QTextStream(&f) << QDateTime::currentDateTime().toString(Qt::ISODate)
-                    << QLatin1Char(' ') << text << QLatin1Char('\n');
+                    << QLatin1Char(' ')
+                    << (g_forcedRun ? QLatin1String("[FORCED TEST] ") : QLatin1String(""))
+                    << text << QLatin1Char('\n');
 }
 
 // Full tuple, logged on every verdict transition so an incident report is one
@@ -110,6 +119,44 @@ EndpointVerdict classifyHealthy(const HealthInputs &in)
                             : EndpointVerdict::Idle;
 }
 
+// Test hook. TEEDSP_FORCE_ENDPOINT_FAULT=<n> makes the next <n> format probes
+// report the wedge, so the repair ladder can be exercised deliberately.
+//
+// It exists because the real fault cannot be manufactured: SetDeviceFormat
+// validates against the live link and refuses an unsupported rate, and poking
+// the registry directly self-corrects as soon as anything opens a stream. That
+// left the repair path verifiable only by waiting for a real incident, which is
+// how untested recovery code ends up shipping.
+//
+// Deliberately bounded rather than a boolean: each forced cycle performs a real
+// ResetDeviceFormat, and an unbounded switch would reset the format every few
+// seconds forever. The budget drains, then the endpoint recovers on its own, so
+// the whole ladder plus the recovery transition runs in one pass.
+bool consumeForcedFault()
+{
+    static int remaining = qEnvironmentVariableIntValue("TEEDSP_FORCE_ENDPOINT_FAULT");
+    if (remaining <= 0) return false;
+    --remaining;
+    return true;
+}
+
+// Applies the test hook on top of a real probe. Also used for the post-repair
+// re-check, so a forced run genuinely escalates instead of "recovering"
+// immediately and hiding the upper rungs of the ladder. thisProbeForced reports
+// whether *this* call was injected (the caller must then also fake the confirming
+// open), while g_forcedRun latches for logging.
+long probeFormat(const QString &id, StreamFormat *mix, bool *thisProbeForced)
+{
+    const long hr = WasapiDevices::sharedFormatHealth(id, mix);
+    if (thisProbeForced) *thisProbeForced = false;
+    if (consumeForcedFault()) {
+        if (thisProbeForced) *thisProbeForced = true;
+        g_forcedRun = true;
+        return AUDCLNT_E_UNSUPPORTED_FORMAT;
+    }
+    return hr;
+}
+
 } // namespace
 
 EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
@@ -123,6 +170,10 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
     static long s_lastFormatHr = S_OK;
     static StreamFormat s_lastMix;
     static bool s_loggedBenignMismatch = false;
+    static bool s_loggedRung3 = false;
+    // Whether the most recent probe was injected by the test hook, so the
+    // confirming open is faked to match instead of contradicting it.
+    bool thisProbeForced = false;
 
     EndpointHealthResult r;
 
@@ -140,6 +191,7 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
         s_consecutiveUnsupported = s_repairAttempts = s_stallTicks = 0;
         s_lastFormatHr = S_OK;
         s_loggedBenignMismatch = false;
+        s_loggedRung3 = false;
     }
 
     // A recovery is in flight: the engine is expected to be inconsistent, so ask
@@ -156,7 +208,7 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
     if (endpointChanged || ++s_ticksSinceProbe >= cadence) {
         s_ticksSinceProbe = 0;
         r.probed = true;
-        r.formatHr = WasapiDevices::sharedFormatHealth(in.defaultRenderId, &r.mixFormat);
+        r.formatHr = probeFormat(in.defaultRenderId, &r.mixFormat, &thisProbeForced);
         s_lastFormatHr = r.formatHr;
         s_lastMix = r.mixFormat;
 
@@ -164,7 +216,8 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
             // The cheap probe only proves the cached format disagrees, which also
             // happens while streams still open. Confirm with what an app actually
             // does before touching anything.
-            r.openHr = WasapiDevices::sharedInitializeProbe(in.defaultRenderId);
+            r.openHr = thisProbeForced ? AUDCLNT_E_UNSUPPORTED_FORMAT
+                                       : WasapiDevices::sharedInitializeProbe(in.defaultRenderId);
             if (r.openHr != S_OK) {
                 ++s_consecutiveUnsupported;
             } else {
@@ -181,9 +234,19 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
                                 .arg(in.defaultRenderName)
                                 .arg(static_cast<quint32>(r.formatHr), 8, 16, QLatin1Char('0')));
                 }
+                // Streams open, so the endpoint is usable again: clear the repair
+                // budget too, not just the confirmation counter.
+                s_repairAttempts = 0;
+                s_loggedRung3 = false;
             }
         } else {
+            // Healthy probe. Clearing the repair budget here matters: without it a
+            // fault that resolves on its own (a reconnect landing on a matching
+            // rate, say) would leave the budget exhausted, and the next genuine
+            // wedge in the same session would get no repair at all.
             s_consecutiveUnsupported = 0;
+            s_repairAttempts = 0;
+            s_loggedRung3 = false;
         }
     } else {
         r.formatHr = s_lastFormatHr;
@@ -192,13 +255,16 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
 
     if (s_consecutiveUnsupported >= kConfirmProbes) {
         r.verdict = EndpointVerdict::CannotOpen;
+        // Logged before the repair runs, so the log reads chronologically: fault
+        // first, then what was done about it.
+        if (r.verdict != s_lastVerdict) { logTransition(s_lastVerdict, in, r); s_lastVerdict = r.verdict; }
         if (s_repairAttempts < kMaxRepairAttempts) {
             ++s_repairAttempts;
             r.resetFormatTried = true;
             r.resetFormatOk = WasapiDevices::resetDeviceFormat(in.defaultRenderId);
 
             StreamFormat after;
-            const long afterHr = WasapiDevices::sharedFormatHealth(in.defaultRenderId, &after);
+            const long afterHr = probeFormat(in.defaultRenderId, &after, nullptr);
             logLine(QStringLiteral("rung1 ResetDeviceFormat %1 (attempt %2/%3) -> %4  "
                                    "mix now %5, IsFormatSupported=0x%6")
                         .arg(r.resetFormatOk ? QStringLiteral("ok") : QStringLiteral("FAILED"))
@@ -210,6 +276,7 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
             if (afterHr == S_OK) {
                 s_consecutiveUnsupported = 0;
                 s_repairAttempts = 0;
+                s_loggedRung3 = false;
                 r.mixFormat = after;
                 r.formatHr = afterHr;
                 s_lastFormatHr = afterHr;
@@ -218,10 +285,15 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
         }
         // Reset exhausted and still wedged: hand rung 3 to the user.
         if (s_consecutiveUnsupported >= kConfirmProbes
-            && s_repairAttempts >= kMaxRepairAttempts)
+            && s_repairAttempts >= kMaxRepairAttempts) {
+            if (!s_loggedRung3) {
+                s_loggedRung3 = true;
+                logLine(QStringLiteral("rung3: %1 resets did not clear it — offering the "
+                                       "audio engine restart to the user")
+                            .arg(kMaxRepairAttempts));
+            }
             r.needsServiceRestart = true;
-
-        if (r.verdict != s_lastVerdict) { logTransition(s_lastVerdict, in, r); s_lastVerdict = r.verdict; }
+        }
         return r;
     }
 
