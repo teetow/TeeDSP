@@ -320,4 +320,81 @@ bool WasapiDevices::setDefaultRender(const QString &deviceId)
     return SUCCEEDED(hr);
 }
 
+long WasapiDevices::sharedFormatHealth(const QString &deviceId, StreamFormat *mixOut)
+{
+    if (deviceId.isEmpty()) return E_INVALIDARG;
+    CoInitScope co;
+
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator))))
+        return E_FAIL;
+
+    ComPtr<IMMDevice> dev;
+    HRESULT hr = enumerator->GetDevice(reinterpret_cast<LPCWSTR>(deviceId.utf16()), &dev);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IAudioClient> client;
+    hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client);
+    if (FAILED(hr)) return hr;
+
+    WAVEFORMATEX *mix = nullptr;
+    hr = client->GetMixFormat(&mix);
+    if (FAILED(hr) || !mix) return FAILED(hr) ? hr : E_FAIL;
+    if (mixOut) waveFormatToStreamFormat(mix, *mixOut);
+
+    // IsFormatSupported only interrogates the format chain; unlike Initialize it
+    // never creates a stream, so this is safe to run on a periodic status tick
+    // even while other apps are playing.
+    WAVEFORMATEX *closest = nullptr;
+    hr = client->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, mix, &closest);
+    if (closest) CoTaskMemFree(closest);
+    CoTaskMemFree(mix);
+    return hr;
+}
+
+long WasapiDevices::sharedInitializeProbe(const QString &deviceId)
+{
+    if (deviceId.isEmpty()) return E_INVALIDARG;
+    CoInitScope co;
+
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator))))
+        return E_FAIL;
+
+    ComPtr<IMMDevice> dev;
+    HRESULT hr = enumerator->GetDevice(reinterpret_cast<LPCWSTR>(deviceId.utf16()), &dev);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IAudioClient> client;
+    hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client);
+    if (FAILED(hr)) return hr;
+
+    WAVEFORMATEX *mix = nullptr;
+    hr = client->GetMixFormat(&mix);
+    if (FAILED(hr) || !mix) return FAILED(hr) ? hr : E_FAIL;
+
+    // Shared mode with a zero buffer duration: the engine picks its default
+    // period and, crucially, never takes exclusive ownership -- so this does not
+    // disturb whatever else is already playing. Deliberately not started; the
+    // client is released immediately, producing no audio.
+    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 0, 0, mix, nullptr);
+    CoTaskMemFree(mix);
+    return hr;
+}
+
+bool WasapiDevices::resetDeviceFormat(const QString &deviceId)
+{
+    if (deviceId.isEmpty()) return false;
+    CoInitScope co;
+
+    ComPtr<IPolicyConfig> policy;
+    if (FAILED(CoCreateInstance(CLSID_PolicyConfigClient, nullptr,
+                                CLSCTX_ALL, IID_PPV_ARGS(&policy))) || !policy)
+        return false;
+
+    return SUCCEEDED(policy->ResetDeviceFormat(deviceId.toStdWString().c_str()));
+}
+
 } // namespace host

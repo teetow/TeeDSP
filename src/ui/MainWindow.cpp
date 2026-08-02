@@ -15,6 +15,7 @@
 
 #include "../dsp/DspController.h"
 #include "../host/ApoBindingStatus.h"
+#include "../host/EndpointFormatGuard.h"
 #include "../host/SpectrumAnalyzer.h"
 #include "../host/WasapiDevices.h"
 
@@ -1363,6 +1364,12 @@ void MainWindow::refreshEngineStatus()
     const bool bypassed = m_dspController->bypass();
     const DefaultOutInfo out = queryDefaultOut();
     syncDevicePickerToDefaultOutput(out.id);
+
+    // Self-heal the Bluetooth format wedge before it becomes a silent output the
+    // user has to debug: an A2DP reconnect can land on a sample rate the
+    // endpoint's cached format disagrees with, after which nothing can open a
+    // shared-mode stream. Self-paced, so this is a no-op on most ticks.
+    host::tickFormatGuard(out.id);
 
     const bool advancing = st.open && (st.processCalls != m_lastApoProcessCalls);
     m_lastApoProcessCalls = st.processCalls;

@@ -64,6 +64,7 @@ set(HOST_SOURCES
 	src/host/ApoSharedClient.cpp
 	src/host/ApoBindingStatus.cpp
 	src/host/ApoDiagnostics.cpp
+	src/host/EndpointFormatGuard.cpp
 )
 
 set(UI_SOURCES
