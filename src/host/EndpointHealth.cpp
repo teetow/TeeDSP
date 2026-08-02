@@ -78,17 +78,25 @@ void logLine(const QString &text)
                     << text << QLatin1Char('\n');
 }
 
-// Full tuple, logged on every verdict transition so an incident report is one
-// grep rather than a live investigation.
-void logTransition(EndpointVerdict from, const HealthInputs &in,
-                   const EndpointHealthResult &r)
+bool isFault(EndpointVerdict v)
 {
-    logLine(QStringLiteral("%1 -> %2  endpoint=\"%3\" %4  apoBound=%5 bypassed=%6 "
-                           "processing=%7 mix=%8 peak=%9 IsFormatSupported=0x%10 "
-                           "Initialize=0x%11%12")
-                .arg(QLatin1String(verdictName(from)), QLatin1String(verdictName(r.verdict)),
-                     in.defaultRenderName, in.defaultRenderId)
+    return v == EndpointVerdict::CannotOpen
+        || v == EndpointVerdict::NotFlowing
+        || v == EndpointVerdict::WrongDevice;
+}
+
+// Full tuple, so an incident report is one grep rather than a live
+// investigation. Carries the persisted format alongside the engine mix format:
+// the two normally track, and a divergence is itself a fault signature.
+void logState(const QString &event, const HealthInputs &in,
+              const EndpointHealthResult &r)
+{
+    logLine(QStringLiteral("%1  endpoint=\"%2\" %3  apoBound=%4 bypassed=%5 "
+                           "processing=%6 cached=%7Hz mix=%8 peak=%9 "
+                           "IsFormatSupported=0x%10 Initialize=0x%11%12")
+                .arg(event, in.defaultRenderName, in.defaultRenderId)
                 .arg(in.apoBound).arg(in.bypassed).arg(in.apoProcessing)
+                .arg(WasapiDevices::cachedDeviceFormatRate(in.defaultRenderId))
                 .arg(describe(r.mixFormat))
                 .arg(r.peak, 0, 'f', 5)
                 .arg(static_cast<quint32>(r.formatHr), 8, 16, QLatin1Char('0'))
@@ -96,6 +104,24 @@ void logTransition(EndpointVerdict from, const HealthInputs &in,
                 .arg(r.hotOtherEndpoint.isEmpty()
                          ? QString()
                          : QStringLiteral(" hotOther=\"%1\"").arg(r.hotOtherEndpoint)));
+}
+
+// What is worth a line, learned the hard way on 2026-08-02.
+//
+// Logging every verdict transition sounded thorough and was useless in both
+// directions at once. It missed two AirPods connections entirely -- an endpoint
+// change that does not alter the verdict produced no record, and with TeeDSP
+// bypassed the verdict never moved -- while filling the file with routine
+// Active/Idle churn every 45-90s as Chrome released its stream and Windows tore
+// down the idle A2DP stream. Blind to the events we cared about, noisy with
+// events we did not.
+//
+// So: log endpoint changes (rare, and the thing under study), anything entering
+// or leaving a fault, and repairs. Never healthy-to-healthy transitions.
+bool worthLogging(EndpointVerdict from, EndpointVerdict to, bool endpointChanged)
+{
+    if (endpointChanged) return true;
+    return isFault(from) || isFault(to);
 }
 
 // Is some other active render endpoint carrying signal while the default is
@@ -199,7 +225,9 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
     if (in.suppressFaults) {
         s_consecutiveUnsupported = s_stallTicks = 0;
         r.verdict = classifyHealthy(in);
-        if (r.verdict != s_lastVerdict) { logTransition(s_lastVerdict, in, r); s_lastVerdict = r.verdict; }
+        if (endpointChanged)
+            logState(QStringLiteral("endpoint (recovery in flight)"), in, r);
+        s_lastVerdict = r.verdict;
         return r;
     }
 
@@ -257,7 +285,11 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
         r.verdict = EndpointVerdict::CannotOpen;
         // Logged before the repair runs, so the log reads chronologically: fault
         // first, then what was done about it.
-        if (r.verdict != s_lastVerdict) { logTransition(s_lastVerdict, in, r); s_lastVerdict = r.verdict; }
+        if (worthLogging(s_lastVerdict, r.verdict, endpointChanged)
+            && r.verdict != s_lastVerdict) {
+            logState(QStringLiteral("FAULT CannotOpen"), in, r);
+        }
+        s_lastVerdict = r.verdict;
         if (s_repairAttempts < kMaxRepairAttempts) {
             ++s_repairAttempts;
             r.resetFormatTried = true;
@@ -304,7 +336,9 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
             if (++s_stallTicks >= kStallTicks) {
                 r.verdict = EndpointVerdict::NotFlowing;
                 r.needsServiceRestart = true;
-                if (r.verdict != s_lastVerdict) { logTransition(s_lastVerdict, in, r); s_lastVerdict = r.verdict; }
+                if (r.verdict != s_lastVerdict)
+                    logState(QStringLiteral("FAULT NotFlowing"), in, r);
+                s_lastVerdict = r.verdict;
                 return r;
             }
         } else {
@@ -328,7 +362,9 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
         r.hotOtherEndpoint = findHotOtherEndpoint(in.defaultRenderId);
         if (!r.hotOtherEndpoint.isEmpty()) {
             r.verdict = EndpointVerdict::WrongDevice;
-            if (r.verdict != s_lastVerdict) { logTransition(s_lastVerdict, in, r); s_lastVerdict = r.verdict; }
+            if (r.verdict != s_lastVerdict)
+                logState(QStringLiteral("FAULT WrongDevice"), in, r);
+            s_lastVerdict = r.verdict;
             return r;
         }
     }
@@ -336,7 +372,14 @@ EndpointHealthResult tickEndpointHealth(const HealthInputs &in)
     // ---- healthy ----------------------------------------------------------
     r.verdict = classifyHealthy(in);
 
-    if (r.verdict != s_lastVerdict) { logTransition(s_lastVerdict, in, r); s_lastVerdict = r.verdict; }
+    // Endpoint changes and fault recoveries get a line; routine Active/Idle
+    // churn does not. See worthLogging().
+    if (endpointChanged) {
+        logState(QStringLiteral("endpoint"), in, r);
+    } else if (isFault(s_lastVerdict)) {
+        logState(QStringLiteral("recovered"), in, r);
+    }
+    s_lastVerdict = r.verdict;
     return r;
 }
 

@@ -87,6 +87,12 @@ public:
     // remote sink. Deliberately paired with no SetDeviceFormat counterpart:
     // TeeDSP has no preferred sample rate and must never impose one.
     static bool resetDeviceFormat(const QString &deviceId);
+
+    // The endpoint's *persisted* format, as opposed to the engine mix format
+    // queryMixFormat() reports. The two normally track, and a divergence is
+    // itself a fault signature worth recording -- so incident logging carries
+    // both. Returns the cached sample rate, or 0 if it cannot be read.
+    static int cachedDeviceFormatRate(const QString &deviceId);
 };
 
 } // namespace host

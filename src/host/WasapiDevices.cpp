@@ -397,4 +397,23 @@ bool WasapiDevices::resetDeviceFormat(const QString &deviceId)
     return SUCCEEDED(policy->ResetDeviceFormat(deviceId.toStdWString().c_str()));
 }
 
+int WasapiDevices::cachedDeviceFormatRate(const QString &deviceId)
+{
+    if (deviceId.isEmpty()) return 0;
+    CoInitScope co;
+
+    ComPtr<IPolicyConfig> policy;
+    if (FAILED(CoCreateInstance(CLSID_PolicyConfigClient, nullptr,
+                                CLSCTX_ALL, IID_PPV_ARGS(&policy))) || !policy)
+        return 0;
+
+    WAVEFORMATEX *fmt = nullptr;
+    if (FAILED(policy->GetDeviceFormat(deviceId.toStdWString().c_str(), TRUE, &fmt)) || !fmt)
+        return 0;
+
+    const int rate = static_cast<int>(fmt->nSamplesPerSec);
+    CoTaskMemFree(fmt);
+    return rate;
+}
+
 } // namespace host
