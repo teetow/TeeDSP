@@ -179,13 +179,10 @@ private:
     // independent of the engine — the engine is retired from the APO path.
     QTimer m_apoStatusTimer;
     unsigned long long m_lastApoProcessCalls = 0;
-    // Consecutive refreshEngineStatus ticks the engine has looked dead; the
-    // recovery prompt only appears once it's been sustained (~2 s), to ride out
-    // normal stream-start/format-change gaps. Reset whenever audio is flowing
-    // and the APO is processing again.
-    int m_engineDeadTicks = 0;
     // After a restart is triggered, suppress detection until this wall-clock ms
-    // so we don't re-accuse the engine during the service-restart gap.
+    // so we don't re-accuse the engine during the service-restart gap. The
+    // sustain counters that decide when a fault is real live in the endpoint
+    // health model, not here — see host/EndpointHealth.h.
     qint64 m_recoverySuppressUntilMs = 0;
 
     // Spectrum: drain the APO's pre/post sample ring and feed the analyzer

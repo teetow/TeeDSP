@@ -15,6 +15,7 @@
 
 #include "../dsp/DspController.h"
 #include "../host/ApoBindingStatus.h"
+#include "../host/EndpointHealth.h"
 #include "../host/SpectrumAnalyzer.h"
 #include "../host/WasapiDevices.h"
 
@@ -1375,45 +1376,58 @@ void MainWindow::refreshEngineStatus()
 
     const bool activeOnOutput = out.hasApo && !bypassed;
 
-    // Dead-engine detection: the APO is bound to the current output and not
-    // bypassed, yet it isn't processing *while audio is actually flowing on the
-    // endpoint*. The endpoint meter is read independently of the APO, so it
-    // distinguishes a stalled engine (audiodg relaunched protected -> APO
-    // unloaded) from a simply-idle one (nothing playing). Require it sustained
-    // to ride out the brief gap at stream start / format change.
+    // All fault detection and repair lives in the endpoint health model — one
+    // set of questions covering whichever cached endpoint property went stale,
+    // rather than a detector per discovered failure signature. See
+    // EndpointHealth.h. The UI's job here is only to render the verdict.
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    bool engineStalled = false;
-    if (out.hasApo && !bypassed && !processing) {
-        const float peak = host::WasapiDevices::endpointPeak(out.id);
-        if (peak > 0.0003f) {
-            if (++m_engineDeadTicks >= 5)   // ~5 * 400 ms ≈ 2 s
-                engineStalled = true;
-        } else {
-            m_engineDeadTicks = 0;          // idle, not broken
-        }
-    } else {
-        m_engineDeadTicks = 0;
-    }
-    if (nowMs < m_recoverySuppressUntilMs)  // just kicked off a restart
-        engineStalled = false;
+    host::HealthInputs hin;
+    hin.defaultRenderId = out.id;
+    hin.defaultRenderName = out.name;
+    hin.apoBound = out.hasApo;
+    hin.bypassed = bypassed;
+    hin.apoProcessing = processing;
+    hin.suppressFaults = (nowMs < m_recoverySuppressUntilMs);
+    const host::EndpointHealthResult health = host::tickEndpointHealth(hin);
+
+    const bool engineStalled = health.needsServiceRestart;
 
     QString text;
     const char *role = "status";
-    if (engineStalled) {
+    switch (health.verdict) {
+    case host::EndpointVerdict::CannotOpen:
+        // Self-healing in the background; only says so once resets are exhausted.
+        text = health.needsServiceRestart
+                   ? QStringLiteral("%1 won't accept audio — audio engine may need a restart")
+                         .arg(out.name)
+                   : QStringLiteral("Reconnecting %1 after a format change…").arg(out.name);
+        role = health.needsServiceRestart ? "statusError" : "status";
+        break;
+    case host::EndpointVerdict::NotFlowing:
         text = QStringLiteral("TeeDSP stopped processing on %1 — audio engine may need a restart")
                    .arg(out.name);
         role = "statusError";
-    } else if (!out.hasApo) {
+        break;
+    case host::EndpointVerdict::WrongDevice:
+        text = QStringLiteral("TeeDSP ready on %1 — but audio is playing on %2")
+                   .arg(out.name, health.hotOtherEndpoint);
+        break;
+    case host::EndpointVerdict::NotOnOutput:
         text = QStringLiteral("TeeDSP not active on current output (%1)").arg(out.name);
-    } else if (bypassed) {
+        break;
+    case host::EndpointVerdict::Bypassed:
         text = QStringLiteral("TeeDSP — bypassed (%1)").arg(out.name);
-    } else if (processing) {
+        break;
+    case host::EndpointVerdict::Active:
         text = QStringLiteral("TeeDSP active on %1 · %2 Hz · %3 ch")
                    .arg(out.name).arg(st.sampleRate).arg(st.channels);
         role = "statusRunning";
         if (st.sampleRate > 0) m_eqCurve->setSampleRate(static_cast<double>(st.sampleRate));
-    } else {
+        break;
+    case host::EndpointVerdict::Idle:
+    case host::EndpointVerdict::Unknown:
         text = QStringLiteral("TeeDSP ready on %1 — no audio").arg(out.name);
+        break;
     }
     if (m_restartEngineButton)
         m_restartEngineButton->setVisible(engineStalled);
@@ -1459,8 +1473,8 @@ void MainWindow::onRestartEngineRequested()
         return;
     }
     // Hide the prompt and stop accusing the engine while the service cycles and
-    // the APO reloads (~a few seconds).
-    m_engineDeadTicks = 0;
+    // the APO reloads (~a few seconds). The health model clears its own fault
+    // counters while suppressFaults is set.
     m_recoverySuppressUntilMs = QDateTime::currentMSecsSinceEpoch() + 10'000;
     if (m_restartEngineButton)
         m_restartEngineButton->hide();
