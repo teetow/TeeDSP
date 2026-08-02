@@ -18,6 +18,15 @@
     has been observed at 48 kHz. Removing AAC removes codec switching as a source
     of rate variation, so the disagreement should stop arising at all.
 
+    OUTCOME: THE EXPERIMENT RAN AND FAILED. Reverted the same day, 2026-08-02.
+    The premise was "AirPods do AAC at 44.1, SBC does 48, so removing AAC pins
+    the rate to 48." With AAC off, SBC negotiated 44100 -- so it pins nothing,
+    and the reasoning was simply wrong. It demonstrated no benefit, and left an
+    unexplained change sitting underneath a link-stability investigation. Do not
+    re-run it on the old rationale. If it is ever tried again it needs a new one,
+    plus a direct measurement of the active codec rather than inferring the codec
+    from the sample rate (which is what made the original argument circular).
+
     HONEST LIMITS -- this is an experiment, not a known fix:
       * SBC supports both 44.1 and 48 kHz, so forcing SBC does NOT guarantee a
         single rate. It only removes one candidate cause.
