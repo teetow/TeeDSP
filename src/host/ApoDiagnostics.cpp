@@ -5,7 +5,6 @@
 #include "WasapiDevices.h"
 
 #include <QDateTime>
-#include <QProcess>
 #include <QSettings>
 
 #include <windows.h>
@@ -149,6 +148,9 @@ QString buildDiagnosticsReport()
                  raw.compositeMfxClsid.isEmpty() ? QStringLiteral("(not set)") : raw.compositeMfxClsid);
             line(out, QStringLiteral("  Modes supported:"),
                  raw.modesSupported.isEmpty() ? QStringLiteral("(not set)") : raw.modesSupported.join(QStringLiteral(", ")));
+            line(out, QStringLiteral("  System effects:"),
+                 raw.effectsDisabled ? QStringLiteral("DISABLED (TeeDSP cannot load)")
+                                     : QStringLiteral("enabled"));
         }
     }
 
@@ -210,21 +212,6 @@ QString buildDiagnosticsReport()
     }
 
     return out;
-}
-
-QString runAirPodsChurnCheck(const QString &scriptPath)
-{
-    if (scriptPath.isEmpty())
-        return QStringLiteral("Get-AirPodsEndpointHistory.ps1 not found.\n");
-
-    QProcess proc;
-    proc.start(QStringLiteral("powershell.exe"),
-              {QStringLiteral("-NoProfile"), QStringLiteral("-ExecutionPolicy"), QStringLiteral("Bypass"),
-               QStringLiteral("-File"), scriptPath});
-    if (!proc.waitForFinished(15000))
-        return QStringLiteral("Get-AirPodsEndpointHistory.ps1 timed out after 15s.\n");
-    return QString::fromLocal8Bit(proc.readAllStandardOutput())
-         + QString::fromLocal8Bit(proc.readAllStandardError());
 }
 
 } // namespace host

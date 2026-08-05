@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QString>
+
 namespace ui::recovery {
 
 // Restarts the Windows Audio service (Audiosrv) via a one-shot elevated

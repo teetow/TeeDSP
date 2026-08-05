@@ -124,8 +124,18 @@ $windeployqt = Join-Path $qtPrefix 'bin\windeployqt.exe'
 if (-not (Test-Path $windeployqt)) { throw "windeployqt not found at $windeployqt" }
 
 Write-Host "Running windeployqt..."
-& $windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw $exePath | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+$deployArgs = @(
+    '--release',
+    '--no-translations',
+    '--no-system-d3d-compiler',
+    '--no-opengl-sw',
+    ('"{0}"' -f $exePath)
+)
+$deployProcess = Start-Process -FilePath $windeployqt -ArgumentList $deployArgs `
+                               -Wait -PassThru -WindowStyle Hidden
+if ($deployProcess.ExitCode -ne 0) {
+    throw "windeployqt failed with exit code $($deployProcess.ExitCode)"
+}
 
 # ---- Stage to install dir -----------------------------------------------------
 if (-not $Restart) {

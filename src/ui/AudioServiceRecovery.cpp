@@ -3,7 +3,35 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#include <QByteArray>
+#include <QString>
+
 namespace ui::recovery {
+
+namespace {
+
+bool launchElevatedPowerShell(const QString &script)
+{
+    const QByteArray utf16(reinterpret_cast<const char *>(script.utf16()),
+                           script.size() * static_cast<int>(sizeof(char16_t)));
+    const QString params = QStringLiteral(
+        "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand %1")
+                               .arg(QString::fromLatin1(utf16.toBase64()));
+
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize       = sizeof(sei);
+    sei.fMask        = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+    sei.lpVerb       = L"runas";
+    sei.lpFile       = L"powershell.exe";
+    sei.lpParameters = reinterpret_cast<LPCWSTR>(params.utf16());
+    sei.nShow        = SW_HIDE;
+
+    if (!ShellExecuteExW(&sei)) return false;
+    if (sei.hProcess) CloseHandle(sei.hProcess);
+    return true;
+}
+
+} // namespace
 
 bool restartAudioService()
 {
@@ -12,25 +40,7 @@ bool restartAudioService()
     // -Force pulls any dependent services through the restart; the hidden
     // window keeps it silent. We don't wait for completion — MainWindow's
     // status poll detects recovery when the APO telemetry starts advancing.
-    const wchar_t *params =
-        L"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden "
-        L"-Command \"Restart-Service Audiosrv -Force\"";
-
-    SHELLEXECUTEINFOW sei{};
-    sei.cbSize       = sizeof(sei);
-    sei.fMask        = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
-    sei.lpVerb       = L"runas";          // request elevation -> UAC prompt
-    sei.lpFile       = L"powershell.exe";
-    sei.lpParameters = params;
-    sei.nShow        = SW_HIDE;
-
-    if (!ShellExecuteExW(&sei)) {
-        // GetLastError() == ERROR_CANCELLED (1223) when the user dismisses UAC.
-        return false;
-    }
-    if (sei.hProcess)
-        CloseHandle(sei.hProcess);
-    return true;
+    return launchElevatedPowerShell(QStringLiteral("Restart-Service Audiosrv -Force"));
 }
 
 } // namespace ui::recovery

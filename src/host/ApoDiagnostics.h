@@ -18,12 +18,4 @@ namespace host {
 // queryInstalledApoPackages() already blocks briefly on pnputil.
 QString buildDiagnosticsReport();
 
-// Opt-in and slower (an Event Log scan over the full log, typically 1-3s):
-// shells out to scripts\Get-AirPodsEndpointHistory.ps1 and returns its
-// output verbatim. Left in PowerShell deliberately, not folded into
-// buildDiagnosticsReport() -- it's mature Event Log + setupapi.dev.log
-// parsing that would be a substantial, riskier reimplementation in C++ for
-// no real benefit. scriptPath must be the resolved path to that script.
-QString runAirPodsChurnCheck(const QString &scriptPath);
-
 } // namespace host

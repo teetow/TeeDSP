@@ -35,14 +35,16 @@ IPolicyConfig : public IUnknown
     virtual HRESULT STDMETHODCALLTYPE SetProcessingPeriod(PCWSTR, PINT64) = 0;
     virtual HRESULT STDMETHODCALLTYPE GetShareMode(PCWSTR, DeviceShareMode *) = 0;
     virtual HRESULT STDMETHODCALLTYPE SetShareMode(PCWSTR, DeviceShareMode *) = 0;
-    virtual HRESULT STDMETHODCALLTYPE GetPropertyValue(PCWSTR, const PROPERTYKEY &, PROPVARIANT *) = 0;
-    virtual HRESULT STDMETHODCALLTYPE SetPropertyValue(PCWSTR, const PROPERTYKEY &, PROPVARIANT *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetPropertyValue(PCWSTR, BOOL, const PROPERTYKEY &, PROPVARIANT *) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SetPropertyValue(PCWSTR, BOOL, const PROPERTYKEY &, PROPVARIANT *) = 0;
     virtual HRESULT STDMETHODCALLTYPE SetDefaultEndpoint(PCWSTR, ERole) = 0;
     virtual HRESULT STDMETHODCALLTYPE SetEndpointVisibility(PCWSTR, BOOL) = 0;
 };
 
 static const CLSID CLSID_PolicyConfigClient =
     {0x870af99c, 0x171d, 0x4f9e, {0xaf, 0x0d, 0xe6, 0x3d, 0xf4, 0x0c, 0x2b, 0xc9}};
+static const PROPERTYKEY PKEY_AudioEndpoint_Disable_SysFx_Local =
+    {{0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}}, 5};
 // ---------------------------------------------------------------------------
 
 struct CoInitScope {
@@ -320,71 +322,7 @@ bool WasapiDevices::setDefaultRender(const QString &deviceId)
     return SUCCEEDED(hr);
 }
 
-long WasapiDevices::sharedFormatHealth(const QString &deviceId, StreamFormat *mixOut)
-{
-    if (deviceId.isEmpty()) return E_INVALIDARG;
-    CoInitScope co;
-
-    ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator))))
-        return E_FAIL;
-
-    ComPtr<IMMDevice> dev;
-    HRESULT hr = enumerator->GetDevice(reinterpret_cast<LPCWSTR>(deviceId.utf16()), &dev);
-    if (FAILED(hr)) return hr;
-
-    ComPtr<IAudioClient> client;
-    hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client);
-    if (FAILED(hr)) return hr;
-
-    WAVEFORMATEX *mix = nullptr;
-    hr = client->GetMixFormat(&mix);
-    if (FAILED(hr) || !mix) return FAILED(hr) ? hr : E_FAIL;
-    if (mixOut) waveFormatToStreamFormat(mix, *mixOut);
-
-    // IsFormatSupported only interrogates the format chain; unlike Initialize it
-    // never creates a stream, so this is safe to run on a periodic status tick
-    // even while other apps are playing.
-    WAVEFORMATEX *closest = nullptr;
-    hr = client->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, mix, &closest);
-    if (closest) CoTaskMemFree(closest);
-    CoTaskMemFree(mix);
-    return hr;
-}
-
-long WasapiDevices::sharedInitializeProbe(const QString &deviceId)
-{
-    if (deviceId.isEmpty()) return E_INVALIDARG;
-    CoInitScope co;
-
-    ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                                CLSCTX_ALL, IID_PPV_ARGS(&enumerator))))
-        return E_FAIL;
-
-    ComPtr<IMMDevice> dev;
-    HRESULT hr = enumerator->GetDevice(reinterpret_cast<LPCWSTR>(deviceId.utf16()), &dev);
-    if (FAILED(hr)) return hr;
-
-    ComPtr<IAudioClient> client;
-    hr = dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client);
-    if (FAILED(hr)) return hr;
-
-    WAVEFORMATEX *mix = nullptr;
-    hr = client->GetMixFormat(&mix);
-    if (FAILED(hr) || !mix) return FAILED(hr) ? hr : E_FAIL;
-
-    // Shared mode with a zero buffer duration: the engine picks its default
-    // period and, crucially, never takes exclusive ownership -- so this does not
-    // disturb whatever else is already playing. Deliberately not started; the
-    // client is released immediately, producing no audio.
-    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 0, 0, mix, nullptr);
-    CoTaskMemFree(mix);
-    return hr;
-}
-
-bool WasapiDevices::resetDeviceFormat(const QString &deviceId)
+bool WasapiDevices::setSystemEffectsEnabled(const QString &deviceId)
 {
     if (deviceId.isEmpty()) return false;
     CoInitScope co;
@@ -394,26 +332,14 @@ bool WasapiDevices::resetDeviceFormat(const QString &deviceId)
                                 CLSCTX_ALL, IID_PPV_ARGS(&policy))) || !policy)
         return false;
 
-    return SUCCEEDED(policy->ResetDeviceFormat(deviceId.toStdWString().c_str()));
-}
+    PROPVARIANT value;
+    PropVariantInit(&value);
+    value.vt = VT_UI4;
+    value.ulVal = 0; // ENDPOINT_SYSFX_ENABLED
 
-int WasapiDevices::cachedDeviceFormatRate(const QString &deviceId)
-{
-    if (deviceId.isEmpty()) return 0;
-    CoInitScope co;
-
-    ComPtr<IPolicyConfig> policy;
-    if (FAILED(CoCreateInstance(CLSID_PolicyConfigClient, nullptr,
-                                CLSCTX_ALL, IID_PPV_ARGS(&policy))) || !policy)
-        return 0;
-
-    WAVEFORMATEX *fmt = nullptr;
-    if (FAILED(policy->GetDeviceFormat(deviceId.toStdWString().c_str(), TRUE, &fmt)) || !fmt)
-        return 0;
-
-    const int rate = static_cast<int>(fmt->nSamplesPerSec);
-    CoTaskMemFree(fmt);
-    return rate;
+    return SUCCEEDED(policy->SetPropertyValue(
+        deviceId.toStdWString().c_str(), TRUE,
+        PKEY_AudioEndpoint_Disable_SysFx_Local, &value));
 }
 
 } // namespace host

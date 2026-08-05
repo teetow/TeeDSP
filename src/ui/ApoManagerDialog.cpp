@@ -266,15 +266,6 @@ ApoManagerDialog::ApoManagerDialog(QWidget *parent)
     });
     diagButtons->addWidget(m_diagCopyButton);
 
-    m_diagChurnButton = new QPushButton(QStringLiteral("Run AirPods Churn Check"), m_diagContainer);
-    m_diagChurnButton->setToolTip(
-        QStringLiteral("Shells out to scripts\\Get-AirPodsEndpointHistory.ps1 -- scans the "
-                       "Windows Event Log for AirPods endpoint mints/reconnects. Read-only, "
-                       "no elevation, but can take a few seconds on a large log."));
-    connect(m_diagChurnButton, &QPushButton::clicked, this, &ApoManagerDialog::runChurnCheck);
-    if (repoScriptPath("scripts/Get-AirPodsEndpointHistory.ps1").isEmpty())
-        m_diagChurnButton->setEnabled(false);
-    diagButtons->addWidget(m_diagChurnButton);
     diagButtons->addStretch();
     diagLayout->addLayout(diagButtons);
 
@@ -338,16 +329,27 @@ ApoManagerDialog::ApoManagerDialog(QWidget *parent)
     // ---- bottom row: the panic button on the left, Refresh/Close on the right ----
     auto *bottomRow = new QHBoxLayout();
 
-    m_restoreAudioButton = new QPushButton(QStringLiteral("Restore Audio"), this);
+    m_restoreAudioButton = new QPushButton(QStringLiteral("Restore TeeDSP"), this);
     m_restoreAudioButton->setProperty("role", "recover");
     m_restoreAudioButton->setToolTip(
-        QStringLiteral("Restarts the Windows Audio service (Audiosrv), which forces "
-                       "audiodg.exe to respawn and reload the APO. The fix for the "
-                       "common failure modes: audio silently stopped, playing on the "
-                       "wrong device, or TeeDSP shows \"not active\" for no clear "
-                       "reason. Requires elevation (a UAC prompt appears)."));
+        QStringLiteral("Re-enables Windows endpoint effects if they are off; otherwise "
+                       "restarts Windows Audio so audiodg.exe reloads TeeDSP. A service "
+                       "restart requires elevation (a UAC prompt appears)."));
     connect(m_restoreAudioButton, &QPushButton::clicked, this, [this]() {
         m_restoreAudioButton->setEnabled(false);
+
+        const QString endpointId = host::WasapiDevices::defaultRenderId();
+        const host::ApoBindingInfo binding = host::queryApoBinding(endpointId);
+        if (binding.bound && binding.effectsDisabled) {
+            const bool enabled = host::WasapiDevices::setSystemEffectsEnabled(endpointId);
+            m_actionStatusLabel->setText(enabled
+                ? QStringLiteral("Enabled Windows endpoint effects; TeeDSP is loading…")
+                : QStringLiteral("Could not enable endpoint effects. Use Windows Sound settings."));
+            m_actionStatusLabel->show();
+            m_restoreAudioButton->setEnabled(true);
+            return;
+        }
+
         const bool launched = ui::recovery::restartAudioService();
         m_actionStatusLabel->setText(launched
             ? QStringLiteral("Restoring audio… approve the UAC prompt if one appears.")
@@ -462,8 +464,16 @@ void ApoManagerDialog::refresh()
             slotChip->setToolTip(QString::fromLatin1(mapping->slotTooltip));
             statusRow->addWidget(slotChip);
         } else {
-            const bool bound = host::queryApoBinding(endpointId).bound;
-            if (bound) {
+            const host::ApoBindingInfo binding = host::queryApoBinding(endpointId);
+            if (binding.bound && binding.effectsDisabled) {
+                ++notBoundAnomalyCount;
+                auto *effectsOff = pillLabel(QStringLiteral("Effects off"),
+                    QStringLiteral("230, 126, 34"), QStringLiteral("#E67E22"), card);
+                effectsOff->setToolTip(
+                    QStringLiteral("TeeDSP is bound, but Windows Audio Enhancements are off. "
+                                   "Use Restore TeeDSP to re-enable Device Default Effects."));
+                statusRow->addWidget(effectsOff);
+            } else if (binding.bound) {
                 statusRow->addWidget(pillLabel(QStringLiteral("Bound"),
                     QStringLiteral("46, 204, 113"), QStringLiteral("#2ECC71"), card));
             } else {
@@ -763,24 +773,6 @@ void ApoManagerDialog::toggleDiagnostics(bool expanded)
 void ApoManagerDialog::refreshDiagnostics()
 {
     m_diagText->setPlainText(host::buildDiagnosticsReport());
-}
-
-void ApoManagerDialog::runChurnCheck()
-{
-    const QString scriptPath = repoScriptPath("scripts/Get-AirPodsEndpointHistory.ps1");
-    if (scriptPath.isEmpty())
-        return;
-
-    m_diagChurnButton->setEnabled(false);
-    m_diagText->appendPlainText(QStringLiteral("\n== Running Get-AirPodsEndpointHistory.ps1 (may take a few seconds) ==\n"));
-
-    std::thread([this, scriptPath]() {
-        const QString result = host::runAirPodsChurnCheck(scriptPath);
-        QMetaObject::invokeMethod(this, [this, result]() {
-            m_diagText->appendPlainText(result);
-            m_diagChurnButton->setEnabled(true);
-        }, Qt::QueuedConnection);
-    }).detach();
 }
 
 } // namespace ui

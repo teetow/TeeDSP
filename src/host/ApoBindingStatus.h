@@ -13,6 +13,7 @@ namespace host {
 // AirPods A2DP pattern).
 struct ApoBindingInfo {
     bool bound = false;
+    bool effectsDisabled = false; // PKEY_AudioEndpoint_Disable_SysFx != 0
     QString slot; // "MFX (composite)", "MFX", or "SFX" — empty when not bound
 };
 
@@ -28,6 +29,7 @@ struct ApoBindingRaw {
     QString mfxClsid;              // ,6  (PKEY_FX_ModeEffectClsid)
     QString compositeMfxClsid;     // ,14 (PKEY_CompositeFX_ModeEffectClsid)
     QStringList modesSupported;    // MFX_ProcessingModes_Supported_For_Streaming
+    bool effectsDisabled = false;
 };
 
 ApoBindingRaw queryApoBindingRaw(const QString &renderDeviceId);

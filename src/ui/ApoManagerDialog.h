@@ -48,7 +48,6 @@ private:
 
     void toggleDiagnostics(bool expanded);
     void refreshDiagnostics();
-    void runChurnCheck();
 
     QLabel *m_summaryLabel = nullptr;
     QPushButton *m_restoreAudioButton = nullptr;
@@ -80,7 +79,6 @@ private:
     QPlainTextEdit *m_diagText = nullptr;
     QPushButton *m_diagRefreshButton = nullptr;
     QPushButton *m_diagCopyButton = nullptr;
-    QPushButton *m_diagChurnButton = nullptr;
     bool m_diagLoadedOnce = false;
 };
 

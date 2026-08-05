@@ -32,9 +32,18 @@ ApoBindingInfo queryApoBinding(const QString &renderDeviceId)
         return fx.value(pkeyBase + slot).toString().compare(teeDspClsid, Qt::CaseInsensitive) == 0;
     };
 
-    if (isTeeDsp(QStringLiteral(",14")))      info = {true, QStringLiteral("MFX (composite)")};
-    else if (isTeeDsp(QStringLiteral(",6")))  info = {true, QStringLiteral("MFX")};
-    else if (isTeeDsp(QStringLiteral(",5")))  info = {true, QStringLiteral("SFX")};
+    if (isTeeDsp(QStringLiteral(",14"))) {
+        info.bound = true;
+        info.slot = QStringLiteral("MFX (composite)");
+    } else if (isTeeDsp(QStringLiteral(",6"))) {
+        info.bound = true;
+        info.slot = QStringLiteral("MFX");
+    } else if (isTeeDsp(QStringLiteral(",5"))) {
+        info.bound = true;
+        info.slot = QStringLiteral("SFX");
+    }
+    info.effectsDisabled = fx.value(
+        QStringLiteral("{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5"), 0).toUInt() != 0;
 
     return info;
 }
@@ -54,6 +63,8 @@ ApoBindingRaw queryApoBindingRaw(const QString &renderDeviceId)
     // Separate fmtid from the CLSID slots above (see _Interop.ps1's MfxModesValue).
     raw.modesSupported = fx.value(
         QStringLiteral("{D3993A3F-99C2-4402-B5EC-A92A0367664B},6")).toStringList();
+    raw.effectsDisabled = fx.value(
+        QStringLiteral("{1da5d803-d492-4edd-8c23-e0c0ffee7f0e},5"), 0).toUInt() != 0;
 
     return raw;
 }

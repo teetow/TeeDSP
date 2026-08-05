@@ -65,7 +65,7 @@ private:
     void refreshDevices();
     void syncDevicePickerToDefaultOutput(const QString &deviceId);
     void refreshEngineStatus();
-    void onRestartEngineRequested();
+    void onRecoveryRequested();
     void onManageApoRequested();
     void refreshEqCurve();
     // Lightweight refresh of just the dynamic knobs/labels for the currently
@@ -84,10 +84,11 @@ private:
 
     QComboBox *m_captureDevice = nullptr;
     QLabel *m_statusLabel = nullptr;
-    // Shown in the status bar only when the audio engine looks dead (the APO is
-    // bound to the current output and audio is playing, yet no processing) —
-    // clicking it elevates and restarts Audiosrv to reload the APO.
-    QPushButton *m_restartEngineButton = nullptr;
+    // Shown when Windows has disabled endpoint effects or audio reaches the
+    // output without the TeeDSP APO processing. The action enables effects or
+    // restarts Audiosrv, respectively.
+    QPushButton *m_recoveryButton = nullptr;
+    bool m_effectsEnableNeeded = false;
     QPushButton *m_manageApoButton = nullptr;
     QLabel *m_dspBuildLabel = nullptr;
 

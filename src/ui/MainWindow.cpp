@@ -355,15 +355,15 @@ QWidget *MainWindow::buildIoSection()
     m_statusLabel->setProperty("role", "status");
     statusBar()->addWidget(m_statusLabel, 1);
 
-    m_restartEngineButton = new QPushButton(QStringLiteral("Restart audio engine"));
-    m_restartEngineButton->setProperty("role", "recover");
-    m_restartEngineButton->setToolTip(
+    m_recoveryButton = new QPushButton(QStringLiteral("Restart audio engine"));
+    m_recoveryButton->setProperty("role", "recover");
+    m_recoveryButton->setToolTip(
         QStringLiteral("The audio engine stopped processing. Restart Windows Audio "
                        "(requires elevation) to reload TeeDSP."));
-    m_restartEngineButton->hide();
-    connect(m_restartEngineButton, &QPushButton::clicked,
-            this, &MainWindow::onRestartEngineRequested);
-    statusBar()->addPermanentWidget(m_restartEngineButton);
+    m_recoveryButton->hide();
+    connect(m_recoveryButton, &QPushButton::clicked,
+            this, &MainWindow::onRecoveryRequested);
+    statusBar()->addPermanentWidget(m_recoveryButton);
 
     m_dspBuildLabel = new QLabel(QStringLiteral("DSP build: \u2014"));
     m_dspBuildLabel->setProperty("role", "status");
@@ -1306,7 +1306,12 @@ void MainWindow::restoreSelectedDevices()
 }
 
 namespace {
-struct DefaultOutInfo { bool hasApo = false; QString name; QString id; };
+struct DefaultOutInfo {
+    bool hasApo = false;
+    bool effectsEnabled = true;
+    QString name;
+    QString id;
+};
 
 // Is the TeeDSP APO bound to the *current* default render endpoint, and what's
 // its name? Realtek uses the composite MFX slot (pid 14), while the inbox A2DP
@@ -1334,7 +1339,9 @@ DefaultOutInfo queryDefaultOut()
     s_ticksSinceRecheck = 0;
 
     info.id = def;
-    info.hasApo = host::queryApoBinding(def).bound;
+    const host::ApoBindingInfo binding = host::queryApoBinding(def);
+    info.hasApo = binding.bound;
+    info.effectsEnabled = !binding.effectsDisabled;
 
     const int dot = def.lastIndexOf(QLatin1Char('.'));
     const QString guid = (dot >= 0) ? def.mid(dot + 1) : def;
@@ -1374,46 +1381,39 @@ void MainWindow::refreshEngineStatus()
     // unloaded — so this still catches a real dead engine.
     const bool processing = st.open && advancing && !bypassed;
 
-    const bool activeOnOutput = out.hasApo && !bypassed;
+    const bool activeOnOutput = out.hasApo && out.effectsEnabled && !bypassed;
 
-    // All fault detection and repair lives in the endpoint health model — one
-    // set of questions covering whichever cached endpoint property went stale,
-    // rather than a detector per discovered failure signature. See
-    // EndpointHealth.h. The UI's job here is only to render the verdict.
+    // TeeDSP's health model is deliberately limited to its own APO path. Device
+    // and transport health belong to the device manager (BluePod).
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     host::HealthInputs hin;
     hin.defaultRenderId = out.id;
     hin.defaultRenderName = out.name;
     hin.apoBound = out.hasApo;
+    hin.effectsEnabled = out.effectsEnabled;
     hin.bypassed = bypassed;
     hin.apoProcessing = processing;
     hin.suppressFaults = (nowMs < m_recoverySuppressUntilMs);
     const host::EndpointHealthResult health = host::tickEndpointHealth(hin);
 
     const bool engineStalled = health.needsServiceRestart;
+    m_effectsEnableNeeded = health.needsEffectsEnable;
 
     QString text;
     const char *role = "status";
     switch (health.verdict) {
-    case host::EndpointVerdict::CannotOpen:
-        // Self-healing in the background; only says so once resets are exhausted.
-        text = health.needsServiceRestart
-                   ? QStringLiteral("%1 won't accept audio — audio engine may need a restart")
-                         .arg(out.name)
-                   : QStringLiteral("Reconnecting %1 after a format change…").arg(out.name);
-        role = health.needsServiceRestart ? "statusError" : "status";
-        break;
     case host::EndpointVerdict::NotFlowing:
         text = QStringLiteral("TeeDSP stopped processing on %1 — audio engine may need a restart")
                    .arg(out.name);
         role = "statusError";
         break;
-    case host::EndpointVerdict::WrongDevice:
-        text = QStringLiteral("TeeDSP ready on %1 — but audio is playing on %2")
-                   .arg(out.name, health.hotOtherEndpoint);
-        break;
     case host::EndpointVerdict::NotOnOutput:
         text = QStringLiteral("TeeDSP not active on current output (%1)").arg(out.name);
+        break;
+    case host::EndpointVerdict::EffectsDisabled:
+        text = QStringLiteral("Windows audio enhancements are off on %1 — TeeDSP cannot load")
+                   .arg(out.name);
+        role = "statusError";
         break;
     case host::EndpointVerdict::Bypassed:
         text = QStringLiteral("TeeDSP — bypassed (%1)").arg(out.name);
@@ -1429,8 +1429,18 @@ void MainWindow::refreshEngineStatus()
         text = QStringLiteral("TeeDSP ready on %1 — no audio").arg(out.name);
         break;
     }
-    if (m_restartEngineButton)
-        m_restartEngineButton->setVisible(engineStalled);
+    if (m_recoveryButton) {
+        const bool recoveryNeeded = engineStalled || m_effectsEnableNeeded;
+        m_recoveryButton->setVisible(recoveryNeeded);
+        m_recoveryButton->setText(m_effectsEnableNeeded
+            ? QStringLiteral("Enable TeeDSP")
+            : QStringLiteral("Restart audio engine"));
+        m_recoveryButton->setToolTip(m_effectsEnableNeeded
+            ? QStringLiteral("Windows is skipping endpoint effects. Re-enable Device Default "
+                             "Effects so the bound TeeDSP APO can load.")
+            : QStringLiteral("The audio engine stopped processing. Restart Windows Audio "
+                             "(requires elevation) to reload TeeDSP."));
+    }
     if (m_statusLabel->text() != text)
         m_statusLabel->setText(text);
     const QString roleName = QString::fromLatin1(role);
@@ -1451,22 +1461,41 @@ void MainWindow::refreshEngineStatus()
     }
 
     if (m_tray) {
-        m_tray->setRunning(activeOnOutput);
+        m_tray->setRunning(activeOnOutput && !engineStalled);
         m_tray->setStatusText(
             engineStalled ? QStringLiteral("TeeDSP — engine stopped (needs restart)")
+            : m_effectsEnableNeeded ? QStringLiteral("TeeDSP — Windows audio enhancements are off")
             : !out.hasApo ? QStringLiteral("TeeDSP — not on %1").arg(out.name)
             : bypassed    ? QStringLiteral("TeeDSP — bypassed")
                           : QStringLiteral("TeeDSP — active on %1").arg(out.name));
     }
 }
 
-void MainWindow::onRestartEngineRequested()
+void MainWindow::onRecoveryRequested()
 {
-    // audiodg can relaunch in protected mode (e.g. after a device switch or a
-    // crash) and silently refuse the dev-signed APO; restarting Windows Audio
-    // forces it to respawn and reload the APO. Needs elevation, so this throws
-    // a UAC prompt. Fire-and-forget — refreshEngineStatus clears the banner on
-    // its own once telemetry resumes.
+    if (m_effectsEnableNeeded) {
+        const QString endpointId = host::WasapiDevices::defaultRenderId();
+        if (endpointId.isEmpty() || !host::WasapiDevices::setSystemEffectsEnabled(endpointId)) {
+            if (m_statusLabel)
+                m_statusLabel->setText(QStringLiteral(
+                    "Could not enable Windows audio enhancements — use Sound settings"));
+            return;
+        }
+
+        // PolicyConfig rebuilds the endpoint graph itself. Keep the old cached
+        // registry verdict suppressed until queryDefaultOut's bounded cache has
+        // refreshed and the new APO instance has begun processing.
+        m_recoverySuppressUntilMs = QDateTime::currentMSecsSinceEpoch() + 12'000;
+        m_effectsEnableNeeded = false;
+        if (m_recoveryButton)
+            m_recoveryButton->hide();
+        if (m_statusLabel)
+            m_statusLabel->setText(QStringLiteral("Enabling TeeDSP on the current output…"));
+        return;
+    }
+
+    // audiodg can relaunch in protected mode and silently refuse the dev-signed
+    // APO. Restarting Windows Audio forces it to respawn and reload TeeDSP.
     if (!ui::recovery::restartAudioService()) {
         // Launch failed or the user dismissed UAC — leave the banner up so they
         // can try again. No modal nag.
@@ -1476,8 +1505,8 @@ void MainWindow::onRestartEngineRequested()
     // the APO reloads (~a few seconds). The health model clears its own fault
     // counters while suppressFaults is set.
     m_recoverySuppressUntilMs = QDateTime::currentMSecsSinceEpoch() + 10'000;
-    if (m_restartEngineButton)
-        m_restartEngineButton->hide();
+    if (m_recoveryButton)
+        m_recoveryButton->hide();
     if (m_statusLabel)
         m_statusLabel->setText(QStringLiteral("Restarting audio engine…"));
 }
