@@ -11,6 +11,13 @@ namespace host {
 // This model therefore asks one product-specific question: is audio present on
 // the current output while the bound, non-bypassed TeeDSP APO is not processing?
 // If sustained, the UI may offer an Audiosrv restart to reload the APO.
+//
+// The cached-format wedge -- endpoint ACTIVE, APO bound, and every shared-mode
+// open failing AUDCLNT_E_UNSUPPORTED_FORMAT because the endpoint's cached rate
+// disagrees with the A2DP link -- is therefore NOT handled here. It lives in
+// TeeToys/src/TeeToys.BluePod/BluePodEndpointFormatService.cs. Said explicitly
+// because that repair briefly lived on this side, and the notes pointing readers
+// here outlived the code by some margin.
 
 enum class EndpointVerdict {
     Unknown,      // nothing probed yet, or no default endpoint
