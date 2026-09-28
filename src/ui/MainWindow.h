@@ -51,6 +51,9 @@ private:
     struct EqBandWidgets {};
 
     void buildUi();
+#ifdef TEEDSP_REMOTE
+    void configureRemoteUi();
+#endif
     QWidget *buildIoSection();
     QWidget *buildEqSection();
     QWidget *buildCompSection();

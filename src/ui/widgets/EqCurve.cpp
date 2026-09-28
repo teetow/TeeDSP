@@ -1257,41 +1257,24 @@ void EqCurve::contextMenuEvent(QContextMenuEvent *e)
 
     emit bandSelected(hit);
 
-    QMenu menu(this);
-    QAction *peak = menu.addAction(QStringLiteral("Peaking"));
-    QAction *lowShelf = menu.addAction(QStringLiteral("Low Shelf"));
-    QAction *highShelf = menu.addAction(QStringLiteral("High Shelf"));
-    peak->setCheckable(true);
-    lowShelf->setCheckable(true);
-    highShelf->setCheckable(true);
-
+    auto *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
     const int type = std::clamp(m_bands[hit].type, 0, 2);
-    peak->setChecked(type == 0);
-    lowShelf->setChecked(type == 1);
-    highShelf->setChecked(type == 2);
-
-    menu.addSeparator();
-    QAction *resetAction = menu.addAction(QStringLiteral("Reset Band"));
-
-    QAction *selected = menu.exec(e->globalPos());
-    if (!selected)
-        return;
-
-    if (selected == resetAction) {
-        emit bandReset(hit);
-        return;
+    const QStringList names{QStringLiteral("Peaking"), QStringLiteral("Low Shelf"), QStringLiteral("High Shelf")};
+    for (int i = 0; i < names.size(); ++i) {
+        auto *action = menu->addAction(names[i]);
+        action->setCheckable(true);
+        action->setChecked(type == i);
+        connect(action, &QAction::triggered, this, [this, hit, i]() {
+            m_bands[hit].type = i;
+            emit bandTypeChanged(hit, i);
+            update();
+        });
     }
-
-    int newType = type;
-    if (selected == peak) newType = 0;
-    else if (selected == lowShelf) newType = 1;
-    else if (selected == highShelf) newType = 2;
-
-    if (newType != type) {
-        m_bands[hit].type = newType;
-        emit bandTypeChanged(hit, newType);
-        update();
-    }
+    menu->addSeparator();
+    connect(menu->addAction(QStringLiteral("Reset Band")), &QAction::triggered,
+            this, [this, hit]() { emit bandReset(hit); });
+    menu->popup(e->globalPos());
 }
 
 } // namespace ui

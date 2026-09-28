@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TeeDSP</title>
+<style>
+html,body{margin:0;background:#191b1f;color:#eee;font:15px system-ui;height:100%}
+#screen{width:100%;min-width:1100px;height:100%;min-height:740px}
+#loading{position:fixed;inset:0;display:grid;place-content:center;background:#191b1f;z-index:10;text-align:center}
+a{color:#72c5a7}#message{max-width:32em}
+</style>
+</head>
+<body>
+<div id="loading"><h1>TeeDSP</h1><p id="message">Loading the editor…</p><a href="/index.html">Open the simple UI</a></div>
+<div id="screen"></div>
+<script src="teedsp-editor.js"></script><script src="qtloader.js"></script>
+<script>
+(async()=>{
+ const loading=document.querySelector('#loading');
+ const failed=message=>{document.querySelector('#message').textContent=message;loading.style.display='grid';};
+ try{
+  window.teedspQt=await qtLoad({qt:{
+   entryFunction:window.teedsp_editor_entry,
+   containerElements:[document.querySelector('#screen')],
+   onLoaded:()=>{loading.style.display='none';document.body.dataset.ready='true';},
+   onExit:()=>failed('The editor stopped. Reload this page to reconnect.')
+  }});
+ }catch(e){failed('Could not load the editor. '+e.message);console.error(e);}
+})();
+</script>
+</body></html>

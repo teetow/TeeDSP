@@ -1,10 +1,21 @@
 #include "MainWindow.h"
+#ifdef TEEDSP_REMOTE
+#include "Client.h"
+#endif
 
 #include "Theme.h"
+#ifndef TEEDSP_REMOTE
 #include "StartupRegistration.h"
+#endif
+#ifndef TEEDSP_REMOTE
 #include "AudioServiceRecovery.h"
+#endif
+#ifndef TEEDSP_REMOTE
 #include "ApoManagerDialog.h"
+#endif
+#ifndef TEEDSP_REMOTE
 #include "TrayController.h"
+#endif
 #include "widgets/EqCurve.h"
 #include "widgets/BipolarGainMeter.h"
 #include "widgets/Knob.h"
@@ -14,9 +25,15 @@
 #include "widgets/WidgetMetrics.h"
 
 #include "../dsp/DspController.h"
+#ifndef TEEDSP_REMOTE
 #include "../host/ApoBindingStatus.h"
+#endif
+#ifndef TEEDSP_REMOTE
 #include "../host/EndpointHealth.h"
+#endif
+#ifndef TEEDSP_REMOTE
 #include "../host/SpectrumAnalyzer.h"
+#endif
 #include "../host/WasapiDevices.h"
 
 #include <QApplication>
@@ -128,6 +145,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_dspController = new dsp::DspController(this);
     m_dspController->loadFromSettings();
 
+#ifndef TEEDSP_REMOTE
     m_analyzer = new host::SpectrumAnalyzer(this);
 
     // First-run defaults: register Start-with-Windows.
@@ -139,6 +157,7 @@ MainWindow::MainWindow(QWidget *parent)
         }
     }
 
+#endif
     setWindowTitle(QStringLiteral("TeeDSP"));
 
     {
@@ -157,14 +176,21 @@ MainWindow::MainWindow(QWidget *parent)
     });
 
     buildUi();
+#ifdef TEEDSP_REMOTE
+    configureRemoteUi();
+#endif
 
+#ifndef TEEDSP_REMOTE
     m_tray = new ui::TrayController(this, this);
     m_tray->setStartWithWindows(ui::startup::isEnabled());
 
+#endif
     connectSignals();
+#ifndef TEEDSP_REMOTE
     refreshDevices();
     restoreSelectedDevices();
 
+#endif
     {
         QSettings s;
         m_showInputSpectrum->setChecked( s.value(QString::fromLatin1(kShowInputSpecKey),  true).toBool());
@@ -191,6 +217,7 @@ MainWindow::MainWindow(QWidget *parent)
     updateUiTimerGate();
 }
 
+#ifndef TEEDSP_REMOTE
 void MainWindow::onSpectrumTick()
 {
     if (!m_analyzer || !m_dspController) return;
@@ -209,6 +236,7 @@ void MainWindow::onSpectrumTick()
     m_analyzer->processPending();
 }
 
+#endif
 MainWindow::~MainWindow()
 {
     if (m_dspController) m_dspController->saveToSettings();
@@ -278,8 +306,10 @@ void MainWindow::updateUiTimerGate()
         && (m_showInputSpectrum->isChecked() || m_showOutputSpectrum->isChecked());
     const bool analyze = active && spectraEnabled;
     if (m_dspController) m_dspController->setEditorVisible(active);
+#ifndef TEEDSP_REMOTE
     if (m_analyzer) m_analyzer->setUiActive(analyze);
     if (analyze) m_spectrumTimer.start(); else m_spectrumTimer.stop();
+#endif
 
     // Keep polling regardless of window visibility: this also drives the
     // tray icon color and tooltip, which are the only feedback available
@@ -325,6 +355,7 @@ void MainWindow::buildUi()
     setCentralWidget(m_central);
 }
 
+#ifndef TEEDSP_REMOTE
 QWidget *MainWindow::buildIoSection()
 {
     auto *section = new QWidget();
@@ -377,6 +408,8 @@ QWidget *MainWindow::buildIoSection()
 
     return section;
 }
+
+#endif
 
 QWidget *MainWindow::buildEqSection()
 {
@@ -927,6 +960,7 @@ void MainWindow::connectSignals()
         QSettings().setValue(QString::fromLatin1(kShowHeatmapKey), on);
     });
 
+#ifndef TEEDSP_REMOTE
     if (m_analyzer) {
         connect(m_analyzer, &host::SpectrumAnalyzer::spectraUpdated,
                 this, [this](QVector<float> inDb, QVector<float> outDb,
@@ -935,10 +969,12 @@ void MainWindow::connectSignals()
         });
     }
 
+#endif
     connect(m_dspController, &dsp::DspController::bypassChanged,    this, &MainWindow::pullStateFromController);
     connect(m_dspController, &dsp::DspController::compressorChanged, this, &MainWindow::pullStateFromController);
     connect(m_dspController, &dsp::DspController::exciterChanged,    this, &MainWindow::pullStateFromController);
     connect(m_dspController, &dsp::DspController::eqChanged,         this, &MainWindow::pullStateFromController);
+    connect(m_dspController, &dsp::DspController::levelerChanged, this, &MainWindow::pullStateFromController);
     connect(m_dspController, &dsp::DspController::meterChanged, this, [this]() {
         const auto setLabelText = [](QLabel *label, QString text) {
             if (label && label->text() != text)
@@ -1105,6 +1141,7 @@ void MainWindow::connectSignals()
         refreshEngineStatus();
     });
 
+#ifndef TEEDSP_REMOTE
     if (m_tray) {
         connect(m_tray, &ui::TrayController::bypassToggled, this, [this](bool b) {
             m_dspController->setBypass(b);
@@ -1119,6 +1156,7 @@ void MainWindow::connectSignals()
         connect(m_dspController, &dsp::DspController::bypassChanged,
                 this, [this]() { m_tray->setBypass(m_dspController->bypass()); });
     }
+#endif
 }
 
 void MainWindow::pullStateFromController()
@@ -1212,6 +1250,7 @@ void MainWindow::syncSelectedBandDyn()
     m_syncingUi = was;
 }
 
+#ifndef TEEDSP_REMOTE
 void MainWindow::refreshDevices()
 {
     // Use QSettings as the authoritative preference source — not the combo's
@@ -1516,3 +1555,5 @@ void MainWindow::onManageApoRequested()
     ui::ApoManagerDialog dlg(this);
     dlg.exec();
 }
+
+#endif

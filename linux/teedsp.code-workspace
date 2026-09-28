@@ -1,0 +1,24 @@
+{
+  "folders": [
+    { "name": "TeeDSP Linux", "path": "." },
+    { "name": "Shared DSP", "path": "../src/dsp" }
+  ],
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "docker: rebuild and up",
+        "detail": "On CM3588: tear down, rebuild, and relaunch TeeDSP detached",
+        "type": "shell",
+        "command": "docker compose down --remove-orphans && docker compose up -d --build",
+        "options": { "cwd": "${workspaceFolder:TeeDSP Linux}/.." },
+        "group": { "kind": "build", "isDefault": true },
+        "problemMatcher": [],
+        "presentation": {
+          "panel": "shared", "reveal": "always", "clear": true,
+          "close": false, "showReuseMessage": false
+        }
+      }
+    ]
+  }
+}

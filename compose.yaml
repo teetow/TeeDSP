@@ -1,0 +1,30 @@
+services:
+  teedsp:
+    build:
+      context: .
+      dockerfile: linux/Dockerfile
+    container_name: teedsp
+    restart: unless-stopped
+    init: true
+    user: "1001:1001"
+    env_file: .env
+    ports:
+      - "8790:8080"
+    environment:
+      XDG_RUNTIME_DIR: /run/user/1001
+      TEEDSP_SOURCE: shairport-sync
+      TEEDSP_SINK: alsa_output.usb-Roland_EDIROL_UA-25-00.analog-stereo
+    volumes:
+      - /run/user/1001:/run/user/1001:ro
+      - ./linux/data:/data
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

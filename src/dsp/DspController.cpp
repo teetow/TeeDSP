@@ -1,4 +1,7 @@
 #include "DspController.h"
+#ifdef TEEDSP_REMOTE
+#include "Client.h"
+#endif
 
 #include "shared/TeeDspParams.h"
 
@@ -34,10 +37,26 @@ DspController::DspController(QObject *parent)
     // Default state reaches the APO via the 20 Hz syncApo timer below
     // (m_apoDirty starts true), which writes the snapshot + persisted file.
 
+#ifdef TEEDSP_REMOTE
+    m_apoDirty = false;
+    m_remote = new remote::Client(this);
+    connect(m_remote, &remote::Client::parametersReceived, this, [this](const ChainParams &p) {
+        m_loadingSettings = true;
+        applySnapshot(p);
+        m_loadingSettings = false;
+        m_apoDirty = false;
+    });
+    connect(m_remote, &remote::Client::metersReceived, this, [this]() {
+        m_meterSnapshot = m_remote->meterSnapshot();
+    });
+#endif
+
     m_meterTimer.setInterval(kMeterIntervalMs);
     m_meterTimer.setTimerType(Qt::CoarseTimer);
     connect(&m_meterTimer, &QTimer::timeout, this, [this]() {
+#ifndef TEEDSP_REMOTE
         m_apo.readMeters(m_meterSnapshot);
+#endif
         emit meterChanged();
     });
     m_meterTimer.start();
@@ -59,11 +78,36 @@ DspController::DspController(QObject *parent)
     // Mirror every committed change to the system-wide APO inside audiodg, and
     // run a 20 Hz heartbeat so the APO processes while we're alive and bypasses
     // when we're gone. The section opens lazily once the APO has created it.
-    connect(this, &DspController::bypassChanged,     this, [this]{ m_apoDirty = true; });
-    connect(this, &DspController::compressorChanged, this, [this]{ m_apoDirty = true; });
-    connect(this, &DspController::exciterChanged,    this, [this]{ m_apoDirty = true; });
-    connect(this, &DspController::eqChanged,         this, [this]{ m_apoDirty = true; });
-    connect(this, &DspController::levelerChanged,    this, [this]{ m_apoDirty = true; });
+    connect(this, &DspController::bypassChanged,     this, [this]{
+        m_apoDirty = true;
+#ifdef TEEDSP_REMOTE
+        syncApo();
+#endif
+    });
+    connect(this, &DspController::compressorChanged, this, [this]{
+        m_apoDirty = true;
+#ifdef TEEDSP_REMOTE
+        syncApo();
+#endif
+    });
+    connect(this, &DspController::exciterChanged,    this, [this]{
+        m_apoDirty = true;
+#ifdef TEEDSP_REMOTE
+        syncApo();
+#endif
+    });
+    connect(this, &DspController::eqChanged,         this, [this]{
+        m_apoDirty = true;
+#ifdef TEEDSP_REMOTE
+        syncApo();
+#endif
+    });
+    connect(this, &DspController::levelerChanged,    this, [this]{
+        m_apoDirty = true;
+#ifdef TEEDSP_REMOTE
+        syncApo();
+#endif
+    });
     m_apoTimer.setInterval(kApoForegroundIntervalMs);
     connect(&m_apoTimer, &QTimer::timeout, this, &DspController::syncApo);
     m_apoTimer.start();
@@ -72,12 +116,20 @@ DspController::DspController(QObject *parent)
 host::ApoSharedClient::ApoStatus DspController::apoStatus()
 {
     host::ApoSharedClient::ApoStatus s;
+#ifndef TEEDSP_REMOTE
     m_apo.readStatus(s);
+#endif
     return s;
 }
 
 void DspController::syncApo()
 {
+#ifdef TEEDSP_REMOTE
+    if (m_apoDirty && !m_loadingSettings && m_remote->ready()) {
+        m_remote->submit(buildSnapshot());
+        m_apoDirty = false;
+    }
+#else
     // Open the live section lazily; force a push when it first appears.
     const bool justOpened = !m_apo.isOpen() && m_apo.tryOpen();
     if (justOpened) m_apoDirty = true;
@@ -89,10 +141,12 @@ void DspController::syncApo()
         m_apoDirty = false;
     }
     if (m_apo.isOpen()) m_apo.heartbeat();
+#endif
 }
 
 void DspController::writeParamsFile(const ChainParams &p) const
 {
+#ifndef TEEDSP_REMOTE
     const QString path = QString::fromWCharArray(teedsp::kApoParamsPath);
     QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile f(path);                 // atomic: temp file + rename on commit
@@ -101,6 +155,9 @@ void DspController::writeParamsFile(const ChainParams &p) const
     f.write(reinterpret_cast<const char *>(&magic), sizeof(magic));
     f.write(reinterpret_cast<const char *>(&p), sizeof(p));
     f.commit();
+#else
+    Q_UNUSED(p);
+#endif
 }
 
 void DspController::setMeterTimerActive(bool active)
@@ -296,7 +353,11 @@ float DspController::apoOutLufsM() const
 
 void DspController::drainApoAudio(std::vector<float> &pre, std::vector<float> &post)
 {
+#ifndef TEEDSP_REMOTE
     m_apo.drainAudio(pre, post);
+#else
+    pre.clear(); post.clear();
+#endif
 }
 
 bool DspController::exciterEnabled() const { return m_exciterEnabled; }
@@ -567,6 +628,10 @@ void DspController::applySnapshot(const ChainParams &params)
 
 void DspController::loadFromSettings()
 {
+#ifdef TEEDSP_REMOTE
+    m_remote->start();
+    return;
+#endif
     m_loadingSettings = true;
     ChainParams params = defaultParams();
 
@@ -649,6 +714,9 @@ void DspController::resetToDefaults()
 
 void DspController::saveToSettings() const
 {
+#ifdef TEEDSP_REMOTE
+    return; // The service persists accepted edits; browser defaults never overwrite it.
+#endif
     QSettings settings;
     settings.beginGroup(kSettingsGroup);
 

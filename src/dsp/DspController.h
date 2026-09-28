@@ -13,6 +13,8 @@
 #include "shared/TeeDspParams.h"   // teedsp::kBandCount
 
 
+namespace remote { class Client; }
+
 namespace dsp {
 
 // Band count, mirrored from the shared param contract. Kept as a dsp:: name so
@@ -77,6 +79,9 @@ public:
     explicit DspController(QObject *parent = nullptr);
 
     ChainParams buildSnapshot() const;
+#ifdef TEEDSP_REMOTE
+    remote::Client *remoteClient() const { return m_remote; }
+#endif
 
     // Live state of the system-wide APO (for the UI status line). Reflects what
     // audiodg actually reports, not what the controller thinks.
@@ -209,7 +214,11 @@ private:
     bool m_loadingSettings = false;
 
     // System-wide APO bridge (shared memory to audiodg).
+#ifdef TEEDSP_REMOTE
+    remote::Client *m_remote = nullptr;
+#else
     host::ApoSharedClient m_apo;
+#endif
     host::ApoSharedClient::ApoMeters m_meterSnapshot;
     QTimer m_apoTimer;
     bool m_apoDirty = true;   // force an initial push once the section opens

@@ -1,0 +1,10 @@
+*
+!src/
+!src/**
+!plugin/
+!plugin/**
+!tests/
+!tests/**
+!linux/
+!linux/**
+linux/data/

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TeeDSP</title>
+<link rel="stylesheet" href="/style.css">
+<main>
+  <header><div><span class="eyebrow">CM3588 · AIRPLAY</span><h1>TeeDSP<span> / live</span></h1></div><button id="bypass" disabled>Connecting…</button></header>
+  <div style="display:flex;gap:12px;align-items:center;margin:12px 0"><label for="master">Master volume</label><input id="master" type="range" min="0" max="100" value="0" style="max-width:300px"><output id="masterValue">—</output><button id="mute" class="off">Mute</button></div>
+  <div class="status"><span id="connection">Connecting to the audio engine…</span><span id="saved" role="status"></span></div>
+  <section class="analyzer">
+    <div class="plot-heading"><span>Frequency spectrum</span><span><i class="pre"></i> Input <i class="post"></i> Output</span></div>
+    <canvas id="spectrum" aria-label="Live input and output frequency spectrum"></canvas>
+    <div class="axis"><span>20 Hz</span><span style="position:absolute;left:23.3%;transform:translateX(-50%)">100 Hz</span><span style="position:absolute;left:56.6%;transform:translateX(-50%)">1 kHz</span><span style="position:absolute;left:90%;transform:translateX(-50%)">10 kHz</span><span>20 kHz</span></div>
+    <canvas id="waterfall" aria-label="Live output spectrogram"></canvas>
+    <div id="meters">Waiting for audio</div>
+  </section>
+  <div id="controls"></div>
+  <footer>Settings save automatically. Audio keeps running when this page is closed.<br><span id="footerStatus">AirPlay → TeeDSP → EDIROL UA-25</span></footer>
+</main>
+<script src="/app.js"></script>
+</html>

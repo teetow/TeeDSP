@@ -45,3 +45,10 @@ scripts/install_apo.system.log
 scripts/uninstall_apo.last.log
 scripts/installed_endpoint.txt
 scripts/installed_endpoint.json
+
+# Headless Linux runtime state
+linux/data/
+linux/__pycache__/
+linux/tests/__pycache__/
+.env
+linux/web/qt/

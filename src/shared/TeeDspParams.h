@@ -104,7 +104,7 @@ struct ParamDescriptor {
     { (BASE) + BF_Enabled,      "EQ Band " #N, "Enabled",       0.0,    1.0,    1.0, true  }, \
     { (BASE) + BF_Type,         "EQ Band " #N, "Type",          0.0,    2.0,  DEFTYPE, true  }, \
     { (BASE) + BF_Freq,         "EQ Band " #N, "Frequency",    10.0, 20000.0, DEFFREQ, false }, \
-    { (BASE) + BF_Q,            "EQ Band " #N, "Q",             0.05,   10.0,   0.7, false }, \
+    { (BASE) + BF_Q,            "EQ Band " #N, "Q",             0.05,   20.0,   0.7, false }, \
     { (BASE) + BF_Gain,         "EQ Band " #N, "Gain",        -24.0,   24.0,   0.0, false }, \
     { (BASE) + BF_DynThreshold, "EQ Band " #N, "Dyn Threshold",-60.0,   0.0,   0.0, false }, \
     { (BASE) + BF_DynRatio,     "EQ Band " #N, "Dyn Ratio",     1.0,   20.0,   2.0, false }, \
@@ -126,7 +126,7 @@ inline constexpr ParamDescriptor kParams[] = {
     { PID_CompKnee,             "Compressor", "Knee",            0.0,   24.0,   6.0, false },
     { PID_CompAttack,           "Compressor", "Attack",          0.1,  200.0,  10.0, false },
     { PID_CompRelease,          "Compressor", "Release",         1.0, 3000.0, 120.0, false },
-    { PID_CompMakeup,           "Compressor", "Makeup",          0.0,   12.0,   0.0, false },
+    { PID_CompMakeup,           "Compressor", "Makeup",        -12.0,   12.0,   0.0, false },
     { PID_ExciterEnabled,       "Exciter",    "Enabled",         0.0,    1.0,   1.0, true  },
     { PID_ExciterDrive,         "Exciter",    "Drive",           0.0,   20.0,   2.0, false },
     { PID_ExciterMix,           "Exciter",    "Mix",             0.0,    1.0,  0.25, false },
