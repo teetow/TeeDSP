@@ -36,7 +36,9 @@ bash scripts/deploy-cm3588.sh rollback
 
 The release tag combines the source commit and browser-bundle hash. The active
 and previous tags are recorded in ignored `linux/data/deploy-state`; the old
-Docker image stays tagged for rollback. The deployment checkout must be clean
+Docker image stays tagged for rollback. Running rollback a second time returns
+to the newer release. Re-deploying an already active release leaves it running
+and keeps the previous image available. The deployment checkout must be clean
 apart from ignored runtime files. `.env`, `linux/data/params.json`, and
 `linux/data/volume.json` stay on the host across releases. The original Windows
 workspace and APO deployment are separate.

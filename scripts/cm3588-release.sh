@@ -16,7 +16,7 @@ wait_for_release() {
     for ((attempt=0; attempt<45; ++attempt)); do
         image=$(docker inspect --format '{{.Config.Image}}' teedsp 2>/dev/null || true)
         if [[ "$image" == "teedsp:$tag" ]] && curl -fsS --max-time 3 \
-            http://127.0.0.1:8790/api/health >/dev/null; then
+            http://127.0.0.1:8790/api/health >/dev/null 2>&1; then
             return 0
         fi
         sleep 2
@@ -58,6 +58,11 @@ case "${1:-}" in
         # Compose-generated tag, so give that image a durable TeeDSP tag.
         old_image=$(docker inspect --format '{{.Image}}' teedsp)
         old_ref=$(docker inspect --format '{{.Config.Image}}' teedsp)
+        if [[ "$old_ref" == "teedsp:$new_tag" ]]; then
+            wait_for_release "$new_tag"
+            echo "Already active: teedsp:$new_tag"
+            exit 0
+        fi
         if [[ "$old_ref" == teedsp:* ]] && docker image inspect "$old_ref" >/dev/null 2>&1; then
             old_tag=${old_ref#teedsp:}
         else
