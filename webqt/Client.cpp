@@ -9,7 +9,7 @@
 #endif
 
 namespace remote {
-Client::Client(QObject *parent):QObject(parent) {
+Client::Client(QObject *parent):editor::Transport(parent) {
     m_meterTimer.setInterval(50);
     connect(&m_meterTimer,&QTimer::timeout,this,[this] {
         sendPending();sendVolume();
@@ -18,7 +18,18 @@ Client::Client(QObject *parent):QObject(parent) {
         request("meters",nullptr,[this](bool ok,QJsonObject o) {
             m_gettingMeters=false;
             if (!ok) return;
-            meters=o; m_lastMeter.restart(); emit metersReceived();
+            meterData=o; m_lastMeter.restart(); emit metersReceived();
+            if(m_spectrumVisible) {
+                const auto convert=[](QJsonArray a) {
+                    QVector<float> v;v.reserve(a.size());
+                    for(auto x:a)v.append(x.toDouble(-120));
+                    return v;
+                };
+                const auto input=convert(o["input"].toArray());
+                const auto output=convert(o["output"].toArray());
+                emit spectraUpdated(input,output,o["sampleRate"].toDouble(48000),
+                                    input.size()>1 ? (input.size()-1)*2 : 0);
+            }
         });
     });
     m_stateTimer.setInterval(500);
@@ -107,24 +118,30 @@ void Client::sendVolume() {
 QString Client::statusText() const {
     if(!m_error.isEmpty()) return m_error;
     if(!m_ready || !connected()) return "Connecting to CM3588…";
-    if(!meters["route"].toObject()["routed"].toBool()) return "Waiting for AirPlay routing";
-    return QString("CM3588 • AirPlay → TeeDSP → UA-25 • 48 kHz • %1 frames").arg(meters["quantum"].toInt());
+    if(!meterData["route"].toObject()["routed"].toBool()) return "Waiting for AirPlay routing";
+    return QString("CM3588 • AirPlay → TeeDSP → UA-25 • 48 kHz • %1 frames").arg(meterData["quantum"].toInt());
 }
-host::ApoSharedClient::ApoMeters Client::meterSnapshot() const {
-    host::ApoSharedClient::ApoMeters m;
+editor::Meters Client::meters() const {
+    editor::Meters m;
     if(!connected()) return m;
     const auto array=[this](const char *name,auto &out,float fallback=0.f) {
-        const auto a=meters[name].toArray();
+        const auto a=meterData[name].toArray();
         for(unsigned i=0;i<std::size(out);++i) out[i]=a[int(i)].toDouble(fallback);
     };
     array("inPeakDbfs",m.inPeakDbfs,-120);array("outPeakDbfs",m.outPeakDbfs,-120);
     array("outLufsCh",m.outLufsCh,-120);array("bandGrDb",m.bandGrDb);
     array("spectralGain",m.spectralGainDb);
-    m.outRmsDbfs=meters["outRmsDbfs"].toDouble(-120);
-    m.outLufsM=meters["outLufsM"].toDouble(-120);
-    m.compGrDb=meters["compression"].toDouble();
-    m.levelerGainDb=meters["inputGain"].toDouble();
-    m.outLevelerGainDb=meters["outputGain"].toDouble();
+    m.outRmsDbfs=meterData["outRmsDbfs"].toDouble(-120);
+    m.outLufsM=meterData["outLufsM"].toDouble(-120);
+    m.compGrDb=meterData["compression"].toDouble();
+    m.levelerGainDb=meterData["inputGain"].toDouble();
+    m.outLevelerGainDb=meterData["outputGain"].toDouble();
     return m;
 }
+void Client::flush() {sendPending();sendVolume();}
+void Client::setEditorVisible(bool visible) {m_meterTimer.setInterval(visible ? 50 : 200);}
+void Client::setSpectrumVisible(bool visible) {m_spectrumVisible=visible;}
+}
+namespace editor {
+Transport *createTransport(QObject *parent) {return new remote::Client(parent);}
 }

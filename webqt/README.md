@@ -2,8 +2,8 @@
 
 The browser builds the existing `MainWindow`, `DspController`, theme and all six
 custom widgets with Qt 6.10.1 / Emscripten 4.0.7. This is WebAssembly with a small
-HTML/JS loader, not a second implementation of the EQ. `TEEDSP_REMOTE` substitutes
-HTTP parameter/telemetry transport for Windows shared memory. Audio stays in the
+HTML/JS loader, not a second implementation of the EQ. The editor model uses an
+HTTP transport in the browser and an APO transport on Windows. Audio stays in the
 ARM64 PipeWire service, including when the page closes.
 
 At `http://teedsp.local/` the service redirects to `/qt/index.html` when the compiled
@@ -65,8 +65,9 @@ on ARM64. No Windows APO deployment is involved.
 ## Verification
 
 `tests/params.cpp` checks all 69 IDs at defaults and both limits, plus gesture
-clamping. Configure `webqt/tests` with the desktop Qt SDK as `CMAKE_PREFIX_PATH`,
-build, and run CTest.
+clamping. `tests/editor-model.cpp` checks transport initialization, persistence
+handoff, and updates from another client. Configure `webqt/tests` with the desktop
+Qt SDK as `CMAKE_PREFIX_PATH`, build, and run CTest.
 
 `tests/browser.cjs` runs the actual Wasm editor in Chromium against an intercepted
 API: it never changes live audio settings. It covers startup without writes,

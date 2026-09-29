@@ -27,9 +27,8 @@ FetchContent_Declare(clap
 FetchContent_MakeAvailable(clap)
 
 # ---------------------------------------------------------------------------
-# teedsp_dsp — the Qt-free DSP core. Linked only by the CLAP plugin now; the
-# app no longer runs DSP inline (it hosts teedsp.clap). DspController is not
-# here: it's a QObject param model and belongs to the host/UI side.
+# teedsp_dsp — the Qt-free DSP core. Linked by the APO and CLAP plugin.
+# DspController is a Qt parameter model in the shared editor, not part of DSP.
 # ---------------------------------------------------------------------------
 add_library(teedsp_dsp STATIC
 	src/dsp/Compressor.cpp
@@ -50,8 +49,12 @@ if(BUILD_TESTING)
 	add_subdirectory(tests)
 endif()
 
-set(DSP_SOURCES
-	src/dsp/DspController.cpp
+set(EDITOR_SOURCES
+	src/editor/Transport.h
+	src/editor/ApoTransport.cpp
+	src/editor/ApoTransport.h
+	src/editor/DspController.cpp
+	src/editor/DspController.h
 )
 
 # APO-era editor: no capture/render engine, no in-app CLAP host. Only device
@@ -70,6 +73,7 @@ set(HOST_SOURCES
 set(UI_SOURCES
 	src/ui/main.cpp
 	src/ui/MainWindow.cpp
+	src/ui/MainWindowWindows.cpp
 	src/ui/Theme.cpp
 	src/ui/StartupRegistration.cpp
 	src/ui/AudioServiceRecovery.cpp
@@ -86,7 +90,7 @@ set(UI_SOURCES
 
 add_executable(TeeDsp WIN32
 	${UI_SOURCES}
-	${DSP_SOURCES}
+	${EDITOR_SOURCES}
 	${HOST_SOURCES}
 	src/ui/app.rc
 )

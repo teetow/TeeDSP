@@ -9,6 +9,7 @@
 // the next APO instance attaches to it and preserves the UI's params.
 
 #include "shared/TeeDspApoShared.h"
+#include "editor/Transport.h"
 
 #include <cstddef>
 #include <vector>
@@ -46,21 +47,7 @@ public:
     bool readStatus(ApoStatus &out) const;  // returns out.open
 
     // Live meters published by the APO (dBFS / dB). Defaults are silence / no GR.
-    struct ApoMeters {
-        static constexpr std::size_t kSpectralBandCount =
-            sizeof(teedsp::ApoShared::spectralGainDb) / sizeof(float);
-
-        float inPeakDbfs[2]  = { -120.0f, -120.0f };
-        float outPeakDbfs[2] = { -120.0f, -120.0f };
-        float outRmsDbfs     = -120.0f;
-        float compGrDb       = 0.0f;
-        float levelerGainDb  = 0.0f;
-        float spectralGainDb[kSpectralBandCount] = {};
-        float outLevelerGainDb = 0.0f;
-        float bandGrDb[5]    = { 0, 0, 0, 0, 0 };
-        float outLufsCh[2]   = { -120.0f, -120.0f };
-        float outLufsM       = -120.0f;
-    };
+    using ApoMeters = editor::Meters;
     bool readMeters(ApoMeters &out) const;  // false if the section isn't open
 
     // Drain mono pre/post samples published by the APO since the last call, in

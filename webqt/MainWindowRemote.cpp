@@ -1,5 +1,5 @@
 #include "ui/MainWindow.h"
-#include "dsp/DspController.h"
+#include "editor/DspController.h"
 #include "Client.h"
 #include "ui/widgets/EqCurve.h"
 #include "ui/widgets/Knob.h"
@@ -26,7 +26,7 @@ QWidget *MainWindow::buildIoSection() {
     auto *value=new QLabel("0%");value->setMinimumWidth(40);
     auto *mute=new QPushButton("Mute");mute->setCheckable(true);mute->setObjectName("masterMute");
     row->addWidget(slider);row->addWidget(value);row->addWidget(mute);
-    auto *client=m_dspController->remoteClient();
+    auto *client=static_cast<remote::Client*>(m_dspController->transport());
     connect(slider,&QSlider::valueChanged,this,[client,value](int v) {
         value->setText(QString::number(v)+"%");client->setVolume({{"volume",v}});
     });
@@ -40,26 +40,17 @@ QWidget *MainWindow::buildIoSection() {
         mute->setChecked(client->volume["muted"].toBool());
         mute->setText(mute->isChecked()?"Unmute":"Mute");
     });
-    connect(client,&remote::Client::metersReceived,this,[this,client] {
-        if(!m_eqCurve) return;
-        const auto convert=[](QJsonArray a) {QVector<float> v;v.reserve(a.size());for(auto x:a)v.append(x.toDouble(-120));return v;};
-        const auto in=convert(client->meters["input"].toArray());
-        const auto out=convert(client->meters["output"].toArray());
-        m_eqCurve->setSpectra(in,out,client->meters["sampleRate"].toDouble(48000),(in.size()-1)*2);
-    });
     m_statusLabel=new QLabel("Connecting to CM3588…");statusBar()->addWidget(m_statusLabel,1);
     m_dspBuildLabel=new QLabel("Qt web editor");statusBar()->addPermanentWidget(m_dspBuildLabel);
     return section;
 }
 void MainWindow::refreshEngineStatus() {
-    auto *client=m_dspController->remoteClient();
+    auto *client=static_cast<remote::Client*>(m_dspController->transport());
     m_statusLabel->setText(client->statusText());
     m_central->setEnabled(client->ready() && client->connected());
 }
-void MainWindow::onSpectrumTick() {} // Service supplies analyzed spectra.
-void MainWindow::saveSelectedDevices() const {}
 
-void MainWindow::configureRemoteUi() {
+void MainWindow::platformSetup() {
     // Server/CLAP ranges are the contract; include valid values saved by the
     // simple UI even where the original Windows knobs had narrower travel.
     const auto range=[](ui::Knob *knob,unsigned id,ui::Knob::Scale scale=ui::Knob::Scale::Linear) {
@@ -72,3 +63,9 @@ void MainWindow::configureRemoteUi() {
     range(m_compMakeup,teedsp::PID_CompMakeup);
     range(m_exciterTone,teedsp::PID_ExciterTone,ui::Knob::Scale::Log);
 }
+
+void MainWindow::initializePlatform() {}
+void MainWindow::connectPlatformSignals() {}
+void MainWindow::savePlatformState() const {}
+void MainWindow::cleanupPlatform() {}
+bool MainWindow::handleClose(QCloseEvent *) {return false;}

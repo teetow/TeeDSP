@@ -1,12 +1,10 @@
 #pragma once
 
-#include "../host/WasapiDevices.h"
 
 #include <QMainWindow>
 #include <QTimer>
 #include <QVector>
 
-#include <vector>
 
 class QLabel;
 class QPushButton;
@@ -18,16 +16,11 @@ namespace dsp {
 class DspController;
 }
 
-namespace host {
-class SpectrumAnalyzer;
-}
-
 namespace ui {
 class Knob;
 class LevelMeter;
 class SpectralGainMeter;
 class EqCurve;
-class TrayController;
 class BipolarGainMeter;
 }
 
@@ -51,9 +44,6 @@ private:
     struct EqBandWidgets {};
 
     void buildUi();
-#ifdef TEEDSP_REMOTE
-    void configureRemoteUi();
-#endif
     QWidget *buildIoSection();
     QWidget *buildEqSection();
     QWidget *buildCompSection();
@@ -65,6 +55,12 @@ private:
 
     void connectSignals();
     void pullStateFromController();
+    void platformSetup();
+    void initializePlatform();
+    void connectPlatformSignals();
+    void savePlatformState() const;
+    void cleanupPlatform();
+    bool handleClose(QCloseEvent *event);
     void refreshDevices();
     void syncDevicePickerToDefaultOutput(const QString &deviceId);
     void refreshEngineStatus();
@@ -75,8 +71,7 @@ private:
     // selected band — used on band-selection changes to avoid a full UI sync.
     void syncSelectedBandDyn();
 
-    // Switches analyzer, meter, status, and APO-control polling between visible
-    // and tray behavior.
+    // Switches analyzer, meter and status polling with window visibility.
     void updateUiTimerGate();
 
     QString selectedCaptureDeviceId() const;
@@ -87,12 +82,6 @@ private:
 
     QComboBox *m_captureDevice = nullptr;
     QLabel *m_statusLabel = nullptr;
-    // Shown when Windows has disabled endpoint effects or audio reaches the
-    // output without the TeeDSP APO processing. The action enables effects or
-    // restarts Audiosrv, respectively.
-    QPushButton *m_recoveryButton = nullptr;
-    bool m_effectsEnableNeeded = false;
-    QPushButton *m_manageApoButton = nullptr;
     QLabel *m_dspBuildLabel = nullptr;
 
     QProgressBar *m_inputMeterBarL = nullptr;
@@ -154,11 +143,9 @@ private:
 
 
     dsp::DspController *m_dspController = nullptr;
-    ui::TrayController *m_tray = nullptr;
-
-    QList<host::DeviceInfo> m_outputDevices;
+    struct PlatformState;
+    PlatformState *m_platform = nullptr;
     bool m_syncingUi = false;
-    bool m_quitting = false;
 
     // Coalesces resize/move events into a single QSettings write a moment
     // after the user stops dragging. Without this, geometry would only persist
@@ -167,7 +154,7 @@ private:
 
     // Smoothed meter state. Each tick: instant attack, exponential release
     // with kMeterReleaseTauMs time-constant. Avoids alternating -inf frames
-    // when meter polling outpaces the WASAPI packet rate.
+    // when meter polling outpaces processor updates.
     float m_dispInPeakDbfs = -120.0f;
     float m_dispInPeakDbfsR = -120.0f;
     float m_dispOutPeakDbfs = -120.0f;
@@ -179,23 +166,5 @@ private:
     qint64 m_lastMeterTickMs = 0;
     int m_outputHotState = -1;
 
-    // Polls the APO's shared telemetry to drive the status line (and tray text),
-    // independent of the engine — the engine is retired from the APO path.
-    QTimer m_apoStatusTimer;
-    unsigned long long m_lastApoProcessCalls = 0;
-    // After a restart is triggered, suppress detection until this wall-clock ms
-    // so we don't re-accuse the engine during the service-restart gap. The
-    // sustain counters that decide when a fault is real live in the endpoint
-    // health model, not here — see host/EndpointHealth.h.
-    qint64 m_recoverySuppressUntilMs = 0;
-
-    // Spectrum: drain the APO's pre/post sample ring and feed the analyzer
-    // (whose spectraUpdated drives the EqCurve overlay + heatmap).
-    void onSpectrumTick();
-    host::SpectrumAnalyzer *m_analyzer = nullptr;
-    QTimer m_spectrumTimer;
-    bool   m_analyzerStarted = false;
-    double m_analyzerSr = 0.0;
-    std::vector<float> m_specPre;
-    std::vector<float> m_specPost;
+    QTimer m_statusTimer;
 };

@@ -7,18 +7,16 @@
 #include <array>
 #include <vector>
 
-#include "ChainParams.h"
-#include "SpectralLeveler.h"       // dsp::SpectralLeveler::kBandCount
-#include "host/ApoSharedClient.h"
+#include "dsp/ChainParams.h"
+#include "dsp/SpectralLeveler.h"       // dsp::SpectralLeveler::kBandCount
+#include "editor/Transport.h"
 #include "shared/TeeDspParams.h"   // teedsp::kBandCount
 
-
-namespace remote { class Client; }
 
 namespace dsp {
 
 // Band count, mirrored from the shared param contract. Kept as a dsp:: name so
-// existing call sites read unchanged; the DSP itself now runs in the system APO.
+// existing call sites read unchanged; processing runs in a platform host.
 inline constexpr int kEqBandCount = teedsp::kBandCount;
 inline constexpr int kSpectralLevelerBandCount = SpectralLeveler::kBandCount;
 
@@ -39,11 +37,8 @@ struct EqBandView {
     float dynGainReductionDb;
 };
 
-// QObject param model for the UI. Owns the canonical copy of every parameter,
-// persists every change to the params file (the always-on baseline the APO
-// loads at stream start), pushes it live through the APO shared block when one
-// is open, and pulls status/metering back the same way (ApoSharedClient). The
-// DSP itself runs inside the system APO in audiodg, not here.
+// Shared editable view of the processor. A transport owns persistence,
+// delivery and telemetry for its platform.
 class DspController : public QObject
 {
     Q_OBJECT
@@ -79,23 +74,14 @@ public:
     explicit DspController(QObject *parent = nullptr);
 
     ChainParams buildSnapshot() const;
-#ifdef TEEDSP_REMOTE
-    remote::Client *remoteClient() const { return m_remote; }
-#endif
+    editor::Transport *transport() const { return m_transport; }
 
-    // Live state of the system-wide APO (for the UI status line). Reflects what
-    // audiodg actually reports, not what the controller thinks.
-    host::ApoSharedClient::ApoStatus apoStatus();
-
-    // Live pre/post level meters published by the APO (dBFS). ch: 0=L, 1=R.
-    float apoInPeakDbfs(int ch) const;
-    float apoOutPeakDbfs(int ch) const;
-    float apoOutRmsDbfs() const;
-    float apoOutLufs(int ch) const;   // per-channel momentary LUFS
-    float apoOutLufsM() const;        // combined momentary LUFS
-
-    // Drain new mono pre/post samples from the APO for the spectrum analyzer.
-    void drainApoAudio(std::vector<float> &pre, std::vector<float> &post);
+    // Live meter snapshot in dBFS / LUFS. ch: 0=L, 1=R.
+    float inPeakDbfs(int ch) const;
+    float outPeakDbfs(int ch) const;
+    float outRmsDbfs() const;
+    float outLufs(int ch) const;   // per-channel momentary LUFS
+    float outLufsM() const;        // combined momentary LUFS
 
     bool bypass() const;
     void setBypass(bool b);
@@ -168,8 +154,8 @@ public:
     Q_INVOKABLE void resetBandEqToDefaults(int band);
     Q_INVOKABLE void resetToDefaults();
 
-    void loadFromSettings();
-    void saveToSettings() const;
+    void start();
+    void flush();
 
     // Pauses/resumes the meter tick. Used by the UI to silence the ~60 Hz
     // meter→widget repaint chain while the window is hidden or minimized.
@@ -177,20 +163,11 @@ public:
     // current atomic state on the next tick after resume.
     void setMeterTimerActive(bool active);
 
-    // Switches editor-side polling between foreground and tray cadences.
-    // The APO heartbeat remains alive in the background so tray parameter
-    // changes still apply, but it does not need foreground-rate wakeups.
+    // Switches transport polling between visible and background cadences.
     void setEditorVisible(bool visible);
 
 private slots:
-    // Coalesces rapid changes (knob drags, etc.) into a single write a short
-    // moment after the user stops twiddling. Suppressed during loadFromSettings.
-    void scheduleSave();
-
-    // Pushes params to the system-wide APO (inside audiodg) over shared memory
-    // and pulses its liveness heartbeat. Opens the section lazily once the APO
-    // has created it (i.e., once audio has hit that endpoint).
-    void syncApo();
+    void submitChanges();
 
 signals:
     void bypassChanged();
@@ -202,26 +179,14 @@ signals:
 
 private:
     void applySnapshot(const ChainParams &params);
-    // Persist params for the always-on APO (atomic write to ProgramData).
-    void writeParamsFile(const ChainParams &p) const;
-
-    // Local source-of-truth for EQ band params. The DSP lives in the APO; the
-    // controller owns the canonical params, pushes changes to the APO (shared
-    // block + persisted file), and reads telemetry back from it.
+    // Editable EQ band cache; the transport delivers snapshots and telemetry.
     EqBandParams      m_eqBands[kEqBandCount];
     QTimer m_meterTimer;
-    QTimer m_saveDebounceTimer;
     bool m_loadingSettings = false;
-
-    // System-wide APO bridge (shared memory to audiodg).
-#ifdef TEEDSP_REMOTE
-    remote::Client *m_remote = nullptr;
-#else
-    host::ApoSharedClient m_apo;
-#endif
-    host::ApoSharedClient::ApoMeters m_meterSnapshot;
-    QTimer m_apoTimer;
-    bool m_apoDirty = true;   // force an initial push once the section opens
+    editor::Transport *m_transport = nullptr;
+    editor::Meters m_meterSnapshot;
+    QTimer m_submitTimer;
+    bool m_dirty = false;
 
     bool m_bypass = false;
     float m_inputTrimDb = 0.0f;
