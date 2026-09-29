@@ -50,6 +50,10 @@ void MainWindow::refreshEngineStatus() {
     m_central->setEnabled(client->ready() && client->connected());
 }
 
+// Qt WebAssembly crashes while restoring its saved geometry on a later visit.
+// The browser window fills the page, so the geometry has no useful meaning.
+bool MainWindow::persistWindowGeometry() const { return false; }
+
 void MainWindow::platformSetup() {
     // Server/CLAP ranges are the contract; include valid values saved by the
     // simple UI even where the original Windows knobs had narrower travel.

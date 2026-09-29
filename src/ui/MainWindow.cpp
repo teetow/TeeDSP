@@ -116,20 +116,18 @@ MainWindow::MainWindow(QWidget *parent)
 
     setWindowTitle(QStringLiteral("TeeDSP"));
 
-    {
-        QSettings s;
-        const QByteArray geo = s.value(QString::fromLatin1(kGeometryKey)).toByteArray();
-        if (geo.isEmpty())
-            resize(1100, 660);
-        else
+    resize(1100, 660);
+    if (persistWindowGeometry()) {
+        const QByteArray geo = QSettings().value(QString::fromLatin1(kGeometryKey)).toByteArray();
+        if (!geo.isEmpty())
             restoreGeometry(geo);
-    }
 
-    m_geometrySaveTimer.setInterval(500);
-    m_geometrySaveTimer.setSingleShot(true);
-    connect(&m_geometrySaveTimer, &QTimer::timeout, this, [this]() {
-        QSettings().setValue(QString::fromLatin1(kGeometryKey), saveGeometry());
-    });
+        m_geometrySaveTimer.setInterval(500);
+        m_geometrySaveTimer.setSingleShot(true);
+        connect(&m_geometrySaveTimer, &QTimer::timeout, this, [this]() {
+            QSettings().setValue(QString::fromLatin1(kGeometryKey), saveGeometry());
+        });
+    }
 
     buildUi();
     platformSetup();
@@ -164,7 +162,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if(m_dspController) m_dspController->flush();
     savePlatformState();
     QSettings s;
-    s.setValue(QString::fromLatin1(kGeometryKey), saveGeometry());
+    if (persistWindowGeometry())
+        s.setValue(QString::fromLatin1(kGeometryKey), saveGeometry());
     s.setValue(QString::fromLatin1(kShowInputSpecKey), m_showInputSpectrum->isChecked());
     s.setValue(QString::fromLatin1(kShowOutputSpecKey), m_showOutputSpectrum->isChecked());
     s.setValue(QString::fromLatin1(kShowHeatmapKey), m_showHeatmap->isChecked());
@@ -174,13 +173,13 @@ void MainWindow::closeEvent(QCloseEvent *event)
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
-    m_geometrySaveTimer.start();
+    if (persistWindowGeometry()) m_geometrySaveTimer.start();
 }
 
 void MainWindow::moveEvent(QMoveEvent *event)
 {
     QMainWindow::moveEvent(event);
-    m_geometrySaveTimer.start();
+    if (persistWindowGeometry()) m_geometrySaveTimer.start();
 }
 
 void MainWindow::hideEvent(QHideEvent *event)

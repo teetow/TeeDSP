@@ -56,6 +56,7 @@ private:
     void connectSignals();
     void pullStateFromController();
     void platformSetup();
+    bool persistWindowGeometry() const;
     void initializePlatform();
     void connectPlatformSignals();
     void savePlatformState() const;

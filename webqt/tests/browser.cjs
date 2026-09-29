@@ -38,6 +38,18 @@ const base=process.env.TEEDSP_URL||'http://cm3588.lan:8790';
  await page.waitForSelector('body[data-ready=true]',{timeout:60000});
  await page.waitForTimeout(1500);
  assert.equal(writes.length,0,'opening editor must never write defaults');
+ // A real geometry value saved by Qt WebAssembly made the next Chrome visit
+ // fail during restoreGeometry() with "null function". Browser layout is fullscreen.
+ const savedGeometry=Buffer.from(
+  'QEJ5dGVBcnJheSgBw5nDkMOLAAMAAAAAAAAAAAAAAAAEw78AAAM4AAAAAAAAAAAAAARLAAACwpMAAAAAAAQAAAUAAAAAAAAAAAAAAATDvwAAAzgp',
+  'base64').toString('utf8');
+ await page.evaluate(value=>localStorage.setItem('qt-v0-TeeDSP-TeeDSP Web-ui/geometry',value),savedGeometry);
+ await page.reload();
+ await page.waitForSelector('body[data-ready=true]',{timeout:60000});
+ await page.waitForTimeout(500);
+ assert.equal(await page.locator('#loading').evaluate(el=>el.style.display),'none',
+  'saved browser geometry must not crash the editor on reload');
+ assert.equal(writes.length,0,'reopening editor must never write defaults');
  // Third EQ node: frequency and gain drag, then wheel changes Q.
  await page.mouse.move(621,384);await page.mouse.down();
  await page.mouse.move(680,330,{steps:8});await page.mouse.up();await page.waitForTimeout(900);

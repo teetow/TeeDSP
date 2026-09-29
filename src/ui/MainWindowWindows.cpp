@@ -41,6 +41,8 @@ struct MainWindow::PlatformState {
     qint64 recoverySuppressUntilMs=0;
 };
 
+bool MainWindow::persistWindowGeometry() const { return true; }
+
 void MainWindow::platformSetup() {
     QSettings s;
     if(!s.value(QString::fromLatin1(kFirstRunKey),false).toBool()) {

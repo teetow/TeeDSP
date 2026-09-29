@@ -31,6 +31,9 @@ replaced by the CM3588 route/status and master controls. They do not apply to th
 remote DSP. The Qt heatmap overlay matches desktop; the scrolling waterfall remains
 available in the simple UI.
 
+The browser ignores saved window geometry. Its editor fills the page, and restoring
+Qt WebAssembly geometry from a previous visit crashes startup in Chrome.
+
 Settings are loaded from the service before controls become editable. Opening a
 page never pushes browser defaults. Changes are coalesced and serialized as sparse
 parameter patches, preserving unrelated edits from another client. Failed writes
