@@ -22,19 +22,30 @@ IDs, defaults and telemetry. Windows APO/editor targets are unchanged.
 ## Build/deploy
 
 The deployment checkout is `/home/teetow/apps/teedsp` on `cm3588.lan`.
-Open `linux/teedsp.code-workspace` through VS Code Remote SSH. Its default
-`docker: rebuild and up` task rebuilds and respawns this container; the terminal
-stays open so failures remain visible. The original Windows workspace keeps
-its existing APO task.
+Deploy from a clean WSL TeeDSP checkout. The command builds the Qt browser editor
+locally, runs its model tests, pushes the source commit to the private NAS Git
+remote, fast-forwards the CM3588 checkout, and builds a release-tagged ARM64 image
+there. It switches containers only after the image build and Dockerfile tests pass,
+then runs the browser interaction test against the deployed page. A failed health
+or browser check restores the previous image.
 
 ```sh
-cd /home/teetow/apps/teedsp
-cp .env.example .env  # set MQTT credentials for HA/MASS integration
-mkdir -p linux/data  # owned by uid 1001, as is the application
-docker compose build
-docker compose up -d
-docker compose logs --tail 50
+bash scripts/deploy-cm3588.sh
+bash scripts/deploy-cm3588.sh rollback
 ```
+
+The release tag combines the source commit and browser-bundle hash. The active
+and previous tags are recorded in ignored `linux/data/deploy-state`; the old
+Docker image stays tagged for rollback. The deployment checkout must be clean
+apart from ignored runtime files. `.env`, `linux/data/params.json`, and
+`linux/data/volume.json` stay on the host across releases. The original Windows
+workspace and APO deployment are separate.
+
+For a first installation, create `.env` from `.env.example`, set the MQTT
+credentials, create `linux/data` owned by uid 1001, and run
+`docker compose build && docker compose up -d` on CM3588. Later releases use the
+script above. `linux/teedsp.code-workspace` remains available over Remote SSH
+for investigation.
 
 The container runs as `1001:1001`, using the existing host PipeWire server.
 The user's runtime directory is mounted read-only so socket replacement after

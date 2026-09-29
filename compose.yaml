@@ -1,8 +1,11 @@
 services:
   teedsp:
+    image: teedsp:${TEEDSP_IMAGE_TAG:-dev}
     build:
       context: .
       dockerfile: linux/Dockerfile
+      args:
+        TEEDSP_REVISION: ${TEEDSP_REVISION:-dev}
     container_name: teedsp
     restart: unless-stopped
     init: true

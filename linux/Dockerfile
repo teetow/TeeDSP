@@ -12,6 +12,8 @@ RUN cmake -S linux -B /build -DCMAKE_BUILD_TYPE=Release \
     && python3 -m unittest discover -s linux/tests -p 'test_*.py'
 
 FROM debian:bookworm-slim
+ARG TEEDSP_REVISION=dev
+LABEL org.opencontainers.image.revision=$TEEDSP_REVISION
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpipewire-0.3-0 pipewire-bin libcpp-httplib0.11 python3 python3-paho-mqtt \
     && rm -rf /var/lib/apt/lists/*

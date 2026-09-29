@@ -7,12 +7,11 @@
     "version": "2.0.0",
     "tasks": [
       {
-        "label": "docker: rebuild and up",
-        "detail": "On CM3588: tear down, rebuild, and relaunch TeeDSP detached",
+        "label": "docker: logs",
+        "detail": "Inspect the active CM3588 release; deploy from WSL with scripts/deploy-cm3588.sh",
         "type": "shell",
-        "command": "docker compose down --remove-orphans && docker compose up -d --build",
+        "command": "docker compose logs --tail 100 teedsp",
         "options": { "cwd": "${workspaceFolder:TeeDSP Linux}/.." },
-        "group": { "kind": "build", "isDefault": true },
         "problemMatcher": [],
         "presentation": {
           "panel": "shared", "reveal": "always", "clear": true,

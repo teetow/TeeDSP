@@ -60,10 +60,10 @@ bash webqt/build.sh
 
 The script writes ignored assets to `linux/web/qt/`. It accepts `TEEDSP_QT_SDK`,
 `TEEDSP_EMSDK` and `TEEDSP_WEB_BUILD` overrides. Keep the Qt/Emscripten versions
-paired. Copy the source changes and generated assets to CM3588, then run
-`docker compose build && docker compose up -d` there. The Docker image serves
-these static files; there is no separate UI server. Build the native audio service
-on ARM64. No Windows APO deployment is involved.
+paired. Run `bash scripts/deploy-cm3588.sh` from a clean WSL checkout to ship the
+matching browser bundle and ARM64 Docker image together. The Docker image serves
+the static files; there is no separate UI server. No Windows APO deployment is
+involved.
 
 ## Verification
 
