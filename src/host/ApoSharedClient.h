@@ -61,6 +61,7 @@ public:
     void close();
 
     void writeParams(const dsp::ChainParams &p);
+    void relearnLeveler(bool output);
     void heartbeat();
 
 private:

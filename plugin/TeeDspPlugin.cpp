@@ -17,6 +17,7 @@
 #include "dsp/ParametricEQ.h"
 #include "shared/TeeDspParams.h"
 #include "shared/TeeDspTelemetry.h"
+#include "shared/TeeDspActions.h"
 
 #include <algorithm>
 #include <cmath>
@@ -343,6 +344,13 @@ void telemetryRead(const clap_plugin_t *p, teedsp_telemetry_data *out)
 
 const teedsp_telemetry kTelemetryExt = { telemetryRead };
 
+void relearnLeveler(const clap_plugin_t *p, bool output)
+{
+    auto &chain = self(p)->chain;
+    (output ? chain.outputLeveler() : chain.leveler()).requestRelearn();
+}
+const teedsp_actions kActionsExt = { relearnLeveler };
+
 // ---------------------------------------------------------------------------
 // clap_plugin_t lifecycle
 // ---------------------------------------------------------------------------
@@ -420,6 +428,7 @@ const void *pluginGetExtension(const clap_plugin_t *, const char *id)
     if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) return &kAudioPorts;
     if (std::strcmp(id, CLAP_EXT_PARAMS) == 0)      return &kParamsExt;
     if (std::strcmp(id, CLAP_EXT_STATE) == 0)       return &kStateExt;
+    if (std::strcmp(id, TEEDSP_EXT_ACTIONS) == 0) return &kActionsExt;
     if (std::strcmp(id, TEEDSP_EXT_TELEMETRY) == 0) return &kTelemetryExt;
     return nullptr;
 }

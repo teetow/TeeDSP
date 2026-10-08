@@ -31,6 +31,9 @@ public:
     virtual void start() = 0;
     virtual bool ready() const = 0;
     virtual void submit(const dsp::ChainParams &params) = 0;
+    // Transient action, separate from persisted parameters. output selects
+    // the output loudness rider; false selects the input rider.
+    virtual void relearnLeveler(bool output) = 0;
     virtual void flush() = 0;
     virtual Meters meters() const = 0;
     virtual void setEditorVisible(bool visible) = 0;

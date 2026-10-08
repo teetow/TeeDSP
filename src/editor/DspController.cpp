@@ -94,6 +94,12 @@ void DspController::setLevelerEnabled(bool b)
     submitChanges();   // discrete toggle: push now, don't wait for the batch timer
 }
 
+void DspController::relearnLeveler(bool output)
+{
+    submitChanges();
+    if (m_transport->ready()) m_transport->relearnLeveler(output);
+}
+
 float DspController::levelerGainDb() const
 {
     return m_meterSnapshot.levelerGainDb;

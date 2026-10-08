@@ -36,6 +36,11 @@ public:
     // means the rider is boosting; negative means it is attenuating.
     float currentGainDb() const { return m_currentGainDb.load(std::memory_order_relaxed); }
 
+    // Thread-safe one-shot action. The audio thread discards the detector's
+    // history at the next block, holds gain through warmup/silence, then glides
+    // to a fresh estimate using the normal ballistics.
+    void requestRelearn() noexcept { m_relearnRequested.store(true, std::memory_order_relaxed); }
+
     LoudnessLevelerCalibration calibrationState() const noexcept;
     bool restoreCalibration(const LoudnessLevelerCalibration &state) noexcept;
 
@@ -53,6 +58,8 @@ public:
                    float glideUpTauSec    =  2.0f);
 
 private:
+    void clearMeasurementWindow();
+
     static constexpr int   kMaxCh        = 8;
     static constexpr float kSilenceDbfs  = -50.0f;
     static constexpr float kWindowSec    =    3.0f;  // short-term LUFS window
@@ -102,6 +109,7 @@ private:
     float m_glideUpCoef    = 0.0f;   // per-sample one-pole coef (boosting)
     float m_enableMixCoef  = 0.0f;
 
+    std::atomic<bool> m_relearnRequested{false};
     std::atomic<float> m_currentGainDb{0.0f};
 };
 

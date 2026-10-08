@@ -22,9 +22,9 @@
 
 namespace teedsp {
 
-inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV10";
+inline constexpr wchar_t  kApoSharedName[]  = L"Global\\TeeDspApoSharedV11";
 inline constexpr uint32_t kApoSharedMagic   = 0x50534454u; // 'TDSP'
-inline constexpr uint32_t kApoSharedVersion = 10u;
+inline constexpr uint32_t kApoSharedVersion = 11u;
 
 // Mono pre/post sample ring for the UI spectrum analyzer. ~170 ms at 48 kHz —
 // far more than the UI's drain interval, so it never underruns between ticks.
@@ -63,6 +63,11 @@ struct ApoShared {
     uint32_t paramGen;        // UI bumps on each committed change
     uint64_t uiHeartbeat;     // UI bumps periodically; APO bypasses if stale
 
+    // One-shot relearn commands. Each active stream consumes each generation
+    // independently; these counters are never written to params.bin.
+    uint32_t inputRelearnGen;
+    uint32_t outputRelearnGen;
+
     // --- meters: APO -> observers (dBFS / dB) ---
     // Written each block by the single elected `meterOwner` instance; read
     // without a lock (single writer, float granularity — slight tearing is fine).
@@ -89,6 +94,10 @@ struct ApoShared {
     // instantiated per application stream, so this snapshot bridges browser
     // pause/resume cycles that destroy one instance and create another.
     uint32_t calibrationSeq;
+    // Commands already reflected in the cached calibration. A click while no
+    // stream exists remains pending when the next instance restores this cache.
+    uint32_t calibrationInputRelearnGen;
+    uint32_t calibrationOutputRelearnGen;
     dsp::LevelerChainCalibration calibration;
 
     dsp::ChainParams params;  // the snapshot (guarded by paramSeq)
@@ -130,18 +139,22 @@ inline bool apoReadParams(ApoShared *s, dsp::ChainParams &out)
     return false;
 }
 
-inline void apoWriteCalibration(ApoShared *s, const dsp::LevelerChainCalibration &value)
+inline void apoWriteCalibration(ApoShared *s, const dsp::LevelerChainCalibration &value,
+                                uint32_t inputRelearnGen, uint32_t outputRelearnGen)
 {
     std::atomic_ref<uint32_t> seq(s->calibrationSeq);
     const uint32_t v = seq.load(std::memory_order_relaxed);
     seq.store(v + 1, std::memory_order_release);
     std::atomic_thread_fence(std::memory_order_release);
     std::memcpy(&s->calibration, &value, sizeof(value));
+    s->calibrationInputRelearnGen = inputRelearnGen;
+    s->calibrationOutputRelearnGen = outputRelearnGen;
     std::atomic_thread_fence(std::memory_order_release);
     seq.store(v + 2, std::memory_order_release);
 }
 
-inline bool apoReadCalibration(ApoShared *s, dsp::LevelerChainCalibration &out)
+inline bool apoReadCalibration(ApoShared *s, dsp::LevelerChainCalibration &out,
+                               uint32_t &inputRelearnGen, uint32_t &outputRelearnGen)
 {
     std::atomic_ref<uint32_t> seq(s->calibrationSeq);
     for (int i = 0; i < 16; ++i) {
@@ -149,8 +162,14 @@ inline bool apoReadCalibration(ApoShared *s, dsp::LevelerChainCalibration &out)
         if (s1 & 1u) continue;
         std::atomic_thread_fence(std::memory_order_acquire);
         std::memcpy(&out, &s->calibration, sizeof(out));
+        const auto inputGen = s->calibrationInputRelearnGen;
+        const auto outputGen = s->calibrationOutputRelearnGen;
         std::atomic_thread_fence(std::memory_order_acquire);
-        if (seq.load(std::memory_order_acquire) == s1) return true;
+        if (seq.load(std::memory_order_acquire) == s1) {
+            inputRelearnGen = inputGen;
+            outputRelearnGen = outputGen;
+            return true;
+        }
     }
     return false;
 }

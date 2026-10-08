@@ -85,6 +85,14 @@ void Client::submit(const dsp::ChainParams &p) {
         if(m_values[i.key()]!=i.value()) m_pending[i.key()]=i.value();
     m_values=values;++m_generation;
 }
+void Client::relearnLeveler(bool output) {
+    if (!m_ready || !connected()) return;
+    const QJsonObject action{{"stage", output ? "output" : "input"}};
+    request("leveler/relearn", &action, [this](bool ok, QJsonObject) {
+        if (ok) m_error.clear();
+        emit metersReceived();
+    });
+}
 void Client::sendPending() {
     if(m_posting || m_pending.isEmpty()) return;
     const auto patch=m_pending;m_pending={};m_posting=true;

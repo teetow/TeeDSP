@@ -128,6 +128,56 @@ int main()
                      std::fabs(afterReset - settled) < 1.0f, afterReset - settled);
     }
 
+    // A source drop beyond the relative gate intentionally stays frozen until
+    // the user explicitly asks to measure the new source. Relearn must exclude
+    // the old loud window, hold gain during acquisition and use a smooth glide.
+    {
+        dsp::Leveler leveler;
+        leveler.prepare(kSampleRate, kChannels);
+        double phase = 0.0;
+        const float hot = pushTone(leveler, 0.5f, 8.0f, phase);
+        const float stuck = pushTone(leveler, 0.01f, 10.0f, phase);
+        ok &= expect("quieter source remains behind relative gate",
+                     stuck < -0.5f, stuck);
+        leveler.requestRelearn();
+        leveler.process(nullptr, 0); // An empty block must not lose the request.
+        pushSilence(leveler, 2.0f);
+        ok &= expect("relearn holds gain through silence",
+                     std::fabs(leveler.currentGainDb() - stuck) < 0.001f,
+                     leveler.currentGainDb() - stuck);
+        // A same-format relock while waiting must also hold the old gain.
+        leveler.prepare(kSampleRate, kChannels);
+        leveler.reset();
+        const float warming = pushTone(leveler, 0.01f, 1.0f, phase);
+        ok &= expect("relearn holds gain through acquisition and relock",
+                     std::fabs(warming - stuck) < 0.001f, warming - stuck);
+        const float gliding = pushTone(leveler, 0.01f, 1.0f, phase);
+        ok &= expect("relearn glides rather than jumping to new gain",
+                     gliding > warming && gliding < warming + 8.0f,
+                     gliding - warming);
+        const float fresh = pushTone(leveler, 0.01f, 8.0f, phase);
+        ok &= expect("relearn escapes gate and boosts quieter source",
+                     fresh > 12.0f, fresh);
+
+        leveler.requestRelearn();
+        const float held = pushTone(leveler, 0.5f, 1.0f, phase);
+        ok &= expect("repeated relearn holds current boost during warmup",
+                     std::fabs(held - fresh) < 0.001f, held - fresh);
+        dsp::Leveler replacement;
+        replacement.prepare(kSampleRate, kChannels);
+        const bool restored = replacement.restoreCalibration(leveler.calibrationState());
+        ok &= expect("stream replacement holds gain during manual relearn",
+                     restored && std::fabs(replacement.currentGainDb() - fresh) < 0.001f,
+                     replacement.currentGainDb() - fresh);
+        const float replacementGain = pushTone(replacement, 0.5f, 6.0f, phase);
+        ok &= expect("replacement stream completes pending relearn",
+                     replacementGain < -0.5f, replacementGain);
+        const float hotAgain = pushTone(leveler, 0.5f, 5.0f, phase);
+        ok &= expect("repeated relearn handles a louder source",
+                     hotAgain < -0.5f && std::fabs(hotAgain - hot) < 1.0f,
+                     hotAgain);
+    }
+
     // The spectral leveler used to keep decaying its detector state through
     // valid zero-filled pause buffers, then reset every learned correction to
     // 0 dB when the stream restarted.

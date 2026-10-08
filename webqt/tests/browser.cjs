@@ -10,7 +10,7 @@ const base=process.env.TEEDSP_URL||'http://cm3588.lan:8790';
  const schema=await (await page.request.get(base+'/api/params')).json();
  let values=Object.fromEntries(schema.parameters.map(p=>[p.id,p.default]));
  values['125']=-20; // EQ-only reset must preserve dynamics.
- let volume={volume:40,muted:false}, writes=[], failNext=false, metersOffline=false;
+ let volume={volume:40,muted:false}, writes=[], actions=[], failNext=false, metersOffline=false;
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const bins=Array.from({length:1025},(_,i)=>-85+65*Math.exp(-Math.pow((i-43)/14,2)));
  await page.route('**/api/**',async route=>{
@@ -22,6 +22,8 @@ const base=process.env.TEEDSP_URL||'http://cm3588.lan:8790';
     if(failNext){failNext=false;return route.fulfill({status:503,body:'unavailable'});}
     values={...values,...patch};data=values;
    }else data={parameters:schema.parameters,values};
+  }else if(path==='/api/leveler/relearn'){
+   assert.equal(request.method(),'POST');actions.push(request.postDataJSON());data={queued:true};
   }else if(path==='/api/volume'){
    if(request.method()==='POST')volume={...volume,...request.postDataJSON()};
    data=volume;
@@ -50,6 +52,19 @@ const base=process.env.TEEDSP_URL||'http://cm3588.lan:8790';
  assert.equal(await page.locator('#loading').evaluate(el=>el.style.display),'none',
   'saved browser geometry must not crash the editor on reload');
  assert.equal(writes.length,0,'reopening editor must never write defaults');
+ // One-shot relearn buttons are disabled with Auto off, and never persist.
+ await page.mouse.click(126,821);await page.mouse.click(1375,821);
+ await page.waitForTimeout(200);assert.equal(actions.length,0);
+ await page.mouse.click(35,821);await page.mouse.click(1284,821);await page.waitForTimeout(700);
+ assert.equal(values['4'],1);assert.equal(values['5'],1);
+ const beforeActions=writes.length;
+ await page.mouse.click(126,821);await page.waitForTimeout(200);
+ await page.mouse.click(126,821);await page.mouse.click(1375,821);await page.waitForTimeout(500);
+ assert.deepEqual(actions,[{stage:'input'},{stage:'input'},{stage:'output'}],
+  'each Relearn click must send an independent command to the selected rider');
+ assert.equal(writes.length,beforeActions,'Relearn must not modify saved parameters');
+ await page.mouse.click(35,821);await page.mouse.click(1284,821);await page.waitForTimeout(700);
+ writes=[]; // Keep the sparse EQ gesture checks isolated from Auto toggles.
  // Third EQ node: frequency and gain drag, then wheel changes Q.
  await page.mouse.move(621,384);await page.mouse.down();
  await page.mouse.move(680,330,{steps:8});await page.mouse.up();await page.waitForTimeout(900);
@@ -86,6 +101,6 @@ const base=process.env.TEEDSP_URL||'http://cm3588.lan:8790';
  metersOffline=false;await page.waitForTimeout(1000);
  await page.mouse.click(239,32);await page.waitForTimeout(500);assert.equal(values['0'],1);
  assert.deepEqual(errors,[]);
- console.log('PASS Qt startup, EQ drag/Q/reset/menu, isolated patches, retry/reconnect, external updates, master mute and rendered meters');
+ console.log('PASS Qt startup, EQ drag/Q/reset/menu, isolated patches, retry/reconnect, external updates, one-shot relearn buttons, master mute and rendered meters');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

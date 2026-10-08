@@ -49,7 +49,7 @@ void Leveler::prepare(double sampleRate, std::size_t channels)
     // rider resumes where it left off instead of crawling back from unity.
     const bool formatChanged = (sampleRate != m_sampleRate)
                             || (channels   != m_channels);
-    const bool coldStart     = formatChanged || !m_hasLoudnessEstimate;
+    const bool coldStart     = formatChanged || m_windowSamples == 0;
 
     m_sampleRate    = sampleRate;
     m_channels      = channels;
@@ -113,6 +113,13 @@ void Leveler::reset()
     // The *learned* state (loudness estimate + applied gain) is deliberately
     // preserved — a transport pause or stream relock shouldn't force the rider
     // to re-converge from unity. prepare() wipes it on a genuine cold start.
+    clearMeasurementWindow();
+    m_enableMix = m_bypass ? 0.0f : 1.0f;
+    m_currentGainDb.store(m_smoothedGainDb * m_enableMix, std::memory_order_relaxed);
+}
+
+void Leveler::clearMeasurementWindow()
+{
     for (int c = 0; c < m_numCh; ++c) {
         m_ch[c].pre.reset();
         m_ch[c].rlb.reset();
@@ -121,8 +128,6 @@ void Leveler::reset()
     }
     m_writePos    = 0;
     m_accumulated = 0;
-    m_enableMix   = m_bypass ? 0.0f : 1.0f;
-    m_currentGainDb.store(m_smoothedGainDb * m_enableMix, std::memory_order_relaxed);
 }
 
 LoudnessLevelerCalibration Leveler::calibrationState() const noexcept
@@ -130,20 +135,21 @@ LoudnessLevelerCalibration Leveler::calibrationState() const noexcept
     LoudnessLevelerCalibration state;
     state.longTermLufs = m_longTermLufs;
     state.smoothedGainDb = m_smoothedGainDb;
-    state.valid = m_hasLoudnessEstimate ? 1u : 0u;
+    state.valid = m_windowSamples <= 0 ? 0u
+        : (m_hasLoudnessEstimate && !m_relearnRequested.load(std::memory_order_relaxed) ? 1u : 2u);
     return state;
 }
 
 bool Leveler::restoreCalibration(const LoudnessLevelerCalibration &state) noexcept
 {
-    if (state.valid == 0u
+    if (state.valid == 0u || state.valid > 2u
         || !std::isfinite(state.longTermLufs)
         || !std::isfinite(state.smoothedGainDb))
         return false;
 
     m_longTermLufs = clampf(state.longTermLufs, -120.0f, 24.0f);
     m_smoothedGainDb = clampf(state.smoothedGainDb, -m_maxCutDb, m_maxBoostDb);
-    m_hasLoudnessEstimate = true;
+    m_hasLoudnessEstimate = state.valid == 1u;
     m_currentGainDb.store(m_smoothedGainDb * m_enableMix,
                           std::memory_order_relaxed);
     return true;
@@ -154,6 +160,11 @@ void Leveler::process(float *interleaved, std::size_t frameCount)
     if (interleaved == nullptr || frameCount == 0
         || m_numCh <= 0 || m_windowSamples <= 0)
         return;
+
+    if (m_relearnRequested.exchange(false, std::memory_order_relaxed)) {
+        clearMeasurementWindow();
+        m_hasLoudnessEstimate = false;
+    }
 
     const int   nCh           = std::min(static_cast<int>(m_channels), m_numCh);
     const float silenceLin    = linFromDb(kSilenceDbfs);

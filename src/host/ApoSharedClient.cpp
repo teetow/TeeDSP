@@ -140,6 +140,13 @@ void ApoSharedClient::writeParams(const dsp::ChainParams &p)
         teedsp::apoWriteParams(m_shm, p);
 }
 
+void ApoSharedClient::relearnLeveler(bool output)
+{
+    if (m_shm)
+        std::atomic_ref<uint32_t>(output ? m_shm->outputRelearnGen : m_shm->inputRelearnGen)
+            .fetch_add(1u, std::memory_order_relaxed);
+}
+
 void ApoSharedClient::heartbeat()
 {
     if (!m_shm)

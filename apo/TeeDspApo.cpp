@@ -252,7 +252,8 @@ void TeeDspApo::leaveSharedProcessing()
     if (!m_shm || !m_locked)
         return;
     if (m_ownsMeters)
-        teedsp::apoWriteCalibration(m_shm, m_chain.calibrationState());
+        teedsp::apoWriteCalibration(m_shm, m_chain.calibrationState(),
+                                    m_lastInputRelearnGen, m_lastOutputRelearnGen);
     uint32_t expected = m_instanceId;
     const bool wasOwner = std::atomic_ref<uint32_t>(m_shm->meterOwner)
         .compare_exchange_strong(expected, 0u, std::memory_order_acq_rel);
@@ -329,7 +330,8 @@ void TeeDspApo::publishMeters(const float *inBuf, const float *outBuf, UINT32 fr
                   "ApoShared::spectralGainDb size must match dsp::SpectralLeveler::kBandCount");
     static_assert(sizeof(teedsp::ApoShared::bandGrDb) / sizeof(float) == dsp::kEqBandCount,
                   "ApoShared::bandGrDb size must match dsp::kEqBandCount");
-    teedsp::apoWriteCalibration(m_shm, m_chain.calibrationState());
+    teedsp::apoWriteCalibration(m_shm, m_chain.calibrationState(),
+                                    m_lastInputRelearnGen, m_lastOutputRelearnGen);
     m_shm->compGrDb         = m_chain.compressor().currentGainReductionDb();
     m_shm->levelerGainDb    = m_chain.leveler().currentGainDb();
     for (int b = 0; b < dsp::SpectralLeveler::kBandCount; ++b)
@@ -512,8 +514,11 @@ HRESULT STDMETHODCALLTYPE TeeDspApo::LockForProcess(
     m_lastAppliedGen = 0;
     m_framesSinceHeartbeat = 0;
     if (m_shm) {
+        m_lastInputRelearnGen = 0;
+        m_lastOutputRelearnGen = 0;
         dsp::LevelerChainCalibration calibration;
-        if (teedsp::apoReadCalibration(m_shm, calibration))
+        if (teedsp::apoReadCalibration(m_shm, calibration,
+                                       m_lastInputRelearnGen, m_lastOutputRelearnGen))
             m_chain.restoreCalibration(calibration);
 
         // channels/sampleRate/bytesPerFrame are NOT written here: with 2+
@@ -654,6 +659,22 @@ void STDMETHODCALLTYPE TeeDspApo::APOProcess(
         // Always-on: process with the current params regardless of whether the
         // UI is running (live edits still arrive via paramGen when it is). "Off"
         // is the persisted bypass flag, which makes the chain pass through.
+        if (m_shm && in->u32ValidFrameCount > 0 && !m_chain.isBypassed()) {
+            // Commands are consumed per stream, on its audio thread. Coalescing
+            // repeated clicks within one block is intentional. Leave commands queued
+            // during transport silence or global bypass, so cached calibration cannot
+            // mark an unprocessed command as consumed.
+            const auto inputRelearn = std::atomic_ref<uint32_t>(m_shm->inputRelearnGen).load(std::memory_order_relaxed);
+            const auto outputRelearn = std::atomic_ref<uint32_t>(m_shm->outputRelearnGen).load(std::memory_order_relaxed);
+            if (inputRelearn != m_lastInputRelearnGen) {
+                m_chain.leveler().requestRelearn();
+                m_lastInputRelearnGen = inputRelearn;
+            }
+            if (outputRelearn != m_lastOutputRelearnGen) {
+                m_chain.outputLeveler().requestRelearn();
+                m_lastOutputRelearnGen = outputRelearn;
+            }
+        }
         m_chain.process(reinterpret_cast<float *>(out->pBuffer), in->u32ValidFrameCount);
         publishMeters(reinterpret_cast<const float *>(in->pBuffer),
                       reinterpret_cast<const float *>(out->pBuffer),

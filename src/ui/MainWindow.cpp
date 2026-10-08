@@ -553,7 +553,16 @@ QWidget *MainWindow::buildInputPane()
                        "toward -18 LUFS (up to +18 / -9 dB) without pumping. "
                        "Sits before the input trim, so the trim knob still "
                        "rides on top."));
-    col->addWidget(m_levelerEnabled, 0, Qt::AlignHCenter);
+    m_inputRelearn = new QPushButton(QStringLiteral("Relearn"));
+    m_inputRelearn->setObjectName(QStringLiteral("inputLevelerRelearn"));
+    m_inputRelearn->setToolTip(QStringLiteral(
+        "Measure the current input afresh. Holds the current gain until "
+        "enough audio is available, then smoothly adjusts to the new level."));
+    auto *inputAutoRow = new QHBoxLayout();
+    inputAutoRow->setSpacing(UiMetrics::kCompactSpacing);
+    inputAutoRow->addWidget(m_levelerEnabled);
+    inputAutoRow->addWidget(m_inputRelearn);
+    col->addLayout(inputAutoRow);
 
     m_levelerGainLabel = new QLabel(QStringLiteral("0.0 dB"));
     m_levelerGainLabel->setProperty("role", "status");
@@ -644,7 +653,16 @@ QWidget *MainWindow::buildOutputPane()
                        "the chain output near -12 LUFS regardless of internal "
                        "gain choices. Sits before Out Trim, so the trim still "
                        "rides on top."));
-    col->addWidget(m_outputLevelerEnabled, 0, Qt::AlignHCenter);
+    m_outputRelearn = new QPushButton(QStringLiteral("Relearn"));
+    m_outputRelearn->setObjectName(QStringLiteral("outputLevelerRelearn"));
+    m_outputRelearn->setToolTip(QStringLiteral(
+        "Measure the current output afresh. Holds the current gain until "
+        "enough audio is available, then smoothly adjusts to the new level."));
+    auto *outputAutoRow = new QHBoxLayout();
+    outputAutoRow->setSpacing(UiMetrics::kCompactSpacing);
+    outputAutoRow->addWidget(m_outputLevelerEnabled);
+    outputAutoRow->addWidget(m_outputRelearn);
+    col->addLayout(outputAutoRow);
 
     m_outputLevelerGainLabel = new QLabel(QStringLiteral("0.0 dB"));
     m_outputLevelerGainLabel->setProperty("role", "status");
@@ -668,6 +686,12 @@ void MainWindow::connectSignals()
     });
     connect(m_levelerEnabled, &QCheckBox::toggled, this, [this](bool c) {
         if (!m_syncingUi) m_dspController->setLevelerEnabled(c);
+    });
+    connect(m_inputRelearn, &QPushButton::clicked, this, [this] {
+        m_dspController->relearnLeveler(false);
+    });
+    connect(m_outputRelearn, &QPushButton::clicked, this, [this] {
+        m_dspController->relearnLeveler(true);
     });
     connect(m_spectralLevelerEnabled, &QCheckBox::toggled, this, [this](bool c) {
         if (!m_syncingUi) m_dspController->setSpectralLevelerEnabled(c);
@@ -979,6 +1003,8 @@ void MainWindow::pullStateFromController()
     m_outputTrim->setValue(m_dspController->outputTrimDb());
     m_stereoWidth->setValue(m_dspController->stereoWidth() * 100.0f);
     m_levelerEnabled->setChecked(m_dspController->levelerEnabled());
+    m_inputRelearn->setEnabled(m_dspController->levelerEnabled() && !m_dspController->bypass());
+    m_outputRelearn->setEnabled(m_dspController->outputLevelerEnabled() && !m_dspController->bypass());
     if (m_spectralLevelerEnabled)
         m_spectralLevelerEnabled->setChecked(m_dspController->spectralLevelerEnabled());
     if (m_outputLevelerEnabled)

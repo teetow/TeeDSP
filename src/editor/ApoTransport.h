@@ -13,6 +13,7 @@ public:
     void start() override;
     bool ready() const override { return m_started; }
     void submit(const dsp::ChainParams &params) override;
+    void relearnLeveler(bool output) override;
     void flush() override;
     Meters meters() const override;
     void setEditorVisible(bool visible) override;

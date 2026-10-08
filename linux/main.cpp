@@ -253,6 +253,22 @@ struct App {
                 res.status = 400; res.set_content(Json{{"error", e.what()}}.dump(), "application/json");
             }
         });
+        server.Post("/api/leveler/relearn", [&](const auto& req, auto& res) {
+            if (req.get_header_value("Content-Type").find("application/json") != 0) {
+                res.status = 415; return;
+            }
+            try {
+                const auto action = Json::parse(req.body);
+                if (!action.is_object() || action.size() != 1 || !action.contains("stage")
+                    || !action["stage"].is_string()
+                    || (action["stage"] != "input" && action["stage"] != "output"))
+                    throw std::invalid_argument("Expected stage: input or output");
+                processor.relearnLeveler(action["stage"] == "output");
+                res.set_content(Json{{"queued", true}}.dump(), "application/json");
+            } catch (const std::exception& e) {
+                res.status = 400; res.set_content(Json{{"error", e.what()}}.dump(), "application/json");
+            }
+        });
         server.Get("/api/meters", [&](const auto&, auto& res) {
             lastObserverMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count());

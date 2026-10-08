@@ -16,12 +16,13 @@ public:
     }
     bool ready() const override { return active; }
     void submit(const dsp::ChainParams &params) override { last = params; ++writes; }
+    void relearnLeveler(bool output) override { output ? ++outputRelearns : ++inputRelearns; }
     void flush() override { ++flushes; }
     editor::Meters meters() const override { return {}; }
     void setEditorVisible(bool visible) override { editorVisible = visible; }
     void setSpectrumVisible(bool visible) override { spectrumVisible = visible; }
     bool active = false, editorVisible = false, spectrumVisible = false;
-    int writes = 0, flushes = 0;
+    int writes = 0, flushes = 0, inputRelearns = 0, outputRelearns = 0;
     dsp::ChainParams last{};
 };
 FakeTransport *transport = nullptr;
@@ -52,6 +53,13 @@ int main(int argc, char **argv) {
     assert(transport->writes == 1);
     assert(transport->last.inputTrimDb == -3.f);
     assert(transport->last.eqBands[0].gainDb == 7.f);
+
+    model.relearnLeveler(false);
+    model.relearnLeveler(true);
+    model.relearnLeveler(false);
+    model.flush();
+    assert(transport->inputRelearns == 2 && transport->outputRelearns == 1);
+    assert(transport->writes == 1); // One-shot actions must not become settings.
 
     auto external = transport->last;
     external.compThreshDb = -24.f;

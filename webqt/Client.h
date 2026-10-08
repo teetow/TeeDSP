@@ -18,6 +18,7 @@ public:
     bool connected() const { return m_lastMeter.isValid() && m_lastMeter.elapsed()<3000; }
     QString statusText() const;
     void submit(const dsp::ChainParams &params) override;
+    void relearnLeveler(bool output) override;
     void setVolume(const QJsonObject &patch);
     editor::Meters meters() const override;
     void flush() override;

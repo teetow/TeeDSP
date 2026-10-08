@@ -90,6 +90,8 @@ private:
     ui::BipolarGainMeter *m_inputGainMeter = nullptr;
     ui::Knob *m_inputTrim = nullptr;
     QCheckBox *m_levelerEnabled = nullptr;
+    QPushButton *m_inputRelearn = nullptr;
+    QPushButton *m_outputRelearn = nullptr;
     QCheckBox *m_spectralLevelerEnabled = nullptr;
     ui::SpectralGainMeter *m_spectralGainMeter = nullptr;
     QLabel *m_levelerGainLabel = nullptr;

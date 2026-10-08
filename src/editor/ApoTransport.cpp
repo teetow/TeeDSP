@@ -83,6 +83,10 @@ void ApoTransport::submit(const dsp::ChainParams &params) {
     m_saveDebounce.start();
     tick();
 }
+void ApoTransport::relearnLeveler(bool output) {
+    tick();
+    m_apo.relearnLeveler(output);
+}
 void ApoTransport::tick() {
     const bool opened=!m_apo.isOpen() && m_apo.tryOpen();
     if(opened) m_dirty=true;

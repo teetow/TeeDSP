@@ -5,7 +5,7 @@
 
 namespace dsp {
 
-inline constexpr uint32_t kLevelerCalibrationVersion = 1u;
+inline constexpr uint32_t kLevelerCalibrationVersion = 2u;
 inline constexpr int kSpectralCalibrationBandCount = 10;
 
 // Small, allocation-free snapshot of the learned parts of the leveler chain.
@@ -14,6 +14,8 @@ inline constexpr int kSpectralCalibrationBandCount = 10;
 struct LoudnessLevelerCalibration {
     float longTermLufs = 0.0f;
     float smoothedGainDb = 0.0f;
+    // 0: absent; 1: learned estimate; 2: hold gain and acquire a fresh estimate.
+    // The acquiring state lets a replacement stream finish a manual relearn.
     uint32_t valid = 0;
 };
 

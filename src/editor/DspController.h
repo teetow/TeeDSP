@@ -93,6 +93,7 @@ public:
     void setStereoWidth(float v);
     bool levelerEnabled() const { return m_levelerEnabled; }
     void setLevelerEnabled(bool b);
+    void relearnLeveler(bool output);
     float levelerGainDb() const;
     void spectralLevelerGainDb(std::array<float, kSpectralLevelerBandCount> &out) const;
     bool spectralLevelerEnabled() const { return m_spectralLevelerEnabled; }

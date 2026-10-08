@@ -141,6 +141,8 @@ private:
 
     // Live-control state (RT thread).
     uint32_t            m_lastAppliedGen = 0;       // last paramGen applied
+    uint32_t            m_lastInputRelearnGen = 0;
+    uint32_t            m_lastOutputRelearnGen = 0;
     uint64_t            m_lastHeartbeat = 0;        // last UI heartbeat seen
     uint64_t            m_framesSinceHeartbeat = 0; // frames since it last advanced
 };

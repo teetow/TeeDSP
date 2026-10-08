@@ -2,6 +2,7 @@
 #include <clap/clap.h>
 #include "shared/TeeDspParams.h"
 #include "shared/TeeDspTelemetry.h"
+#include "shared/TeeDspActions.h"
 #include <nlohmann/json.hpp>
 #include <array>
 #include <cmath>
@@ -19,6 +20,7 @@ class Processor {
     const clap_plugin_t* plugin = nullptr;
     const clap_plugin_params_t* params = nullptr;
     const teedsp_telemetry* meters = nullptr;
+    const teedsp_actions* actions = nullptr;
 public:
     static constexpr unsigned maxFrames = 8192;
     Processor() {
@@ -28,6 +30,7 @@ public:
         if (!plugin || !plugin->init(plugin) || !plugin->activate(plugin, 48000, 1, maxFrames)
             || !plugin->start_processing(plugin)) throw std::runtime_error("CLAP activation failed");
         params = static_cast<const clap_plugin_params_t*>(plugin->get_extension(plugin, CLAP_EXT_PARAMS));
+        actions = static_cast<const teedsp_actions*>(plugin->get_extension(plugin, TEEDSP_EXT_ACTIONS));
         meters = static_cast<const teedsp_telemetry*>(plugin->get_extension(plugin, TEEDSP_EXT_TELEMETRY));
     }
     ~Processor() {
@@ -56,6 +59,7 @@ public:
                 || (d->stepped && value != std::round(value))) throw std::invalid_argument("Parameter outside its allowed range");
         }
     }
+    void relearnLeveler(bool output) { actions->relearn_leveler(plugin, output); }
     void set(unsigned id, double value) {
         clap_event_param_value_t event{};
         event.header.size = sizeof(event); event.header.type = CLAP_EVENT_PARAM_VALUE;

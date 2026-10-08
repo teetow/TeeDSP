@@ -33,6 +33,40 @@ int main() {
     p.process(left.data(), right.data(), outL.data(), outR.data(), 1024);
     error = 0; for (int i=0;i<1024;++i) error = std::max({error, std::abs(outL[i]), std::abs(outR[i])});
     check(error < 1e-6f, "mono width cancels opposite stereo signals");
+    // Exercise each action through the real CLAP host with the other rider
+    // disabled, so downstream tracking cannot mask an incorrectly routed action.
+    for (bool output : {false, true}) {
+        Processor rider;
+        rider.set(6, 0); rider.set(7, 0); rider.set(14, 0); rider.set(18, 0);
+        rider.set(4, output ? 0 : 1); rider.set(5, output ? 1 : 0);
+        double phase = 0;
+        const auto tone = [&](float amplitude, int blocks) {
+            for (int b = 0; b < blocks; ++b) {
+                for (int i = 0; i < 480; ++i) {
+                    left[i] = right[i] = amplitude * std::sin(phase);
+                    phase += 2 * 3.141592653589793 * 1000 / 48000;
+                    if (phase >= 2 * 3.141592653589793) phase -= 2 * 3.141592653589793;
+                }
+                rider.process(left.data(), right.data(), outL.data(), outR.data(), 480);
+            }
+        };
+        const auto gain = [&] {
+            const auto meters = rider.telemetry();
+            return output ? meters.outputLevelerGainDb : meters.levelerGainDb;
+        };
+        tone(0.5f, 1000);
+        tone(0.01f, 1000);
+        const float before = gain();
+        check(before < -0.5f, output ? "CLAP output is gated before relearn" : "CLAP input is gated before relearn");
+        rider.relearnLeveler(output);
+        tone(0.01f, 100);
+        check(std::abs(gain() - before) < 0.001f, "CLAP action holds gain during acquisition");
+        tone(0.01f, 1200);
+        check(gain() > 10.f, output ? "CLAP output action reacquires quiet source" : "CLAP input action reacquires quiet source");
+        rider.relearnLeveler(output);
+        tone(0.5f, 1500);
+        check(gain() < -0.5f, "CLAP repeated action reacquires louder source");
+    }
     MasterVolume master;
     master.percent=50;
     std::fill(outL.begin(),outL.end(),1); std::fill(outR.begin(),outR.end(),1);

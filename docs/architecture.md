@@ -35,3 +35,17 @@ transport and Windows window hooks; `webqt/CMakeLists.txt` compiles the HTTP
 transport and remote window hooks. The common editor has no platform compile
 switch. `webqt/tests/editor-model.cpp` checks that loading a saved snapshot does
 not write defaults back to the host.
+
+The Relearn buttons beside the input and output Auto controls send one-shot
+commands through the same transport interface. Relearn clears that loudness
+rider's measurement history and relative-gate estimate, holds its current gain
+through silence and a 1.5-second audio acquisition window, then uses its normal
+smooth glide to the fresh level. The spectral leveler and saved parameters are
+unaffected. Windows uses per-stage generation counters in shared-memory version
+11, so the editor and APO must be rebuilt together. Cached calibration records
+which commands it has consumed, so a click during a stream gap survives into
+the next stream. Calibration also preserves held gain during acquisition. CM3588 accepts
+`POST /api/leveler/relearn` with `{"stage":"input"}` or `{"stage":"output"}`
+and forwards it through the private `teedsp.actions/1` CLAP extension. Actions
+are queued atomically and consumed on the audio thread; they are never saved as
+parameters or replayed by preset loads.
